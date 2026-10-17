@@ -1,0 +1,6 @@
+{
+  "name": "RubrikPad — Ölçüt Temelli Sınıf Değerlendirme Sistemi",
+  "description": "Öğretmenlerin öğrencileri bireysel veya grup hâlinde rubriklere göre hızlıca değerlendirmesini, OCR ile sınıf listesi aktarmasını, gözlem notları tutmasını ve gelişim grafikleriyle PDF/CSV raporları oluşturmasını sağlayan tablet odaklı eğitim uygulaması.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
