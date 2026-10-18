@@ -444,7 +444,7 @@ export function App() {
                 <span className="font-bold text-slate-900 text-sm tracking-tight">
                   RubrikPad
                 </span>
-                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200 hidden sm:inline">
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200 hidden xl:inline">
                   Çevrimdışı PWA &amp; İşlemsel Veri Katmanı
                 </span>
               </div>

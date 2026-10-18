@@ -28,6 +28,7 @@ import {
   checkStudentDeletionImpact,
   splitTurkishFullName,
 } from '../utils/rubricLogic.ts';
+import { LocalOcrVerificationPanel } from './ocr/LocalOcrVerificationPanel.tsx';
 
 interface ClassroomManagerProps {
   classrooms: Classroom[];
@@ -106,17 +107,12 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
   // Audit history modal state (P1 #4)
   const [historyStudent, setHistoryStudent] = useState<Student | null>(null);
 
-  // Import Mode: 'local_text' (Offline safe) | 'cloud_ocr' (Controlled API with privacy consent)
-  const [importTab, setImportTab] = useState<'local_text' | 'cloud_ocr'>(
-    'local_text'
+  // Import Mode: 'local_photo_ocr' (100% Local Geometric Photo OCR) | 'local_text' (Offline text paste)
+  const [importTab, setImportTab] = useState<'local_photo_ocr' | 'local_text'>(
+    'local_photo_ocr'
   );
   const [bulkText, setBulkText] = useState('');
-  const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrError, setOcrError] = useState<string | null>(null);
-  const [privacyConsent, setPrivacyConsent] = useState(false);
-  const [remainingOcrQuota, setRemainingOcrQuota] = useState<number | null>(
-    null
-  );
 
   // Editable Verification Table for OCR / Bulk Import (P1 #3 & P0 #5)
   const [verificationRows, setVerificationRows] = useState<ParsedRosterRow[]>(
@@ -294,98 +290,6 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
       return;
     }
     setVerificationRows(parsed);
-  };
-
-  const handleOcrFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setOcrError(null);
-
-    // P0 #8: Require explicit privacy consent before external upload
-    if (!privacyConsent) {
-      setOcrError(
-        'Görseli harici OCR servisine göndermeden önce lütfen KVKK / Veri Gizliliği onay kutusunu işaretleyin veya Yerel (Çevrimdışı) Metin Aktarımını kullanın.'
-      );
-      e.target.value = '';
-      return;
-    }
-
-    setOcrLoading(true);
-    try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          const base64Data = result.split(',')[1] || '';
-          resolve(base64Data);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-
-      const response = await fetch('/api/ocr-roster', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          base64Image: base64,
-          mimeType: file.type || 'image/jpeg',
-          privacyConsentConfirmed: true,
-        }),
-      });
-
-      const data = await response.json();
-      if (typeof data.remainingQuota === 'number') {
-        setRemainingOcrQuota(data.remainingQuota);
-      }
-
-      if (!response.ok) {
-        // P0 #5: NEVER populate fake/sample students when OCR fails!
-        setVerificationRows([]);
-        setOcrError(
-          data.error ||
-            'OCR taraması başarısız oldu. Sahte veya örnek kayıt eklenmedi; lütfen görseli kontrol edin veya Yerel Metin Aktarımını kullanın.'
-        );
-        return;
-      }
-
-      if (Array.isArray(data.students) && data.students.length > 0) {
-        const rawRows: ParsedRosterRow[] = data.students.map(
-          (item: {
-            studentNumber?: string;
-            firstName?: string;
-            lastName?: string;
-            fullName?: string;
-          }) => {
-            const split = splitTurkishFullName(item.fullName || '');
-            const first = (item.firstName || split.firstName || '').trim();
-            const last = (item.lastName || split.lastName || '').trim();
-            return {
-              studentNumber: String(item.studentNumber || '').trim(),
-              firstName: first,
-              lastName: last,
-              fullName: `${first} ${last}`.trim(),
-              isValid: true,
-              validationErrors: [],
-            };
-          }
-        );
-        setVerificationRows(revalidateRows(rawRows));
-      } else {
-        setVerificationRows([]);
-        setOcrError(
-          'Görselde geçerli öğrenci satırı tespit edilemedi. Sahte kayıt üretilmedi.'
-        );
-      }
-    } catch {
-      // P0 #5: Never fall back to fake sample students
-      setVerificationRows([]);
-      setOcrError(
-        'Sunucu bağlantısı kurulamadı. Çevrimdışı (Yerel) Metin/Tablo Aktarım modunu kullanarak internet olmadan öğrenci ekleyebilirsiniz.'
-      );
-    } finally {
-      setOcrLoading(false);
-      e.target.value = '';
-    }
   };
 
   const handleCommitVerifiedRoster = () => {
@@ -572,10 +476,10 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
         </div>
       )}
 
-      {/* Main Two-Column Area: Current Roster & Smart Import */}
+      {/* Main Two-Column Area: Current Roster & Local Geometric OCR / Text Import */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Existing Students List + Single Add + Edit + Audit Log */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+        <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -611,7 +515,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                 aria-label="Öğrenci Okul Numarası"
                 value={singleStudentNum}
                 onChange={(e) => setSingleStudentNum(e.target.value)}
-                placeholder="Okul No (Örn: 115)"
+                placeholder="Okul No"
                 className="sm:col-span-3 px-3 py-2 text-xs font-mono-num bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
               />
               <input
@@ -837,21 +741,35 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
           </div>
         </div>
 
-        {/* Right: Controlled OCR & Offline Roster Import + Separate Field Verification */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+        {/* Right: 100% Local Geometric Photo OCR & Offline Text Roster Import */}
+        <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
           <div>
             <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
               <Camera className="w-4 h-4 text-teal-700" />
-              Sınıf Listesi Aktarımı ve Doğrulama (Yerel &amp; OCR)
+              Sınıf Listesi Aktarımı (Yerel Fotoğraf OCR &amp; Metin)
             </h2>
             <p className="text-xs text-slate-600 mt-1">
-              Öğrenci numarası, ad ve soyad sütunları ayrı ayrı doğrulanır. Eksik
-              okul numarası için asla rastgele numara üretilmez.
+              Öğrenci verileri hiçbir harici servise gönderilmeden tarayıcı içinde çözümlenir; fiziksel tablo satırları ve sütun koordinatlarıyla doğrulanır.
             </p>
           </div>
 
-          {/* Mode Switcher: Offline Local vs Cloud OCR */}
+          {/* Mode Switcher: 100% Local Photo OCR vs Local Text Paste */}
           <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl">
+            <button
+              type="button"
+              onClick={() => {
+                setImportTab('local_photo_ocr');
+                setOcrError(null);
+              }}
+              className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                importTab === 'local_photo_ocr'
+                  ? 'bg-white text-teal-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5 text-teal-700" />
+              Fotoğraftan Yerel OCR
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -865,31 +783,31 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
               }`}
             >
               <WifiOff className="w-3.5 h-3.5 text-teal-700" />
-              Yerel / Çevrimdışı Aktarım
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setImportTab('cloud_ocr');
-                setOcrError(null);
-              }}
-              className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
-                importTab === 'cloud_ocr'
-                  ? 'bg-white text-teal-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Camera className="w-3.5 h-3.5 text-teal-700" />
-              Kontrollü Fotoğraf OCR
+              Metin / Tablo Yapıştır
             </button>
           </div>
 
-          {importTab === 'local_text' ? (
+          {importTab === 'local_photo_ocr' ? (
+            <LocalOcrVerificationPanel
+              activeClassId={activeClassroom?.id || ''}
+              activeClassName={activeClassroom?.name || 'Sınıf'}
+              existingClassroomStudents={students.filter(
+                (s) => s.classId === activeClassroom?.id
+              )}
+              onCommitStudents={(created) => {
+                onAddStudents(created);
+                setImportSuccessBanner(
+                  `${created.length} öğrenci yerel geometrik tablo OCR ve öğretmen doğrulamasından geçerek ${activeClassroom?.name} listesine atomik olarak eklendi.`
+                );
+                setTimeout(() => setImportSuccessBanner(null), 5000);
+              }}
+            />
+          ) : (
             <div className="space-y-3">
               <div className="bg-teal-50/70 border border-teal-200 rounded-lg p-3 text-xs text-teal-950 flex items-start gap-2">
                 <ShieldCheck className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
                 <div>
-                  <strong>%100 Çevrimdışı ve Veri Gizliliği Korumalı:</strong>{' '}
+                  <strong>%100 Çevrimdışı Metin Ayrıştırma:</strong>{' '}
                   Verileriniz cihaz dışına çıkmadan yerel olarak ayrıştırılır.
                   e-Okul veya Excel listesinden kopyaladığınız satırları
                   yapıştırın.
@@ -922,72 +840,6 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
               >
                 Satırları Ayrıştır ve Doğrulama Tablosunda İncele
               </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {/* P0 #8: Privacy Consent & Quota Control */}
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2 text-xs text-amber-950">
-                <div className="flex items-center justify-between font-bold">
-                  <span className="flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-amber-800" />
-                    KVKK ve Harici Servis Veri Gizliliği Kontrolü
-                  </span>
-                  {remainingOcrQuota !== null && (
-                    <span className="font-mono-num text-[11px] bg-white px-2 py-0.5 rounded border border-amber-300">
-                      Kalan Kota: {remainingOcrQuota}/10
-                    </span>
-                  )}
-                </div>
-                <p className="text-[11px] text-amber-900 leading-relaxed">
-                  Yüklenen sınıf listesi görseli yalnızca metin ayrıştırma
-                  amacıyla şifreli bağlantı üzerinden OCR servisine iletilir ve
-                  saklanmaz. Öğrenci yüz fotoğrafı içeren görselleri
-                  yüklemeyiniz.
-                </p>
-                <label className="flex items-center gap-2 font-semibold text-slate-900 cursor-pointer pt-1">
-                  <input
-                    type="checkbox"
-                    checked={privacyConsent}
-                    onChange={(e) => setPrivacyConsent(e.target.checked)}
-                    className="rounded border-amber-400 text-teal-700 focus:ring-teal-600"
-                  />
-                  <span>
-                    Görselin yalnızca sınıf listesi metni içerdiğini ve harici
-                    OCR servisine gönderilmesini onaylıyorum.
-                  </span>
-                </label>
-              </div>
-
-              <label
-                className={`block border-2 border-dashed rounded-xl p-4 text-center transition-colors ${
-                  privacyConsent
-                    ? 'border-slate-300 hover:border-teal-600 cursor-pointer bg-slate-50/60'
-                    : 'border-slate-200 bg-slate-100 opacity-70 cursor-not-allowed'
-                }`}
-              >
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleOcrFileUpload}
-                  className="hidden"
-                  disabled={ocrLoading || !privacyConsent}
-                />
-                <div className="flex flex-col items-center gap-1.5">
-                  {ocrLoading ? (
-                    <Loader2 className="w-6 h-6 text-teal-700 animate-spin" />
-                  ) : (
-                    <Camera className="w-6 h-6 text-slate-600" />
-                  )}
-                  <span className="text-xs font-bold text-slate-800">
-                    {ocrLoading
-                      ? 'Görseldeki Sütunlar Okunuyor...'
-                      : 'Sınıf Listesi Görseli Seç (JPEG / PNG)'}
-                  </span>
-                  <span className="text-[11px] text-slate-500">
-                    Okul No, Ad ve Soyad ayrı sütunlar olarak doğrulanır (Maks 4.5MB)
-                  </span>
-                </div>
-              </label>
             </div>
           )}
 

@@ -324,16 +324,10 @@ export function applyGroupScoresToMembers(
       ? { ...existing.directCriterionScores }
       : undefined;
 
-    const nextGroupScores = {
-      ...(existing?.groupCriterionScores || {}),
-      ...group.criterionScores,
-    };
+    const nextGroupScores = { ...(group.criterionScores || {}) };
     const nextGroupDirect = group.directCriterionScores
-      ? {
-          ...(existing?.groupDirectScores || {}),
-          ...group.directCriterionScores,
-        }
-      : existing?.groupDirectScores;
+      ? { ...group.directCriterionScores }
+      : undefined;
 
     const existingNote = existing?.note ? existing.note.trim() : '';
     const groupNoteClean = group.groupNote ? group.groupNote.trim() : '';
@@ -343,9 +337,11 @@ export function applyGroupScoresToMembers(
       ? existingTags
       : [...existingTags, 'Grup Çalışması'];
 
-    const hasIndividualScores = Object.values(preservedIndividualScores).some((v) =>
-      isScoreAssigned(v)
-    );
+    const hasIndividualScores =
+      Object.values(preservedIndividualScores).some((v) => isScoreAssigned(v)) ||
+      Object.values(preservedIndividualDirect || {}).some((v) =>
+        isScoreAssigned(v)
+      );
 
     updated[studentId] = {
       studentId,
@@ -353,9 +349,11 @@ export function applyGroupScoresToMembers(
       directCriterionScores: preservedIndividualDirect,
       groupCriterionScores: nextGroupScores,
       groupDirectScores: nextGroupDirect,
-      groupNote: groupNoteClean || existing?.groupNote || '',
+      groupNote: groupNoteClean,
       groupId: group.id,
-      activeScoreSource: hasIndividualScores ? existing?.activeScoreSource || 'individual' : 'group',
+      activeScoreSource: hasIndividualScores
+        ? existing?.activeScoreSource || 'individual'
+        : 'group',
       note: existingNote,
       tags: nextTags,
       updatedAt: timestampIso,
@@ -364,6 +362,195 @@ export function applyGroupScoresToMembers(
   }
 
   return updated;
+}
+
+/**
+ * Determines whether auto-advance to the next pending student/group should trigger:
+ * Strictly triggers ONLY when transitioning from incomplete (`wasCompleteBefore === false`)
+ * to complete (`isCompleteAfter === true`) — never when editing an already completed evaluation.
+ */
+export function shouldTriggerAutoAdvance(
+  wasCompleteBefore: boolean,
+  isCompleteAfter: boolean,
+  autoAdvanceEnabled: boolean
+): boolean {
+  return !wasCompleteBefore && isCompleteAfter && autoAdvanceEnabled;
+}
+
+export type GroupLifecycleState =
+  | 'in_progress'
+  | 'completed_unapplied'
+  | 'applied';
+
+export interface GroupLifecycleStatus {
+  state: GroupLifecycleState;
+  shortLabel: string;
+  label: string;
+  completedCriteriaCount: number;
+  totalCriteriaCount: number;
+  isComplete: boolean;
+  finalScoreOutOf100: number | null;
+  performanceLabel: string;
+  appliedMemberCount: number;
+  totalMemberCount: number;
+  hasStaleMemberScores: boolean;
+}
+
+/**
+ * Computes the explicit 3-stage lifecycle status for a group evaluation:
+ * 1. `in_progress` ("Puanlanıyor"): Not all criteria are scored yet; definitive score is null.
+ * 2. `completed_unapplied` ("Tamamlandı"): All criteria are scored, but scores have not yet been applied
+ *    to group members (or group scores/members changed since last application).
+ * 3. `applied` ("Üyelere Uygulandı"): All criteria are scored AND all current group members have
+ *    synchronized reflected group scores in `evaluations`.
+ */
+export function getGroupLifecycleStatus(
+  rubric: Rubric,
+  group: StudentGroup,
+  evaluations: Record<string, StudentEvaluation>
+): GroupLifecycleStatus {
+  const calc = calculateWeightedScore(
+    rubric,
+    group.criterionScores || {},
+    group.directCriterionScores
+  );
+  const totalMemberCount = group.studentIds.length;
+  let appliedMemberCount = 0;
+  let membersWithAnyGroupScore = 0;
+
+  for (const stuId of group.studentIds) {
+    const ev = evaluations[stuId];
+    if (!ev) continue;
+
+    const hasAnyReflected =
+      Object.values(ev.groupCriterionScores || {}).some((v) =>
+        isScoreAssigned(v)
+      ) ||
+      Object.values(ev.groupDirectScores || {}).some((v) =>
+        isScoreAssigned(v)
+      ) ||
+      Boolean(ev.groupNote && ev.groupNote.trim());
+
+    if (hasAnyReflected) {
+      membersWithAnyGroupScore += 1;
+    }
+
+    const matchesGroupIdentity =
+      ev.groupId === group.id || ev.evaluatedViaGroup === group.name;
+    if (!matchesGroupIdentity || calc.completedCriteriaCount === 0) {
+      continue;
+    }
+
+    let allCriteriaMatch = true;
+    for (const crit of rubric.criteria) {
+      const grpDirect = group.directCriterionScores?.[crit.id];
+      const stuDirect = ev.groupDirectScores?.[crit.id];
+      const grpLvl = group.criterionScores?.[crit.id];
+      const stuLvl = ev.groupCriterionScores?.[crit.id];
+
+      if (isScoreAssigned(grpDirect) || isScoreAssigned(stuDirect)) {
+        if ((grpDirect ?? null) !== (stuDirect ?? null)) {
+          allCriteriaMatch = false;
+          break;
+        }
+      } else if ((grpLvl ?? null) !== (stuLvl ?? null)) {
+        allCriteriaMatch = false;
+        break;
+      }
+    }
+
+    const grpNoteClean = (group.groupNote || '').trim();
+    const stuNoteClean = (ev.groupNote || '').trim();
+    if (allCriteriaMatch && grpNoteClean === stuNoteClean) {
+      appliedMemberCount += 1;
+    }
+  }
+
+  const hasStaleMemberScores =
+    membersWithAnyGroupScore > 0 && appliedMemberCount < totalMemberCount;
+
+  if (!calc.isComplete) {
+    return {
+      state: 'in_progress',
+      shortLabel: 'Puanlanıyor',
+      label: `Puanlanıyor (${calc.completedCriteriaCount}/${calc.totalCriteriaCount} Ölçüt)`,
+      completedCriteriaCount: calc.completedCriteriaCount,
+      totalCriteriaCount: calc.totalCriteriaCount,
+      isComplete: false,
+      finalScoreOutOf100: null,
+      performanceLabel: calc.performanceLabel,
+      appliedMemberCount,
+      totalMemberCount,
+      hasStaleMemberScores,
+    };
+  }
+
+  if (totalMemberCount > 0 && appliedMemberCount === totalMemberCount) {
+    return {
+      state: 'applied',
+      shortLabel: 'Üyelere Uygulandı',
+      label: `Üyelere Uygulandı (${appliedMemberCount}/${totalMemberCount} Üye)`,
+      completedCriteriaCount: calc.completedCriteriaCount,
+      totalCriteriaCount: calc.totalCriteriaCount,
+      isComplete: true,
+      finalScoreOutOf100: calc.finalScoreOutOf100,
+      performanceLabel: calc.performanceLabel,
+      appliedMemberCount,
+      totalMemberCount,
+      hasStaleMemberScores: false,
+    };
+  }
+
+  return {
+    state: 'completed_unapplied',
+    shortLabel: 'Tamamlandı',
+    label:
+      totalMemberCount === 0
+        ? 'Tamamlandı (Gruba Üye Ekleyin)'
+        : hasStaleMemberScores
+        ? 'Tamamlandı (Güncellemeyi Üyelere Uygulayın)'
+        : 'Tamamlandı (Üyelere Uygulanmayı Bekliyor)',
+    completedCriteriaCount: calc.completedCriteriaCount,
+    totalCriteriaCount: calc.totalCriteriaCount,
+    isComplete: true,
+    finalScoreOutOf100: calc.finalScoreOutOf100,
+    performanceLabel: calc.performanceLabel,
+    appliedMemberCount,
+    totalMemberCount,
+    hasStaleMemberScores,
+  };
+}
+
+/**
+ * Finds the next group in the session that is either not yet completed or not yet applied to members.
+ */
+export function getNextPendingGroup(
+  groups: StudentGroup[],
+  evaluations: Record<string, StudentEvaluation>,
+  rubric: Rubric,
+  currentGroupId: string
+): StudentGroup | null {
+  if (groups.length === 0) return null;
+  const currentIdx = groups.findIndex((g) => g.id === currentGroupId);
+
+  for (let i = currentIdx + 1; i < groups.length; i++) {
+    const g = groups[i];
+    const status = getGroupLifecycleStatus(rubric, g, evaluations);
+    if (status.state !== 'applied') {
+      return g;
+    }
+  }
+
+  for (let i = 0; i <= currentIdx && i < groups.length; i++) {
+    const g = groups[i];
+    if (g.id === currentGroupId) continue;
+    const status = getGroupLifecycleStatus(rubric, g, evaluations);
+    if (status.state !== 'applied') {
+      return g;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -1168,9 +1355,29 @@ export function reconcileGroupEvaluationsWithMemberships(
     }
   }
 
-  // 2. Also ensure any newly added member of a group that already has scores gets synced even if they had no prior evaluation entry
+  // 2. Also ensure any newly added member of a group that ALREADY had scores applied gets synced
   for (const [stuId, grp] of currentGroupByStudentId.entries()) {
-    if (!updated[stuId] && hasGroupEvaluationData(grp)) {
+    const groupWasAlreadyApplied =
+      Boolean(grp.lastAppliedAt) ||
+      grp.studentIds.some((id) => {
+        const ev = updated[id];
+        return (
+          ev &&
+          (ev.groupId === grp.id || ev.evaluatedViaGroup === grp.name) &&
+          (Object.values(ev.groupCriterionScores || {}).some((v) =>
+            isScoreAssigned(v)
+          ) ||
+            Object.values(ev.groupDirectScores || {}).some((v) =>
+              isScoreAssigned(v)
+            ))
+        );
+      });
+
+    if (
+      !updated[stuId] &&
+      hasGroupEvaluationData(grp) &&
+      groupWasAlreadyApplied
+    ) {
       updated[stuId] = {
         studentId: stuId,
         criterionScores: {},

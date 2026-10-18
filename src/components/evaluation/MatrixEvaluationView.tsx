@@ -57,7 +57,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
               className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Hızlı Karta Dön
+              Değerlendirme Kartlarına Dön
             </button>
             <div>
               <h2 className="text-sm font-bold text-slate-900">

@@ -1,0 +1,1629 @@
+import type {
+  BoundingBox,
+  ColumnRole,
+  OcrCellReReadOutput,
+  OcrEngineAdapter,
+  OcrEngineOptions,
+  OcrEngineOutput,
+  OcrWordAlternative,
+  OcrWordToken,
+  RawBinaryImage,
+  RawGrayImage,
+} from './ocrTypes.ts';
+import {
+  adaptiveLocalBinarize,
+  preprocessRosterImage,
+  upscaleGrayImageBilinear,
+} from './imagePreprocessor.ts';
+
+const NORM_W = 16;
+const NORM_H = 24;
+
+interface GlyphTemplate {
+  char: string;
+  isDigit: boolean;
+  isUpper: boolean;
+  isLower: boolean;
+  hasTopDiacritic: boolean;
+  hasBottomDiacritic: boolean;
+  aspectRatio: number;
+  grid: Float32Array; // length NORM_W * NORM_H (0..1)
+}
+
+/**
+ * Built-in 7x11 crisp bitmap patterns for deterministic glyph rendering in headless/Node
+ * environments AND as baseline structural templates alongside browser Canvas fonts.
+ */
+const BUILTIN_BITMAP_FONT: Record<string, string[]> = {
+  '0': [
+    '  ###  ',
+    ' #   # ',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' #   # ',
+    '  ###  ',
+  ],
+  '1': [
+    '   #   ',
+    '  ##   ',
+    ' # #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    ' ##### ',
+  ],
+  '2': [
+    ' ##### ',
+    '#     #',
+    '      #',
+    '     # ',
+    '   ##  ',
+    '  #    ',
+    ' #     ',
+    '#      ',
+    '#######',
+  ],
+  '3': [
+    ' ##### ',
+    '#     #',
+    '      #',
+    '  #### ',
+    '      #',
+    '      #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  '4': [
+    '    #  ',
+    '   ##  ',
+    '  # #  ',
+    ' #  #  ',
+    '#   #  ',
+    '#######',
+    '    #  ',
+    '    #  ',
+    '    #  ',
+  ],
+  '5': [
+    '#######',
+    '#      ',
+    '#      ',
+    '###### ',
+    '      #',
+    '      #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  '6': [
+    '  #### ',
+    ' #     ',
+    '#      ',
+    '###### ',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  '7': [
+    '#######',
+    '     # ',
+    '    #  ',
+    '   #   ',
+    '   #   ',
+    '  #    ',
+    '  #    ',
+    '  #    ',
+    '  #    ',
+  ],
+  '8': [
+    ' ##### ',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  '9': [
+    ' ##### ',
+    '#     #',
+    '#     #',
+    ' ######',
+    '      #',
+    '      #',
+    '     # ',
+    ' ####  ',
+    '       ',
+  ],
+  A: [
+    '  ###  ',
+    ' #   # ',
+    '#     #',
+    '#     #',
+    '#######',
+    '#     #',
+    '#     #',
+    '#     #',
+    '       ',
+  ],
+  B: [
+    '###### ',
+    '#     #',
+    '#     #',
+    '###### ',
+    '#     #',
+    '#     #',
+    '#     #',
+    '###### ',
+    '       ',
+  ],
+  C: [
+    ' ##### ',
+    '#     #',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  Ç: [
+    ' ##### ',
+    '#     #',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#     #',
+    ' ##### ',
+    '   #   ',
+    '  ##   ',
+  ],
+  D: [
+    '#####  ',
+    '#    # ',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#    # ',
+    '#####  ',
+    '       ',
+  ],
+  E: [
+    '#######',
+    '#      ',
+    '#      ',
+    '#####  ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#######',
+    '       ',
+  ],
+  F: [
+    '#######',
+    '#      ',
+    '#      ',
+    '#####  ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '       ',
+  ],
+  G: [
+    ' ##### ',
+    '#     #',
+    '#      ',
+    '#  ####',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  Ğ: [
+    '  ###  ',
+    ' ##### ',
+    '#      ',
+    '#  ####',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+    '       ',
+  ],
+  H: [
+    '#     #',
+    '#     #',
+    '#     #',
+    '#######',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '       ',
+  ],
+  I: [
+    ' ##### ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    ' ##### ',
+    '       ',
+  ],
+  İ: [
+    '   #   ',
+    '       ',
+    ' ##### ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    ' ##### ',
+    '       ',
+  ],
+  J: [
+    '  #####',
+    '     # ',
+    '     # ',
+    '     # ',
+    '     # ',
+    '#    # ',
+    '#    # ',
+    ' ####  ',
+    '       ',
+  ],
+  K: [
+    '#    # ',
+    '#   #  ',
+    '#  #   ',
+    '###    ',
+    '#  #   ',
+    '#   #  ',
+    '#    # ',
+    '#     #',
+    '       ',
+  ],
+  L: [
+    '#      ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#######',
+    '       ',
+  ],
+  M: [
+    '#     #',
+    '##   ##',
+    '# # # #',
+    '#  #  #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '       ',
+  ],
+  N: [
+    '#     #',
+    '##    #',
+    '# #   #',
+    '#  #  #',
+    '#   # #',
+    '#    ##',
+    '#     #',
+    '#     #',
+    '       ',
+  ],
+  O: [
+    ' ##### ',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  Ö: [
+    ' #   # ',
+    ' ##### ',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+    '       ',
+  ],
+  P: [
+    '###### ',
+    '#     #',
+    '#     #',
+    '###### ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '#      ',
+    '       ',
+  ],
+  R: [
+    '###### ',
+    '#     #',
+    '#     #',
+    '###### ',
+    '#   #  ',
+    '#    # ',
+    '#     #',
+    '#     #',
+    '       ',
+  ],
+  S: [
+    ' ##### ',
+    '#     #',
+    '#      ',
+    ' ##### ',
+    '      #',
+    '      #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  Ş: [
+    ' ##### ',
+    '#     #',
+    '#      ',
+    ' ##### ',
+    '      #',
+    '#     #',
+    ' ##### ',
+    '   #   ',
+    '  ##   ',
+  ],
+  T: [
+    '#######',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '       ',
+  ],
+  U: [
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+  ],
+  Ü: [
+    ' #   # ',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' ##### ',
+    '       ',
+    '       ',
+  ],
+  V: [
+    '#     #',
+    '#     #',
+    '#     #',
+    '#     #',
+    ' #   # ',
+    ' #   # ',
+    '  # #  ',
+    '   #   ',
+    '       ',
+  ],
+  Y: [
+    '#     #',
+    '#     #',
+    ' #   # ',
+    '  # #  ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '   #   ',
+    '       ',
+  ],
+  Z: [
+    '#######',
+    '     # ',
+    '    #  ',
+    '   #   ',
+    '  #    ',
+    ' #     ',
+    '#      ',
+    '#######',
+    '       ',
+  ],
+};
+
+/**
+ * Common Turkish roster vocabulary (headers + frequent Turkish names & surnames)
+ * used strictly to boost confidence or provide ranked alternatives when OCR characters are noisy.
+ */
+const TURKISH_ROSTER_LEXICON = [
+  'SIRA',
+  'OKUL',
+  'NO',
+  'ADI',
+  'SOYADI',
+  'CİNSİYET',
+  'CINSIYET',
+  'ÖĞRENCİ',
+  'SINIF',
+  'ŞUBE',
+  'AYŞE',
+  'NUR',
+  'ÇELİK',
+  'MEHMET',
+  'DEMİR',
+  'ELİF',
+  'YILMAZ',
+  'KEREM',
+  'ZEYNEP',
+  'KAYA',
+  'MERT',
+  'DEFNE',
+  'ŞAHİN',
+  'CANER',
+  'AYDIN',
+  'NİLÜFER',
+  'YILDIZ',
+  'EMİRHAN',
+  'ÖZTÜRK',
+  'BEREN',
+  'SU',
+  'KARAHAN',
+  'KUZEY',
+  'ALP',
+  'TEKİN',
+  'DURU',
+  'ERDEM',
+  'ALİ',
+  'AHMET',
+  'MUSTAFA',
+  'FATMA',
+  'HATİCE',
+  'EMİNE',
+  'HÜSEYİN',
+  'HASAN',
+  'İBRAHİM',
+  'ÖMER',
+  'YUSUF',
+  'EYMEN',
+  'MİRAÇ',
+  'BERAT',
+  'YİĞİT',
+  'KAAN',
+  'DENİZ',
+  'ECEM',
+  'YAĞMUR',
+  'IRMAK',
+  ' Eylül',
+  'ARSLAN',
+  'DOĞAN',
+  'KILIÇ',
+  'ASLAN',
+  'ÇETİN',
+  'KARA',
+  'KOÇ',
+  'KURT',
+  'ÖZKAN',
+  'ŞİMŞEK',
+  'POLAT',
+  'ÖZDEMİR',
+  'KORKMAZ',
+  'ÇAKIR',
+  'ERDOĞAN',
+  'YAVUZ',
+  'GÜLER',
+  'AKSOY',
+  'AKTAŞ',
+  'GÜNEŞ',
+  'BOZKURT',
+  'ÜNAL',
+  'AVCI',
+];
+
+function normalizeBinaryPatchToGrid(
+  mask: Uint8Array,
+  imgW: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number
+): Float32Array {
+  const out = new Float32Array(NORM_W * NORM_H);
+  const bw = Math.max(1, x1 - x0 + 1);
+  const bh = Math.max(1, y1 - y0 + 1);
+
+  for (let gy = 0; gy < NORM_H; gy++) {
+    const sy0 = y0 + (gy * bh) / NORM_H;
+    const sy1 = y0 + ((gy + 1) * bh) / NORM_H;
+    const iy0 = Math.floor(sy0);
+    const iy1 = Math.min(y1, Math.floor(sy1));
+
+    for (let gx = 0; gx < NORM_W; gx++) {
+      const sx0 = x0 + (gx * bw) / NORM_W;
+      const sx1 = x0 + ((gx + 1) * bw) / NORM_W;
+      const ix0 = Math.floor(sx0);
+      const ix1 = Math.min(x1, Math.floor(sx1));
+
+      let sum = 0;
+      let count = 0;
+      for (let py = iy0; py <= iy1; py++) {
+        for (let px = ix0; px <= ix1; px++) {
+          sum += mask[py * imgW + px] ? 1 : 0;
+          count++;
+        }
+      }
+      out[gy * NORM_W + gx] = count > 0 ? sum / count : 0;
+    }
+  }
+  return out;
+}
+
+function buildBuiltinTemplates(): GlyphTemplate[] {
+  const templates: GlyphTemplate[] = [];
+
+  for (const [char, rows] of Object.entries(BUILTIN_BITMAP_FONT)) {
+    const h = rows.length;
+    const w = rows[0].length;
+    const scale = 3;
+    const bw = w * scale;
+    const bh = h * scale;
+    const mask = new Uint8Array(bw * bh);
+
+    let minX = bw;
+    let minY = bh;
+    let maxX = 0;
+    let maxY = 0;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (rows[y][x] === '#') {
+          for (let dy = 0; dy < scale; dy++) {
+            for (let dx = 0; dx < scale; dx++) {
+              const px = x * scale + dx;
+              const py = y * scale + dy;
+              mask[py * bw + px] = 1;
+              if (px < minX) minX = px;
+              if (py < minY) minY = py;
+              if (px > maxX) maxX = px;
+              if (py > maxY) maxY = py;
+            }
+          }
+        }
+      }
+    }
+
+    if (maxX >= minX && maxY >= minY) {
+      const grid = normalizeBinaryPatchToGrid(mask, bw, minX, minY, maxX, maxY);
+      templates.push({
+        char,
+        isDigit: /^[0-9]$/.test(char),
+        isUpper: !/^[0-9]$/.test(char),
+        isLower: false,
+        hasTopDiacritic: ['Ğ', 'İ', 'Ö', 'Ü'].includes(char),
+        hasBottomDiacritic: ['Ç', 'Ş'].includes(char),
+        aspectRatio: (maxX - minX + 1) / Math.max(1, maxY - minY + 1),
+        grid,
+      });
+    }
+  }
+
+  // In browser environments, also build templates from native Canvas font rendering
+  if (typeof document !== 'undefined') {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const chars =
+          '0123456789ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZabcçdefgğhıijklmnoöprsştuüvyz';
+        const fonts = [
+          'bold 34px sans-serif',
+          '500 34px sans-serif',
+          '34px Arial, sans-serif',
+        ];
+        for (const fontSpec of fonts) {
+          for (const ch of chars) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 64, 64);
+            ctx.fillStyle = '#000000';
+            ctx.font = fontSpec;
+            ctx.textBaseline = 'top';
+            ctx.fillText(ch, 10, 8);
+            const imgData = ctx.getImageData(0, 0, 64, 64).data;
+            const mask = new Uint8Array(64 * 64);
+            let minX = 64;
+            let minY = 64;
+            let maxX = -1;
+            let maxY = -1;
+            for (let y = 0; y < 64; y++) {
+              for (let x = 0; x < 64; x++) {
+                const lum = imgData[(y * 64 + x) * 4];
+                if (lum < 160) {
+                  mask[y * 64 + x] = 1;
+                  if (x < minX) minX = x;
+                  if (y < minY) minY = y;
+                  if (x > maxX) maxX = x;
+                  if (y > maxY) maxY = y;
+                }
+              }
+            }
+            if (maxX >= minX && maxY >= minY) {
+              const grid = normalizeBinaryPatchToGrid(
+                mask,
+                64,
+                minX,
+                minY,
+                maxX,
+                maxY
+              );
+              const upper = ch.toLocaleUpperCase('tr-TR');
+              templates.push({
+                char: upper,
+                isDigit: /^[0-9]$/.test(ch),
+                isUpper: ch === upper && !/^[0-9]$/.test(ch),
+                isLower: ch !== upper,
+                hasTopDiacritic: ['Ğ', 'İ', 'Ö', 'Ü', 'ğ', 'i', 'ö', 'ü'].includes(
+                  ch
+                ),
+                hasBottomDiacritic: ['Ç', 'Ş', 'ç', 'ş'].includes(ch),
+                aspectRatio: (maxX - minX + 1) / Math.max(1, maxY - minY + 1),
+                grid,
+              });
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore canvas creation errors in restricted environments
+    }
+  }
+
+  return templates;
+}
+
+let cachedTemplates: GlyphTemplate[] | null = null;
+function getGlyphTemplates(): GlyphTemplate[] {
+  if (!cachedTemplates) {
+    cachedTemplates = buildBuiltinTemplates();
+  }
+  return cachedTemplates;
+}
+
+/**
+ * Renders a synthetic table roster image (with borders, headers, rows, optional skew/noise)
+ * into a RawGrayImage buffer. Works identically in Node.js unit tests and Browser!
+ */
+export function renderSyntheticRosterTableToGrayImage(config: {
+  headers?: string[];
+  rows: string[][];
+  columnWidths?: number[];
+  rowHeight?: number;
+  skewDeg?: number;
+  drawGridLines?: boolean;
+}): RawGrayImage {
+  const colCount = Math.max(
+    config.headers?.length ?? 0,
+    ...config.rows.map((r) => r.length),
+    1
+  );
+  const colWidths =
+    config.columnWidths && config.columnWidths.length === colCount
+      ? config.columnWidths
+      : Array.from({ length: colCount }, (_, i) => (i === 0 ? 90 : i === 1 ? 140 : 210));
+  const rowHeight = config.rowHeight ?? 54;
+  const padX = 28;
+  const padY = 28;
+
+  const totalTableW = colWidths.reduce((a, b) => a + b, 0);
+  const totalRows = (config.headers ? 1 : 0) + config.rows.length;
+  const totalTableH = totalRows * rowHeight;
+
+  const width = totalTableW + padX * 2;
+  const height = totalTableH + padY * 2;
+  const data = new Uint8Array(width * height);
+  data.fill(250); // light paper background
+
+  const drawTextCell = (text: string, cellX0: number, cellY0: number, cellW: number) => {
+    const upper = text
+      .trim()
+      .replace(/i/g, 'İ')
+      .replace(/ı/g, 'I')
+      .toUpperCase();
+    if (!upper) return;
+
+    let charScale = 3;
+    let charW = 7 * charScale;
+    let charH = 9 * charScale;
+    let charSpacing = 5;
+
+    let totalTextW =
+      upper.length * charW + Math.max(0, upper.length - 1) * charSpacing;
+    if (totalTextW > cellW - 16) {
+      charScale = 2;
+      charW = 7 * charScale;
+      charH = 9 * charScale;
+      charSpacing = 4;
+      totalTextW =
+        upper.length * charW + Math.max(0, upper.length - 1) * charSpacing;
+    }
+
+    let curX = Math.max(
+      cellX0 + 8,
+      Math.round(cellX0 + (cellW - totalTextW) / 2)
+    );
+    const curY = Math.round(cellY0 + (rowHeight - charH) / 2);
+
+    for (const ch of upper) {
+      if (ch === ' ') {
+        curX += charW + 4;
+        continue;
+      }
+      const pattern = BUILTIN_BITMAP_FONT[ch];
+      if (pattern) {
+        for (let py = 0; py < pattern.length; py++) {
+          for (let px = 0; px < pattern[py].length; px++) {
+            if (pattern[py][px] === '#') {
+              for (let dy = 0; dy < charScale; dy++) {
+                for (let dx = 0; dx < charScale; dx++) {
+                  const ix = curX + px * charScale + dx;
+                  const iy = curY + py * charScale + dy;
+                  if (ix >= 0 && ix < width && iy >= 0 && iy < height) {
+                    data[iy * width + ix] = 25;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      curX += charW + charSpacing;
+    }
+  };
+
+  // Draw optional table grid lines
+  if (config.drawGridLines !== false) {
+    for (let r = 0; r <= totalRows; r++) {
+      const y = padY + r * rowHeight;
+      for (let x = padX; x <= padX + totalTableW; x++) {
+        if (y >= 0 && y < height && x >= 0 && x < width) {
+          data[y * width + x] = 90;
+        }
+      }
+    }
+    let accX = padX;
+    for (let c = 0; c <= colCount; c++) {
+      for (let y = padY; y <= padY + totalTableH; y++) {
+        if (y >= 0 && y < height && accX >= 0 && accX < width) {
+          data[y * width + accX] = 90;
+        }
+      }
+      if (c < colCount) accX += colWidths[c];
+    }
+  }
+
+  let curRowIdx = 0;
+  if (config.headers) {
+    let cellX = padX;
+    for (let c = 0; c < config.headers.length; c++) {
+      drawTextCell(config.headers[c], cellX, padY + curRowIdx * rowHeight, colWidths[c]);
+      cellX += colWidths[c];
+    }
+    curRowIdx++;
+  }
+
+  for (const row of config.rows) {
+    let cellX = padX;
+    for (let c = 0; c < row.length; c++) {
+      drawTextCell(row[c] || '', cellX, padY + curRowIdx * rowHeight, colWidths[c]);
+      cellX += colWidths[c];
+    }
+    curRowIdx++;
+  }
+
+  let result: RawGrayImage = { width, height, data };
+  if (config.skewDeg && Math.abs(config.skewDeg) > 0.1) {
+    // Apply forward rotation to simulate a tilted camera capture
+    result = deskewGrayImageByForwardAngle(result, config.skewDeg);
+  }
+  return result;
+}
+
+function deskewGrayImageByForwardAngle(
+  image: RawGrayImage,
+  angleDeg: number
+): RawGrayImage {
+  const { width, height, data } = image;
+  const rad = (angleDeg * Math.PI) / 180;
+  const cosA = Math.cos(rad);
+  const sinA = Math.sin(rad);
+  const cx = width / 2;
+  const cy = height / 2;
+  const out = new Uint8Array(width * height);
+  out.fill(250);
+
+  for (let y = 0; y < height; y++) {
+    const dy = y - cy;
+    for (let x = 0; x < width; x++) {
+      const dx = x - cx;
+      const sx = Math.round(dx * cosA + dy * sinA + cx);
+      const sy = Math.round(-dx * sinA + dy * cosA + cy);
+      if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
+        out[y * width + x] = data[sy * width + sx];
+      }
+    }
+  }
+  return { width, height, data: out };
+}
+
+/**
+ * Segments a cleaned binary mask into word bounding boxes using horizontal row bands
+ * and vertical gap / column divider analysis.
+ */
+export function segmentWordsFromBinaryMask(
+  binary: RawBinaryImage,
+  horizontalGridLinesY: number[] = [],
+  verticalGridLinesX: number[] = []
+): BoundingBox[] {
+  const { width, height } = binary;
+  if (width === 0 || height === 0) return [];
+
+  // Work on a local copy where residual horizontal/vertical border runs (even slightly wavy after deskew) are cleared
+  const mask = new Uint8Array(binary.mask);
+  const maxCharSpanX = Math.max(28, Math.floor(width * 0.16));
+  const maxCharSpanY = Math.max(36, Math.floor(height * 0.22));
+
+  // Clear horizontal runs wider than maxCharSpanX
+  for (let y = 0; y < height; y++) {
+    const rOff = y * width;
+    let start = -1;
+    for (let x = 0; x <= width; x++) {
+      const on = x < width ? mask[rOff + x] : 0;
+      if (on && start === -1) start = x;
+      else if (!on && start !== -1) {
+        if (x - start >= maxCharSpanX) {
+          for (let rx = start; rx < x; rx++) {
+            mask[rOff + rx] = 0;
+            if (y > 0) mask[(y - 1) * width + rx] = 0;
+            if (y + 1 < height) mask[(y + 1) * width + rx] = 0;
+          }
+        }
+        start = -1;
+      }
+    }
+  }
+
+  // Clear vertical runs taller than maxCharSpanY
+  for (let x = 0; x < width; x++) {
+    let start = -1;
+    for (let y = 0; y <= height; y++) {
+      const on = y < height ? mask[y * width + x] : 0;
+      if (on && start === -1) start = y;
+      else if (!on && start !== -1) {
+        if (y - start >= maxCharSpanY) {
+          for (let ry = start; ry < y; ry++) {
+            mask[ry * width + x] = 0;
+            if (x > 0) mask[ry * width + (x - 1)] = 0;
+            if (x + 1 < width) mask[ry * width + (x + 1)] = 0;
+          }
+        }
+        start = -1;
+      }
+    }
+  }
+
+  // 1. Horizontal projection profile to locate text lines
+  const rowCounts = new Int32Array(height);
+  const vertLineSet = new Set<number>();
+  for (const vx of verticalGridLinesX) {
+    for (let d = -2; d <= 2; d++) vertLineSet.add(vx + d);
+  }
+  const horizLineSet = new Set<number>();
+  for (const hy of horizontalGridLinesY) {
+    for (let d = -2; d <= 2; d++) horizLineSet.add(hy + d);
+  }
+
+  for (let y = 0; y < height; y++) {
+    if (horizLineSet.has(y)) continue;
+    const rowOff = y * width;
+    let cnt = 0;
+    for (let x = 0; x < width; x++) {
+      if (!vertLineSet.has(x) && mask[rowOff + x]) {
+        cnt++;
+      }
+    }
+    rowCounts[y] = cnt;
+  }
+
+  // Bridge small vertical gaps (<= 4px) so top dots/umlauts on İ, Ö, Ü, Ğ and bottom cedillas on Ç, Ş stay attached to the line
+  const activeY = new Uint8Array(height);
+  for (let y = 0; y < height; y++) {
+    if (rowCounts[y] >= 2 && !horizLineSet.has(y)) activeY[y] = 1;
+  }
+  for (let y = 1; y < height - 5; y++) {
+    if (activeY[y - 1] && !activeY[y]) {
+      let nextOn = -1;
+      for (let k = 1; k <= 5; k++) {
+        if (horizLineSet.has(y + k - 1)) break;
+        if (activeY[y + k]) {
+          nextOn = y + k;
+          break;
+        }
+      }
+      if (nextOn !== -1) {
+        for (let fill = y; fill < nextOn; fill++) activeY[fill] = 1;
+      }
+    }
+  }
+
+  const lineBands: { y0: number; y1: number }[] = [];
+  let lineStart = -1;
+  for (let y = 0; y <= height; y++) {
+    const on = y < height ? activeY[y] : 0;
+    if (on && lineStart === -1) {
+      lineStart = y;
+    } else if (!on && lineStart !== -1) {
+      const h = y - lineStart;
+      if (h >= 7) {
+        lineBands.push({ y0: lineStart, y1: y - 1 });
+      }
+      lineStart = -1;
+    }
+  }
+
+  const wordBoxes: BoundingBox[] = [];
+
+  for (const band of lineBands) {
+    const bandH = band.y1 - band.y0 + 1;
+    const colCounts = new Int32Array(width);
+    for (let x = 0; x < width; x++) {
+      if (vertLineSet.has(x)) continue;
+      let c = 0;
+      for (let y = band.y0; y <= band.y1; y++) {
+        if (mask[y * width + x]) c++;
+      }
+      colCounts[x] = c;
+    }
+
+    // Intra-word letter spacing vs inter-word gap threshold
+    const maxIntraWordGap = Math.max(7, Math.round(bandH * 0.42));
+
+    let wordStart = -1;
+    let gapRun = 0;
+
+    for (let x = 0; x <= width; x++) {
+      const hitVertBorder = vertLineSet.has(x);
+      const hasInk = x < width && !hitVertBorder && colCounts[x] > 0;
+
+      if (hasInk) {
+        if (wordStart === -1) {
+          wordStart = x;
+        }
+        gapRun = 0;
+      } else {
+        if (wordStart !== -1) {
+          gapRun++;
+          if (hitVertBorder || x === width || gapRun > maxIntraWordGap) {
+            const wordEnd = x - gapRun;
+            if (wordEnd >= wordStart) {
+              // Tighten vertical bounds [wy0, wy1] for this word
+              let wy0 = band.y1;
+              let wy1 = band.y0;
+              let inkPixels = 0;
+              for (let py = band.y0; py <= band.y1; py++) {
+                const rOff = py * width;
+                for (let px = wordStart; px <= wordEnd; px++) {
+                  if (mask[rOff + px]) {
+                    inkPixels++;
+                    if (py < wy0) wy0 = py;
+                    if (py > wy1) wy1 = py;
+                  }
+                }
+              }
+              const ww = wordEnd - wordStart + 1;
+              const wh = wy1 - wy0 + 1;
+              if (inkPixels >= 6 && ww >= 3 && wh >= 7) {
+                wordBoxes.push({
+                  x0: wordStart,
+                  y0: wy0,
+                  x1: wordEnd,
+                  y1: wy1,
+                });
+              }
+            }
+            wordStart = -1;
+            gapRun = 0;
+          }
+        }
+      }
+    }
+  }
+
+  return wordBoxes;
+}
+
+/**
+ * Segments a single word bounding box into individual character bounding boxes,
+ * keeping top/bottom Turkish diacritics merged with their base glyph.
+ */
+function segmentCharactersInWord(
+  binary: RawBinaryImage,
+  wordBox: BoundingBox
+): BoundingBox[] {
+  const { width, mask } = binary;
+  const { x0, y0, x1, y1 } = wordBox;
+  const colInk = new Int32Array(x1 - x0 + 1);
+
+  for (let x = x0; x <= x1; x++) {
+    let c = 0;
+    for (let y = y0; y <= y1; y++) {
+      if (mask[y * width + x]) c++;
+    }
+    colInk[x - x0] = c;
+  }
+
+  const rawCharSpans: { cx0: number; cx1: number }[] = [];
+  let start = -1;
+  for (let i = 0; i <= colInk.length; i++) {
+    const on = i < colInk.length && colInk[i] > 0;
+    if (on && start === -1) {
+      start = x0 + i;
+    } else if (!on && start !== -1) {
+      rawCharSpans.push({ cx0: start, cx1: x0 + i - 1 });
+      start = -1;
+    }
+  }
+
+  // Split overly wide touching character spans using minimum vertical ink valleys
+  const wordH = y1 - y0 + 1;
+  const maxSingleCharW = Math.max(16, Math.round(wordH * 1.12));
+  const splitSpans: { cx0: number; cx1: number }[] = [];
+
+  for (const span of rawCharSpans) {
+    const sw = span.cx1 - span.cx0 + 1;
+    if (sw <= maxSingleCharW) {
+      splitSpans.push(span);
+    } else {
+      const parts = Math.max(2, Math.round(sw / (wordH * 0.72)));
+      let curStart = span.cx0;
+      for (let p = 1; p < parts; p++) {
+        const idealCut = span.cx0 + Math.round((p * sw) / parts);
+        let bestCut = idealCut;
+        let minInk = Infinity;
+        for (
+          let cx = Math.max(curStart + 3, idealCut - 4);
+          cx <= Math.min(span.cx1 - 3, idealCut + 4);
+          cx++
+        ) {
+          const v = colInk[cx - x0];
+          if (v < minInk) {
+            minInk = v;
+            bestCut = cx;
+          }
+        }
+        splitSpans.push({ cx0: curStart, cx1: bestCut });
+        curStart = bestCut + 1;
+      }
+      if (curStart <= span.cx1) {
+        splitSpans.push({ cx0: curStart, cx1: span.cx1 });
+      }
+    }
+  }
+
+  const charBoxes: BoundingBox[] = [];
+  for (const sp of splitSpans) {
+    let cy0 = y1;
+    let cy1 = y0;
+    let pixels = 0;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = sp.cx0; x <= sp.cx1; x++) {
+        if (mask[y * width + x]) {
+          pixels++;
+          if (y < cy0) cy0 = y;
+          if (y > cy1) cy1 = y;
+        }
+      }
+    }
+    if (pixels >= 3 && cy1 >= cy0) {
+      charBoxes.push({ x0: sp.cx0, y0: cy0, x1: sp.cx1, y1: cy1 });
+    }
+  }
+  return charBoxes;
+}
+
+function classifyCharacterBox(
+  binary: RawBinaryImage,
+  cbox: BoundingBox,
+  wordBox: BoundingBox,
+  roleHint?: ColumnRole
+): { char: string; score: number; runnerUpChar: string; runnerUpScore: number } {
+  const templates = getGlyphTemplates();
+  const patchGrid = normalizeBinaryPatchToGrid(
+    binary.mask,
+    binary.width,
+    cbox.x0,
+    cbox.y0,
+    cbox.x1,
+    cbox.y1
+  );
+  const cw = cbox.x1 - cbox.x0 + 1;
+  const ch = cbox.y1 - cbox.y0 + 1;
+  const aspect = cw / Math.max(1, ch);
+
+  // Detect disconnected top diacritic (dot/umlaut/breve) inside character column
+  let hasDisconnectedTop = false;
+  for (let y = cbox.y0 + 1; y < cbox.y0 + Math.floor(ch * 0.42); y++) {
+    let rowInk = 0;
+    for (let x = cbox.x0; x <= cbox.x1; x++) {
+      if (binary.mask[y * binary.width + x]) rowInk++;
+    }
+    if (rowInk === 0) {
+      hasDisconnectedTop = true;
+      break;
+    }
+  }
+
+  // Detect bottom cedilla extension below word baseline
+  const wordH = Math.max(1, wordBox.y1 - wordBox.y0 + 1);
+  const extendsBottom = cbox.y1 >= wordBox.y1 && ch > wordH * 0.88;
+
+  const bestByChar = new Map<string, number>();
+
+  for (const tpl of templates) {
+    if (roleHint === 'studentNumber' || roleHint === 'sequence') {
+      if (!tpl.isDigit) continue;
+    } else if (roleHint === 'firstName' || roleHint === 'lastName' || roleHint === 'gender') {
+      if (tpl.isDigit) continue;
+    }
+
+    // Cosine / normalized cross-correlation similarity on 16x24 grid
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < patchGrid.length; i++) {
+      const a = patchGrid[i];
+      const b = tpl.grid[i];
+      dot += a * b;
+      normA += a * a;
+      normB += b * b;
+    }
+    let sim = normA > 0 && normB > 0 ? dot / Math.sqrt(normA * normB) : 0;
+
+    // Aspect ratio penalty for narrow glyphs ('1', 'I', 'İ') vs wide glyphs
+    const aspectDiff = Math.abs(aspect - tpl.aspectRatio);
+    sim -= aspectDiff * 0.14;
+
+    if (hasDisconnectedTop && tpl.hasTopDiacritic) {
+      sim += 0.08;
+    } else if (!hasDisconnectedTop && tpl.hasTopDiacritic) {
+      sim -= 0.05;
+    }
+
+    if (extendsBottom && tpl.hasBottomDiacritic) {
+      sim += 0.05;
+    }
+
+    const prev = bestByChar.get(tpl.char) ?? -1;
+    if (sim > prev) {
+      bestByChar.set(tpl.char, sim);
+    }
+  }
+
+  let bestChar = '?';
+  let bestScore = -1;
+  let runnerUpChar = '?';
+  let runnerUpScore = -1;
+
+  for (const [char, sc] of bestByChar.entries()) {
+    if (sc > bestScore) {
+      runnerUpChar = bestChar;
+      runnerUpScore = bestScore;
+      bestChar = char;
+      bestScore = sc;
+    } else if (sc > runnerUpScore) {
+      runnerUpChar = char;
+      runnerUpScore = sc;
+    }
+  }
+
+  return {
+    char: bestChar,
+    score: Math.max(0, Math.min(1, bestScore)),
+    runnerUpChar,
+    runnerUpScore: Math.max(0, Math.min(1, runnerUpScore)),
+  };
+}
+
+/**
+ * Computes visual edit similarity between a raw OCR token and a known Turkish roster lexicon word.
+ */
+function visualConfusionCost(a: string, b: string): number {
+  if (a === b) return 0;
+  const confusablePairs: [string, string, number][] = [
+    ['0', 'O', 0.18],
+    ['0', 'Ö', 0.25],
+    ['1', 'I', 0.16],
+    ['1', 'İ', 0.22],
+    ['5', 'S', 0.2],
+    ['5', 'Ş', 0.26],
+    ['8', 'B', 0.22],
+    ['2', 'Z', 0.24],
+    ['C', 'Ç', 0.15],
+    ['G', 'Ğ', 0.15],
+    ['I', 'İ', 0.14],
+    ['O', 'Ö', 0.15],
+    ['S', 'Ş', 0.15],
+    ['U', 'Ü', 0.15],
+    ['E', 'F', 0.28],
+    ['D', 'O', 0.28],
+    ['R', 'P', 0.28],
+    ['M', 'N', 0.3],
+    ['K', 'R', 0.32],
+  ];
+  for (const [x, y, cost] of confusablePairs) {
+    if ((a === x && b === y) || (a === y && b === x)) return cost;
+  }
+  return 1.0;
+}
+
+function weightedEditDistance(s1: string, s2: string): number {
+  const m = s1.length;
+  const n = s2.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array(n + 1).fill(0)
+  );
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const subCost = visualConfusionCost(s1[i - 1], s2[j - 1]);
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 0.9,
+        dp[i][j - 1] + 0.9,
+        dp[i - 1][j - 1] + subCost
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+function recognizeWordFromCharacterBoxes(
+  binary: RawBinaryImage,
+  wordBox: BoundingBox,
+  roleHint?: ColumnRole
+): {
+  text: string;
+  confidence: number;
+  alternatives: OcrWordAlternative[];
+} {
+  const charBoxes = segmentCharactersInWord(binary, wordBox);
+  if (charBoxes.length === 0) {
+    return { text: '', confidence: 0, alternatives: [] };
+  }
+
+  const classified = charBoxes.map((cb) =>
+    classifyCharacterBox(binary, cb, wordBox, roleHint)
+  );
+
+  let rawText = classified.map((c) => c.char).join('');
+  const avgScore =
+    classified.reduce((acc, c) => acc + c.score, 0) / classified.length;
+
+  const alternatives: OcrWordAlternative[] = [];
+
+  // Build runner-up alternative if any character had a close second candidate
+  const hasCloseRunnerUp = classified.some(
+    (c) => c.runnerUpChar !== '?' && c.score - c.runnerUpScore < 0.08
+  );
+  if (hasCloseRunnerUp) {
+    const altStr = classified
+      .map((c) =>
+        c.runnerUpChar !== '?' && c.score - c.runnerUpScore < 0.08
+          ? c.runnerUpChar
+          : c.char
+      )
+      .join('');
+    if (altStr !== rawText) {
+      alternatives.push({
+        text: altStr,
+        confidence: Math.round(Math.max(40, (avgScore - 0.05) * 100)),
+        reason: 'Benzer karakter geometrisi alternatifi',
+      });
+    }
+  }
+
+  // Check if token is primarily numeric vs alphabetic
+  const digitCount = classified.filter((c) => /^[0-9]$/.test(c.char)).length;
+  const lookalikeDigitCount = classified.filter((c) =>
+    /^[0-9OIİSBZ]$/.test(c.char)
+  ).length;
+
+  if (
+    roleHint === 'studentNumber' ||
+    roleHint === 'sequence' ||
+    (digitCount >= Math.ceil(classified.length * 0.5) &&
+      lookalikeDigitCount === classified.length &&
+      classified.length <= 6)
+  ) {
+    const normalizedDigits = rawText
+      .replace(/[OÖD]/g, '0')
+      .replace(/[Iİ]/g, '1')
+      .replace(/[SŞ]/g, '5')
+      .replace(/B/g, '8')
+      .replace(/Z/g, '2');
+
+    if (normalizedDigits !== rawText && /^\d+$/.test(normalizedDigits)) {
+      if (roleHint === 'studentNumber' || digitCount >= classified.length - 1) {
+        alternatives.unshift({
+          text: rawText,
+          confidence: Math.round(avgScore * 88),
+          reason: 'Ham OCR okuması',
+        });
+        rawText = normalizedDigits;
+      } else {
+        alternatives.push({
+          text: normalizedDigits,
+          confidence: Math.round(avgScore * 92),
+          reason: 'Sayısal okul numarası dönüşüm önerisi',
+        });
+      }
+    }
+  } else if (rawText.length >= 2) {
+    // Check Turkish roster lexicon for exact or near-exact visual matches
+    let bestLexWord = '';
+    let bestDist = Infinity;
+    for (const lex of TURKISH_ROSTER_LEXICON) {
+      const w = lex.trim();
+      if (Math.abs(w.length - rawText.length) > 1) continue;
+      const d = weightedEditDistance(rawText, w);
+      if (d < bestDist) {
+        bestDist = d;
+        bestLexWord = w;
+      }
+    }
+
+    if (bestLexWord && bestDist === 0) {
+      return {
+        text: bestLexWord,
+        confidence: Math.min(99, Math.round(Math.max(avgScore * 100, 94))),
+        alternatives,
+      };
+    }
+
+    if (bestLexWord && bestDist <= 0.48) {
+      // Very small visual confusion (e.g. 'CELIK' -> 'ÇELİK' or 'AYSE' -> 'AYŞE' or 'OKUL' vs '0KUL')
+      alternatives.push({
+        text: rawText,
+        confidence: Math.round(avgScore * 85),
+        reason: 'Ham karakter okuması',
+      });
+      rawText = bestLexWord;
+    } else if (bestLexWord && bestDist <= 1.15 && bestLexWord !== rawText) {
+      // Keep rawText or surface lexicon candidate as a non-destructive suggestion
+      alternatives.push({
+        text: bestLexWord,
+        confidence: Math.round(Math.max(65, avgScore * 90)),
+        reason: 'Türkçe ad/başlık sözlük eşleşme önerisi',
+      });
+    }
+  }
+
+  return {
+    text: rawText,
+    confidence: Math.min(99, Math.max(35, Math.round(avgScore * 100))),
+    alternatives,
+  };
+}
+
+/**
+ * 100% Local, Offline-Capable Turkish OCR Engine Adapter.
+ * Never transmits images or student data outside the browser.
+ */
+export class SelfContainedTurkishOcrEngine implements OcrEngineAdapter {
+  public readonly engineId = 'rubrikpad-local-tur-v1';
+  public readonly engineName =
+    'RubrikPad Yerel Türkçe Tablo OCR Motoru (Cihaz İçi / Çevrimdışı)';
+  public readonly isLocalOnly = true as const;
+
+  public async recognizeImage(
+    image: RawGrayImage,
+    options: OcrEngineOptions = {}
+  ): Promise<OcrEngineOutput> {
+    const preprocessing = preprocessRosterImage(image, options.preprocessing);
+    const {
+      gridLinesRemovedMask,
+      diagnostics: { horizontalGridLinesY, verticalGridLinesX, detectedSkewDeg },
+    } = preprocessing;
+
+    const wordBoxes = segmentWordsFromBinaryMask(
+      gridLinesRemovedMask,
+      horizontalGridLinesY,
+      verticalGridLinesX
+    );
+
+    const words: OcrWordToken[] = [];
+    wordBoxes.forEach((bbox, idx) => {
+      const recognized = recognizeWordFromCharacterBoxes(
+        gridLinesRemovedMask,
+        bbox
+      );
+      if (recognized.text.trim().length > 0) {
+        words.push({
+          id: `tok-${idx + 1}`,
+          text: recognized.text.trim(),
+          confidence: recognized.confidence,
+          bbox,
+          baselineY: bbox.y1,
+          skewDeg: detectedSkewDeg,
+          alternatives: recognized.alternatives,
+        });
+      }
+    });
+
+    return {
+      engineId: this.engineId,
+      engineName: this.engineName,
+      isLocalOnly: true,
+      words,
+      preprocessing,
+    };
+  }
+
+  /**
+   * Targeted local cell re-OCR on a cropped bounding box using multi-sensitivity thresholding
+   * and role-specific character constraints (e.g. digits for Okul No, Turkish letters for Ad/Soyad).
+   */
+  public async recognizeCellRegion(
+    image: RawGrayImage,
+    bbox: BoundingBox,
+    roleHint: ColumnRole
+  ): Promise<OcrCellReReadOutput> {
+    const pad = 4;
+    const x0 = Math.max(0, Math.floor(bbox.x0 - pad));
+    const y0 = Math.max(0, Math.floor(bbox.y0 - pad));
+    const x1 = Math.min(image.width - 1, Math.ceil(bbox.x1 + pad));
+    const y1 = Math.min(image.height - 1, Math.ceil(bbox.y1 + pad));
+    const cw = Math.max(1, x1 - x0 + 1);
+    const ch = Math.max(1, y1 - y0 + 1);
+
+    const cropData = new Uint8Array(cw * ch);
+    for (let y = 0; y < ch; y++) {
+      for (let x = 0; x < cw; x++) {
+        cropData[y * cw + x] = image.data[(y0 + y) * image.width + (x0 + x)];
+      }
+    }
+
+    const upscaled = upscaleGrayImageBilinear(
+      { width: cw, height: ch, data: cropData },
+      1.5
+    );
+
+    const sensitivities = [0.09, 0.13, 0.17];
+    let bestText = '';
+    let bestConfidence = 0;
+    const allAlternatives: OcrWordAlternative[] = [];
+
+    for (const sens of sensitivities) {
+      const bin = adaptiveLocalBinarize(upscaled, 14, sens);
+      const subBoxes = segmentWordsFromBinaryMask(bin);
+      if (subBoxes.length === 0) continue;
+
+      const parts = subBoxes.map((sb) =>
+        recognizeWordFromCharacterBoxes(bin, sb, roleHint)
+      );
+      const combinedText = parts
+        .map((p) => p.text)
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      if (!combinedText) continue;
+
+      const avgConf = Math.round(
+        parts.reduce((acc, p) => acc + p.confidence, 0) / parts.length
+      );
+
+      if (avgConf > bestConfidence) {
+        if (bestText && bestText !== combinedText) {
+          allAlternatives.push({
+            text: bestText,
+            confidence: bestConfidence,
+            reason: 'Farklı yerel eşikleme okuması',
+          });
+        }
+        bestText = combinedText;
+        bestConfidence = avgConf;
+      } else if (combinedText !== bestText) {
+        allAlternatives.push({
+          text: combinedText,
+          confidence: avgConf,
+          reason: 'Alternatif yerel hücre okuması',
+        });
+      }
+    }
+
+    return {
+      text: bestText,
+      confidence: bestConfidence,
+      alternatives: allAlternatives,
+    };
+  }
+}
+
+/**
+ * Pluggable Local OCR Engine Registry so the application is never locked to a single OCR library.
+ * Rejects any adapter that does not declare `isLocalOnly: true`.
+ */
+export class LocalOcrEngineRegistry {
+  private adapters = new Map<string, OcrEngineAdapter>();
+  private activeEngineId: string;
+
+  constructor(defaultAdapter: OcrEngineAdapter = new SelfContainedTurkishOcrEngine()) {
+    this.registerAdapter(defaultAdapter);
+    this.activeEngineId = defaultAdapter.engineId;
+  }
+
+  public registerAdapter(adapter: OcrEngineAdapter): void {
+    if (adapter.isLocalOnly !== true) {
+      throw new Error(
+        'Güvenlik İhlali: Yalnızca tamamen yerel (isLocalOnly: true) OCR motorları kaydedilebilir.'
+      );
+    }
+    this.adapters.set(adapter.engineId, adapter);
+  }
+
+  public setActiveEngine(engineId: string): void {
+    if (!this.adapters.has(engineId)) {
+      throw new Error(`OCR motoru bulunamadı: ${engineId}`);
+    }
+    this.activeEngineId = engineId;
+  }
+
+  public getActiveEngine(): OcrEngineAdapter {
+    const adapter = this.adapters.get(this.activeEngineId);
+    if (!adapter) {
+      throw new Error('Aktif yerel OCR motoru tanımlı değil.');
+    }
+    return adapter;
+  }
+
+  public listAdapters(): OcrEngineAdapter[] {
+    return Array.from(this.adapters.values());
+  }
+}
+
+export const defaultLocalOcrRegistry = new LocalOcrEngineRegistry();

@@ -28,6 +28,9 @@ import {
   checkRubricDeletionImpact,
   getSessionProgressStats,
   getNextPendingStudent,
+  getNextPendingGroup,
+  shouldTriggerAutoAdvance,
+  getGroupLifecycleStatus,
   getStudentProgressHistory,
   sanitizeCsvFormulaInjection,
   generateSessionCsv,
@@ -1650,6 +1653,102 @@ test('Audit #13: Version conflicts between localStorage and IndexedDB are safely
     __clearMemoryIndexedDbForTests();
   }
 });
+
+test('Audit #14: Smart auto-advance triggers only on last missing criterion, and Group Evaluation follows Puanlanıyor -> Tamamlandı -> Üyelere Uygulandı lifecycle', () => {
+  // 1. Smart Auto-Advance: triggers ONLY when transitioning from incomplete to complete
+  assert.equal(shouldTriggerAutoAdvance(false, true, true), true);
+  // Editing an already completed student (wasCompleteBefore === true) MUST NOT trigger auto-advance!
+  assert.equal(shouldTriggerAutoAdvance(true, true, true), false);
+  // Partial completion or disabled toggle MUST NOT trigger auto-advance!
+  assert.equal(shouldTriggerAutoAdvance(false, false, true), false);
+  assert.equal(shouldTriggerAutoAdvance(false, true, false), false);
+
+  // 2. Group Evaluation 3-Stage Lifecycle: Puanlanıyor -> Tamamlandı -> Üyelere Uygulandı
+  const grpA: StudentGroup = {
+    id: 'grp-a',
+    name: 'Grup A: Güneş Enerjisi',
+    studentIds: ['s1', 's2'],
+    criterionScores: { c1: 4 }, // 1/2 criteria scored
+    groupNote: 'İlk gözlem',
+  };
+  const grpB: StudentGroup = {
+    id: 'grp-b',
+    name: 'Grup B: Rüzgar Türbini',
+    studentIds: ['s3'],
+    criterionScores: {},
+    groupNote: '',
+  };
+
+  let evaluations = {};
+
+  // Stage 1: Puanlanıyor (1/2 criteria -> incomplete, finalScoreOutOf100 MUST be null)
+  const statusStage1 = getGroupLifecycleStatus(
+    sampleRubric,
+    grpA,
+    evaluations
+  );
+  assert.equal(statusStage1.state, 'in_progress');
+  assert.equal(statusStage1.shortLabel, 'Puanlanıyor');
+  assert.equal(statusStage1.finalScoreOutOf100, null);
+  assert.equal(statusStage1.completedCriteriaCount, 1);
+  assert.equal(statusStage1.totalCriteriaCount, 2);
+
+  // Stage 2: Tamamlandı (2/2 criteria scored, but NOT yet applied to members -> step 3 is never skipped!)
+  const grpACompleted: StudentGroup = {
+    ...grpA,
+    criterionScores: { c1: 4, c2: 3 },
+  };
+  const statusStage2 = getGroupLifecycleStatus(
+    sampleRubric,
+    grpACompleted,
+    evaluations
+  );
+  assert.equal(statusStage2.state, 'completed_unapplied');
+  assert.equal(statusStage2.shortLabel, 'Tamamlandı');
+  assert.equal(statusStage2.isComplete, true);
+  assert.equal(statusStage2.finalScoreOutOf100, 88);
+  assert.equal(statusStage2.appliedMemberCount, 0);
+
+  // Stage 3: Üyelere Uygulandı (explicitly applying group scores to members)
+  evaluations = applyGroupScoresToMembers(
+    evaluations,
+    grpACompleted,
+    '2026-10-18T12:00:00Z'
+  );
+  const statusStage3 = getGroupLifecycleStatus(
+    sampleRubric,
+    grpACompleted,
+    evaluations
+  );
+  assert.equal(statusStage3.state, 'applied');
+  assert.equal(statusStage3.shortLabel, 'Üyelere Uygulandı');
+  assert.equal(statusStage3.appliedMemberCount, 2);
+  assert.equal(statusStage3.totalMemberCount, 2);
+
+  // Next pending group after Group A is applied is Group B
+  const nextGrp = getNextPendingGroup(
+    [grpACompleted, grpB],
+    evaluations,
+    sampleRubric,
+    'grp-a'
+  );
+  assert.equal(nextGrp?.id, 'grp-b');
+
+  // Modifying a score on an already applied group transitions it back to 'completed_unapplied' with hasStaleMemberScores = true
+  const grpAModified: StudentGroup = {
+    ...grpACompleted,
+    criterionScores: { c1: 4, c2: 4 },
+  };
+  const statusAfterEdit = getGroupLifecycleStatus(
+    sampleRubric,
+    grpAModified,
+    evaluations
+  );
+  assert.equal(statusAfterEdit.state, 'completed_unapplied');
+  assert.equal(statusAfterEdit.hasStaleMemberScores, true);
+  assert.equal(statusAfterEdit.finalScoreOutOf100, 100);
+});
+
 
 
 

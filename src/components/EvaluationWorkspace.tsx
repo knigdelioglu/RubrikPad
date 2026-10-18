@@ -31,6 +31,8 @@ import {
   applyCriterionScoreToStudents,
   getSessionProgressStats,
   getNextPendingStudent,
+  getNextPendingGroup,
+  shouldTriggerAutoAdvance,
   recordSessionUndoEntry,
   generateSessionCsv,
 } from '../utils/rubricLogic.ts';
@@ -39,6 +41,7 @@ import { FastEvaluationView } from './evaluation/FastEvaluationView.tsx';
 import { MatrixEvaluationView } from './evaluation/MatrixEvaluationView.tsx';
 import { IndividualEvaluationView } from './evaluation/IndividualEvaluationView.tsx';
 import { GroupEvaluationView } from './evaluation/GroupEvaluationView.tsx';
+import type { RubricCardViewMode } from './evaluation/RubricCriterionCard.tsx';
 
 interface EvaluationWorkspaceProps {
   classrooms: Classroom[];
@@ -132,16 +135,19 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     reason: string;
   } | null>(null);
 
-  // Fast Mode & Precision Scoring State
+  // Tablet View Mode (Açıklamalı 'detailed' vs Hızlı 'compact'), Auto-Advance & Precision Scoring State
+  const [cardViewMode, setCardViewMode] =
+    useState<RubricCardViewMode>('detailed');
   const [activeCriterionIndex, setActiveCriterionIndex] = useState<number>(0);
-  const [autoAdvanceStudent, setAutoAdvanceStudent] = useState<boolean>(false);
+  const [autoAdvanceStudent, setAutoAdvanceStudent] = useState<boolean>(true);
   const [precisionScoringMode, setPrecisionScoringMode] =
     useState<boolean>(false);
   const [fastFlowSubMode, setFastFlowSubMode] = useState<'serial' | 'matrix'>(
-    'serial'
+    'matrix'
   );
   const [statusAnnouncement, setStatusAnnouncement] = useState<string>('');
   const [fastCompletionBanner, setFastCompletionBanner] = useState<{
+    completedStudentId?: string;
     completedStudentName: string;
     scoreOutOf100: number;
     nextStudentId: string | null;
@@ -155,11 +161,19 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     performanceLabel: string;
     nextStudentId: string | null;
     nextStudentName: string | null;
+    autoAdvanced?: boolean;
   } | null>(null);
 
   const [groupAppliedFeedback, setGroupAppliedFeedback] = useState<
     string | null
   >(null);
+  const [lastAppliedGroupBanner, setLastAppliedGroupBanner] = useState<{
+    previousGroupId: string;
+    previousGroupName: string;
+    appliedScoreOutOf100: number | null;
+    memberCount: number;
+    nextGroupName: string | null;
+  } | null>(null);
 
   // Sync selected student when session/class changes
   useEffect(() => {
@@ -316,6 +330,12 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           selectedStudent.id
         );
 
+        const shouldAdvance = shouldTriggerAutoAdvance(
+          prevCalc.isComplete,
+          newCalc.isComplete,
+          Boolean(options?.advanceStudentOnComplete)
+        );
+
         if (!prevCalc.isComplete) {
           setJustCompletedBanner({
             completedStudentId: selectedStudent.id,
@@ -324,11 +344,22 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             performanceLabel: newCalc.performanceLabel,
             nextStudentId: nextPending?.id || null,
             nextStudentName: nextPending?.fullName || null,
+            autoAdvanced: Boolean(shouldAdvance && nextPending),
+          });
+        } else if (
+          justCompletedBanner &&
+          justCompletedBanner.completedStudentId === selectedStudent.id
+        ) {
+          setJustCompletedBanner({
+            ...justCompletedBanner,
+            scoreOutOf100: newCalc.finalScoreOutOf100,
+            performanceLabel: newCalc.performanceLabel,
           });
         }
 
-        if (options?.advanceStudentOnComplete && nextPending) {
+        if (shouldAdvance && nextPending) {
           setFastCompletionBanner({
+            completedStudentId: selectedStudent.id,
             completedStudentName: selectedStudent.fullName,
             scoreOutOf100: newCalc.finalScoreOutOf100,
             nextStudentId: nextPending.id,
@@ -336,8 +367,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           });
           setSelectedStudentId(nextPending.id);
           setActiveCriterionIndex(0);
-        } else if (activeSession.mode === 'grid') {
+        } else if (!prevCalc.isComplete && activeSession.mode === 'grid') {
           setFastCompletionBanner({
+            completedStudentId: selectedStudent.id,
             completedStudentName: selectedStudent.fullName,
             scoreOutOf100: newCalc.finalScoreOutOf100,
             nextStudentId: nextPending?.id || null,
@@ -353,21 +385,47 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       selectedStudent,
       activeRubric,
       classStudents,
+      justCompletedBanner,
       onUpdateSession,
     ]
   );
 
   // Set Direct Integer Criterion Score (0..maxPoints) (P1 #2)
   const handleSetDirectCriterionScore = useCallback(
-    (criterionId: string, directPoints: number | null) => {
-      if (!activeSession || !selectedStudent) return;
+    (
+      criterionId: string,
+      directPoints: number | null,
+      options?: { advanceStudentOnComplete?: boolean }
+    ) => {
+      if (!activeSession || !selectedStudent || !activeRubric) return;
       const existing = activeSession.evaluations[selectedStudent.id];
+      const prevCalc = calculateWeightedScore(
+        activeRubric,
+        existing?.criterionScores || {},
+        existing?.directCriterionScores
+      );
+
       const nextDirect = { ...(existing?.directCriterionScores || {}) };
       if (directPoints === null) {
         delete nextDirect[criterionId];
       } else {
         nextDirect[criterionId] = directPoints;
       }
+
+      const nextScores = existing?.criterionScores || {};
+      const nextEvaluations = {
+        ...activeSession.evaluations,
+        [selectedStudent.id]: {
+          ...existing,
+          studentId: selectedStudent.id,
+          criterionScores: nextScores,
+          directCriterionScores: nextDirect,
+          activeScoreSource: 'individual' as const,
+          note: existing?.note || '',
+          tags: existing?.tags || [],
+          updatedAt: new Date().toISOString(),
+        },
+      };
 
       const undoHistory = recordSessionUndoEntry(activeSession, {
         scope: 'criterion',
@@ -379,23 +437,54 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
 
       onUpdateSession({
         ...activeSession,
-        evaluations: {
-          ...activeSession.evaluations,
-          [selectedStudent.id]: {
-            ...existing,
-            studentId: selectedStudent.id,
-            criterionScores: existing?.criterionScores || {},
-            directCriterionScores: nextDirect,
-            activeScoreSource: 'individual',
-            note: existing?.note || '',
-            tags: existing?.tags || [],
-            updatedAt: new Date().toISOString(),
-          },
-        },
+        evaluations: nextEvaluations,
         undoHistory,
       });
+
+      const newCalc = calculateWeightedScore(
+        activeRubric,
+        nextScores,
+        nextDirect
+      );
+
+      if (newCalc.isComplete && newCalc.finalScoreOutOf100 !== null) {
+        const nextPending = getNextPendingStudent(
+          classStudents,
+          nextEvaluations,
+          activeRubric,
+          selectedStudent.id
+        );
+        const shouldAdvance = shouldTriggerAutoAdvance(
+          prevCalc.isComplete,
+          newCalc.isComplete,
+          Boolean(options?.advanceStudentOnComplete)
+        );
+        if (!prevCalc.isComplete) {
+          setJustCompletedBanner({
+            completedStudentId: selectedStudent.id,
+            completedStudentName: selectedStudent.fullName,
+            scoreOutOf100: newCalc.finalScoreOutOf100,
+            performanceLabel: newCalc.performanceLabel,
+            nextStudentId: nextPending?.id || null,
+            nextStudentName: nextPending?.fullName || null,
+            autoAdvanced: Boolean(shouldAdvance && nextPending),
+          });
+        }
+        if (shouldAdvance && nextPending) {
+          setSelectedStudentId(nextPending.id);
+          setActiveCriterionIndex(0);
+        }
+      } else {
+        setJustCompletedBanner(null);
+      }
     },
-    [activeSession, selectedStudent, onUpdateSession]
+    [
+      activeSession,
+      selectedStudent,
+      activeRubric,
+      classStudents,
+      onUpdateSession,
+    ]
   );
 
   // Clear single criterion score to null (unscored) (P0 #1)
@@ -617,7 +706,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             setSelectedStudentId(stuId);
             setActiveCriterionIndex(critIdx);
           }}
-          onBackToFastCards={() => setFastFlowSubMode('serial')}
+          onBackToFastCards={() =>
+            onUpdateSession({ ...activeSession, mode: 'individual' })
+          }
           onSetStudentCriterionScore={(studentId, criterionId, points) => {
             const existing = activeSession.evaluations[studentId];
             const undoHistory = recordSessionUndoEntry(activeSession, {
@@ -786,17 +877,6 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setFastFlowSubMode('serial');
-                  onUpdateSession({ ...activeSession, mode: 'grid' });
-                }}
-                className="px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
-              >
-                <Grid className="w-3.5 h-3.5" />
-                Hızlı Değerlendirme
-              </button>
-              <button
-                type="button"
                 onClick={() =>
                   onUpdateSession({ ...activeSession, mode: 'group' })
                 }
@@ -808,6 +888,18 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               >
                 <Users className="w-3.5 h-3.5" />
                 Grup Değerlendirmesi
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFastFlowSubMode('matrix');
+                  onUpdateSession({ ...activeSession, mode: 'grid' });
+                }}
+                className="px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+                title="İkincil toplu sınıf matrisi ve odak görünümü"
+              >
+                <Grid className="w-3.5 h-3.5" />
+                Toplu Matris Özeti
               </button>
             </div>
 
@@ -843,8 +935,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         </div>
 
         {/* Session Info & Progress Bar */}
-        <div className="pt-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div className="space-y-1">
+        <div className="pt-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div className="space-y-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span className="font-semibold text-teal-900 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
                 {sessionClassNames}
@@ -1082,6 +1174,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           studentFilter={studentFilter}
           onChangeStudentFilter={setStudentFilter}
           filteredStudents={filteredStudents}
+          cardViewMode={cardViewMode}
+          onChangeCardViewMode={setCardViewMode}
+          autoAdvanceStudent={autoAdvanceStudent}
+          onToggleAutoAdvance={() => setAutoAdvanceStudent(!autoAdvanceStudent)}
           onSelectCriterionLevel={handleSelectCriterionLevel}
           onSetDirectCriterionScore={handleSetDirectCriterionScore}
           onClearCriterionScore={handleClearCriterionScore}
@@ -1146,6 +1242,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           }
           justCompletedBanner={justCompletedBanner}
           onDismissBanner={() => setJustCompletedBanner(null)}
+          onUndoLastAction={handleUndoLastAction}
         />
       )}
 
@@ -1159,6 +1256,12 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           classStudents={classStudents}
           selectedGroupId={selectedGroupId}
           onSelectGroup={setSelectedGroupId}
+          cardViewMode={cardViewMode}
+          onChangeCardViewMode={setCardViewMode}
+          precisionScoringMode={precisionScoringMode}
+          onTogglePrecisionScoring={() =>
+            setPrecisionScoringMode(!precisionScoringMode)
+          }
           onAddGroup={(newGroup) => {
             const nowIso = new Date().toISOString();
             const nextGroups = [...activeSession.groups, newGroup];
@@ -1213,50 +1316,138 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             );
           }}
           onSelectGroupCriterionLevel={(criterionId, points) => {
-            const nowIso = new Date().toISOString();
+            const targetGroup = activeSession.groups.find(
+              (g) => g.id === selectedGroupId
+            );
+            const undoHistory = recordSessionUndoEntry(activeSession, {
+              scope: 'group',
+              groupId: selectedGroupId,
+              criterionId,
+              description: `${targetGroup?.name || 'Grup'} — ölçüt puanı (${points}P)`,
+              previousEvaluations: activeSession.evaluations,
+              previousGroups: activeSession.groups,
+            });
+            const updatedGroups = activeSession.groups.map((g) => {
+              if (g.id !== selectedGroupId) return g;
+              const nextDirect = { ...(g.directCriterionScores || {}) };
+              delete nextDirect[criterionId];
+              return {
+                ...g,
+                criterionScores: {
+                  ...g.criterionScores,
+                  [criterionId]: points,
+                },
+                directCriterionScores: nextDirect,
+              };
+            });
+            onUpdateSession({
+              ...activeSession,
+              groups: updatedGroups,
+              undoHistory,
+            });
+          }}
+          onSetGroupDirectCriterionScore={(criterionId, directPoints) => {
+            const targetGroup = activeSession.groups.find(
+              (g) => g.id === selectedGroupId
+            );
+            const undoHistory = recordSessionUndoEntry(activeSession, {
+              scope: 'group',
+              groupId: selectedGroupId,
+              criterionId,
+              description: `${targetGroup?.name || 'Grup'} — hassas tam sayı puanı`,
+              previousEvaluations: activeSession.evaluations,
+              previousGroups: activeSession.groups,
+            });
+            const updatedGroups = activeSession.groups.map((g) => {
+              if (g.id !== selectedGroupId) return g;
+              const nextDirect = { ...(g.directCriterionScores || {}) };
+              if (directPoints === null) {
+                delete nextDirect[criterionId];
+              } else {
+                nextDirect[criterionId] = directPoints;
+              }
+              return {
+                ...g,
+                directCriterionScores: nextDirect,
+              };
+            });
+            onUpdateSession({
+              ...activeSession,
+              groups: updatedGroups,
+              undoHistory,
+            });
+          }}
+          onClearGroupCriterionScore={(criterionId) => {
+            const targetGroup = activeSession.groups.find(
+              (g) => g.id === selectedGroupId
+            );
+            const undoHistory = recordSessionUndoEntry(activeSession, {
+              scope: 'group',
+              groupId: selectedGroupId,
+              criterionId,
+              description: `${targetGroup?.name || 'Grup'} — ölçüt puanı temizlendi`,
+              previousEvaluations: activeSession.evaluations,
+              previousGroups: activeSession.groups,
+            });
+            const updatedGroups = activeSession.groups.map((g) => {
+              if (g.id !== selectedGroupId) return g;
+              const nextScores = { ...(g.criterionScores || {}) };
+              delete nextScores[criterionId];
+              const nextDirect = { ...(g.directCriterionScores || {}) };
+              delete nextDirect[criterionId];
+              return {
+                ...g,
+                criterionScores: nextScores,
+                directCriterionScores: nextDirect,
+              };
+            });
+            onUpdateSession({
+              ...activeSession,
+              groups: updatedGroups,
+              undoHistory,
+            });
+          }}
+          onResetGroupScores={(groupId) => {
+            const targetGroup = activeSession.groups.find(
+              (g) => g.id === groupId
+            );
+            const undoHistory = recordSessionUndoEntry(activeSession, {
+              scope: 'group',
+              groupId,
+              description: `${targetGroup?.name || 'Grup'} puanları sıfırlandı`,
+              previousEvaluations: activeSession.evaluations,
+              previousGroups: activeSession.groups,
+            });
             const updatedGroups = activeSession.groups.map((g) =>
-              g.id === selectedGroupId
+              g.id === groupId
                 ? {
                     ...g,
-                    criterionScores: {
-                      ...g.criterionScores,
-                      [criterionId]: points,
-                    },
+                    criterionScores: {},
+                    directCriterionScores: {},
                   }
                 : g
             );
-            const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
-              activeSession.evaluations,
-              updatedGroups,
-              nowIso
-            );
             onUpdateSession({
               ...activeSession,
               groups: updatedGroups,
-              evaluations: nextEvaluations,
+              undoHistory,
             });
           }}
           onUpdateGroupNote={(note) => {
-            const nowIso = new Date().toISOString();
             const updatedGroups = activeSession.groups.map((g) =>
               g.id === selectedGroupId ? { ...g, groupNote: note } : g
-            );
-            const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
-              activeSession.evaluations,
-              updatedGroups,
-              nowIso
             );
             onUpdateSession({
               ...activeSession,
               groups: updatedGroups,
-              evaluations: nextEvaluations,
             });
           }}
-          onApplyGroupScoresToMembers={(group) => {
+          onApplyGroupScoresToMembers={(group, options) => {
             const nowIso = new Date().toISOString();
             const undoHistory = recordSessionUndoEntry(activeSession, {
               scope: 'group',
-              description: `${group.name} puanları üyelere yansıtıldı`,
+              groupId: group.id,
+              description: `${group.name} puanları üyelere uygulandı`,
               previousEvaluations: activeSession.evaluations,
               previousGroups: activeSession.groups,
             });
@@ -1274,12 +1465,40 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               groups: updatedGroups,
               undoHistory,
             });
-            setGroupAppliedFeedback(
-              `${group.name} puanları ${group.studentIds.length} öğrencinin ayrı grup hanesine kaydedildi (bireysel puanlar korundu).`
+
+            const grpCalc = calculateWeightedScore(
+              activeRubric,
+              group.criterionScores,
+              group.directCriterionScores
             );
-            setTimeout(() => setGroupAppliedFeedback(null), 4000);
+
+            if (options?.advanceToNextGroup) {
+              const nextPendingGrp = getNextPendingGroup(
+                updatedGroups,
+                updatedEvaluations,
+                activeRubric,
+                group.id
+              );
+              setLastAppliedGroupBanner({
+                previousGroupId: group.id,
+                previousGroupName: group.name,
+                appliedScoreOutOf100: grpCalc.finalScoreOutOf100,
+                memberCount: group.studentIds.length,
+                nextGroupName: nextPendingGrp?.name || null,
+              });
+              if (nextPendingGrp) {
+                setSelectedGroupId(nextPendingGrp.id);
+              }
+            } else {
+              setGroupAppliedFeedback(
+                `${group.name} puanları ${group.studentIds.length} öğrencinin ayrı grup hanesine uygulandı (bireysel puanlar korundu).`
+              );
+              setTimeout(() => setGroupAppliedFeedback(null), 4000);
+            }
           }}
           groupAppliedFeedback={groupAppliedFeedback}
+          lastAppliedGroupBanner={lastAppliedGroupBanner}
+          onDismissGroupBanner={() => setLastAppliedGroupBanner(null)}
         />
       )}
     </div>

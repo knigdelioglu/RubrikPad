@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -14,10 +14,12 @@ import type {
   Rubric,
   Student,
 } from '../../types.ts';
+import { getStudentEvaluationBreakdown } from '../../utils/rubricLogic.ts';
 import {
-  getStudentEvaluationBreakdown,
-  isScoreAssigned,
-} from '../../utils/rubricLogic.ts';
+  RubricCriterionCard,
+  RubricViewModeToggle,
+  type RubricCardViewMode,
+} from './RubricCriterionCard.tsx';
 
 interface FastEvaluationViewProps {
   activeSession: EvaluationSession;
@@ -38,7 +40,8 @@ interface FastEvaluationViewProps {
   ) => void;
   onSetDirectCriterionScore: (
     criterionId: string,
-    directPoints: number | null
+    directPoints: number | null,
+    options?: { advanceStudentOnComplete?: boolean }
   ) => void;
   onClearCriterionScore: (criterionId: string) => void;
   onResetStudentScores: (studentId: string) => void;
@@ -48,6 +51,7 @@ interface FastEvaluationViewProps {
   precisionScoringMode: boolean;
   onTogglePrecisionScoring: () => void;
   fastCompletionBanner: {
+    completedStudentId?: string;
     completedStudentName: string;
     scoreOutOf100: number;
     nextStudentId: string | null;
@@ -94,6 +98,8 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   onConfirmResetAndChangeRubric,
   onCancelRubricChange,
 }) => {
+  const [viewMode, setViewMode] = useState<RubricCardViewMode>('compact');
+
   const currentStudentEval = selectedStudent
     ? activeSession.evaluations[selectedStudent.id]
     : undefined;
@@ -103,37 +109,33 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
     currentStudentEval
   );
   const currentScoreCalc = breakdown.individualCalc;
-
-  const isDenseRubric = activeRubric.criteria.length >= 6;
   const undoCount = activeSession.undoHistory?.length || 0;
 
   return (
     <div className="max-w-[1880px] mx-auto px-3 sm:px-5 py-2">
-      {/* Screen-reader live region for accessible status announcements (P2) */}
       <div className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement}
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-2.5 flex flex-col h-[calc(100vh-76px)] min-h-[500px] overflow-hidden shadow-xs">
+      <div className="bg-white border border-slate-200 rounded-2xl p-3 flex flex-col h-[calc(100vh-76px)] min-h-[540px] overflow-hidden shadow-xs">
         {/* Compact Top Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-200 shrink-0">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-slate-200 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={onExitFastMode}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Geri
+              Standart Görünüme Dön
             </button>
             <div className="flex items-center gap-1.5">
               <Zap className="w-4 h-4 text-teal-700 shrink-0" />
               <h1 className="text-sm font-bold text-slate-900">
-                Hızlı Değerlendirme
+                Hızlı Değerlendirme Modu
               </h1>
             </div>
 
-            {/* Rubric Switcher with Scored-Session Protection (Issue #6) */}
             <label htmlFor="fast-rubric-select" className="sr-only">
               Değerlendirme Rubriği Seçin
             </label>
@@ -142,7 +144,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               aria-label="Değerlendirme Rubriği Seçin"
               value={activeRubric.id}
               onChange={(e) => onChangeSessionRubric(e.target.value)}
-              className="px-2.5 py-1 text-xs font-semibold text-slate-800 bg-slate-100 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600 cursor-pointer max-w-[300px] truncate"
+              className="px-2.5 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600 cursor-pointer max-w-[300px] truncate"
             >
               {allRubrics.map((r) => (
                 <option key={r.id} value={r.id}>
@@ -153,12 +155,16 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            {/* Precision Integer Scoring Toggle (P1 #2) */}
+            <RubricViewModeToggle
+              viewMode={viewMode}
+              onChangeViewMode={setViewMode}
+            />
+
             <button
               type="button"
               onClick={onTogglePrecisionScoring}
               aria-pressed={precisionScoringMode}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer transition-colors ${
                 precisionScoringMode
                   ? 'bg-teal-700 text-white border-teal-700'
                   : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
@@ -169,12 +175,11 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               Hassas Tam Sayı Puanı
             </button>
 
-            {/* Auto-advance Toggle (P2 Ergonomics) */}
             <button
               type="button"
               onClick={onToggleAutoAdvance}
               aria-pressed={autoAdvanceStudent}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border cursor-pointer transition-colors ${
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border cursor-pointer transition-colors ${
                 autoAdvanceStudent
                   ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
                   : 'bg-slate-100 text-slate-600 border-slate-300'
@@ -183,12 +188,11 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               Otomatik Geçiş: {autoAdvanceStudent ? 'Açık' : 'Kapalı'}
             </button>
 
-            {/* Undo Button (P1 #7) */}
             <button
               type="button"
               disabled={undoCount === 0}
               onClick={onUndoLastAction}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
               title="Son puanlama işlemini geri al"
             >
               <Undo2 className="w-3.5 h-3.5" />
@@ -198,19 +202,18 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
             <button
               type="button"
               onClick={onOpenMatrixView}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
             >
               <Table className="w-3.5 h-3.5" />
-              Tam Ekran Matris
+              Toplu Matris Özeti
             </button>
           </div>
         </div>
 
-        {/* Scored Session Rubric Change Protection Banner (Issue #6) */}
         {pendingRubricChange && (
           <div
             role="alert"
-            className="mb-2 p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs"
+            className="mb-2 p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs"
           >
             <div className="font-semibold">
               <span>
@@ -257,7 +260,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
           </div>
         )}
 
-        {/* Split Layout: Left Student Roster | Right Ultra-Compact Criteria List (4 to 8 criteria fit without scroll) */}
         <div className="grid grid-cols-12 gap-3 flex-1 min-h-0 overflow-hidden">
           {/* Left Column: Student Roster */}
           <div className="col-span-4 lg:col-span-3 flex flex-col min-h-0 border-r border-slate-200 pr-2.5">
@@ -294,7 +296,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                       onSelectStudent(stu.id);
                       onDismissBanner();
                     }}
-                    className={`w-full text-left px-2.5 py-2 rounded-lg border transition-all flex items-center justify-between gap-2 cursor-pointer min-h-[38px] ${
+                    className={`w-full text-left px-2.5 py-2 rounded-xl border transition-all flex items-center justify-between gap-2 cursor-pointer min-h-[40px] ${
                       isSelected
                         ? 'bg-slate-900 border-slate-900 text-white shadow-xs'
                         : calc.isComplete
@@ -318,7 +320,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      {/* P0 #2: Only show final score out of 100 when complete; show X/Y when partial */}
                       {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
                         <span
                           className={`font-mono-num text-[11px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
@@ -338,7 +339,8 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                               : 'bg-amber-100 text-amber-900'
                           }`}
                         >
-                          {calc.completedCriteriaCount}/{calc.totalCriteriaCount}
+                          Taslak ({calc.completedCriteriaCount}/
+                          {calc.totalCriteriaCount})
                         </span>
                       ) : null}
                     </div>
@@ -348,12 +350,11 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Selected Student Header + Ultra-Compact Criterion Bars (No Descriptions!) */}
+          {/* Right Column: Selected Student Header + Shared RubricCriterionCard List */}
           <div className="col-span-8 lg:col-span-9 flex flex-col min-h-0 overflow-hidden">
             {selectedStudent ? (
               <>
-                {/* Compact Student Status Bar */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-1.5 border-b border-slate-200 shrink-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-slate-200 shrink-0">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
                       #{selectedStudent.studentNumber}
@@ -361,7 +362,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                     <h2 className="text-base font-bold text-slate-900 truncate">
                       {selectedStudent.fullName}
                     </h2>
-                    {/* P0 #2: Clear distinction between Partial (Taslak) and Complete (Kesin Not) */}
                     {currentScoreCalc.isComplete &&
                     currentScoreCalc.finalScoreOutOf100 !== null ? (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 font-mono-num">
@@ -377,19 +377,46 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-600">
-                        Henüz Puanlanmadı (0/{currentScoreCalc.totalCriteriaCount})
+                        Henüz Puanlanmadı (0/
+                        {currentScoreCalc.totalCriteriaCount})
                       </span>
                     )}
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
                     {fastCompletionBanner &&
-                      fastCompletionBanner.nextStudentId && (
+                      fastCompletionBanner.completedStudentId &&
+                      fastCompletionBanner.completedStudentId !==
+                        selectedStudent.id && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (fastCompletionBanner.completedStudentId) {
+                              onSelectStudent(
+                                fastCompletionBanner.completedStudentId
+                              );
+                              onDismissBanner();
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs font-bold hover:bg-emerald-100 flex items-center gap-1 cursor-pointer"
+                        >
+                          <ArrowLeft className="w-3 h-3" />
+                          Önceki: {fastCompletionBanner.completedStudentName} (
+                          {fastCompletionBanner.scoreOutOf100}P)
+                        </button>
+                      )}
+
+                    {fastCompletionBanner &&
+                      fastCompletionBanner.nextStudentId &&
+                      fastCompletionBanner.completedStudentId ===
+                        selectedStudent.id && (
                         <button
                           type="button"
                           onClick={() => {
                             if (fastCompletionBanner.nextStudentId) {
-                              onSelectStudent(fastCompletionBanner.nextStudentId);
+                              onSelectStudent(
+                                fastCompletionBanner.nextStudentId
+                              );
                               onDismissBanner();
                             }
                           }}
@@ -410,157 +437,34 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                   </div>
                 </div>
 
-                {/* Criterion Rows Container: Distributed evenly so 4 to 8 criteria fit in 1 screen without descriptions */}
-                <div className="flex-1 flex flex-col gap-1.5 min-h-0 overflow-y-auto">
+                <div className="flex-1 flex flex-col gap-2 min-h-0 overflow-y-auto pr-1">
                   {activeRubric.criteria.map((criterion, cIdx) => {
                     const selectedPts =
                       currentStudentEval?.criterionScores?.[criterion.id];
                     const directPts =
                       currentStudentEval?.directCriterionScores?.[criterion.id];
-                    const isAnswered =
-                      isScoreAssigned(selectedPts) ||
-                      isScoreAssigned(directPts);
-                    const critMaxPts = criterion.maxPoints ?? criterion.weight;
 
                     return (
-                      <div
+                      <RubricCriterionCard
                         key={criterion.id}
-                        className={`flex-1 min-h-[38px] max-h-[88px] rounded-xl border transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                          isDenseRubric ? 'px-3 py-1.5' : 'px-3.5 py-2'
-                        } ${
-                          isAnswered
-                            ? 'bg-emerald-50/50 border-emerald-200'
-                            : 'bg-slate-50/80 border-slate-200'
-                        }`}
-                      >
-                        {/* Left: Criterion Number, Title & Max Points Badge (NO description!) */}
-                        <div className="flex items-center gap-2.5 sm:w-5/12 min-w-0">
-                          <span
-                            className={`font-mono-num text-xs font-bold px-2 py-1 rounded-md shrink-0 ${
-                              isAnswered
-                                ? 'bg-emerald-700 text-white'
-                                : 'bg-slate-200 text-slate-700'
-                            }`}
-                          >
-                            0{cIdx + 1}
-                          </span>
-                          <span
-                            className={`${
-                              isDenseRubric ? 'text-xs sm:text-sm' : 'text-sm sm:text-base'
-                            } font-bold text-slate-900 truncate`}
-                            title={criterion.title}
-                          >
-                            {criterion.title}
-                          </span>
-                          <span className="font-mono-num text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-md shrink-0">
-                            {critMaxPts}P
-                          </span>
-                        </div>
-
-                        {/* Right: Compact Level Buttons (0..4) + Optional Precision Integer Input */}
-                        <div className="flex items-center gap-1.5 sm:w-7/12 h-full">
-                          <div
-                            className="grid flex-1 gap-1.5 h-full"
-                            style={{
-                              gridTemplateColumns: `repeat(${criterion.levels.length}, minmax(0, 1fr))`,
-                            }}
-                          >
-                            {criterion.levels.map((lvl) => {
-                              const isSelected =
-                                !isScoreAssigned(directPts) &&
-                                selectedPts === lvl.points;
-                              return (
-                                <button
-                                  key={lvl.level}
-                                  type="button"
-                                  onClick={() =>
-                                    onSelectCriterionLevel(
-                                      criterion.id,
-                                      lvl.points,
-                                      {
-                                        advanceStudentOnComplete:
-                                          autoAdvanceStudent,
-                                      }
-                                    )
-                                  }
-                                  className={`h-full rounded-lg border text-center transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                                    isDenseRubric
-                                      ? 'py-1.5 px-2 min-h-[34px]'
-                                      : 'py-2 px-2.5 min-h-[44px]'
-                                  } ${
-                                    isSelected
-                                      ? lvl.points === 0
-                                        ? 'bg-rose-700 border-rose-800 text-white font-bold shadow-xs'
-                                        : 'bg-teal-700 border-teal-800 text-white font-bold shadow-xs'
-                                      : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
-                                  }`}
-                                >
-                                  <span className="font-mono-num text-xs sm:text-sm font-bold">
-                                    {lvl.points}P
-                                  </span>
-                                  <span className="text-xs font-medium truncate hidden xl:inline">
-                                    {lvl.label.replace(/\s*\(0\)/, '')}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-
-                          {/* Precision Direct Integer Score Input (0..critMaxPts) (P1 #2) */}
-                          {precisionScoringMode && (
-                            <div className="flex items-center gap-1 shrink-0 bg-white border border-teal-300 rounded-md px-1.5 py-0.5">
-                              <input
-                                type="number"
-                                min={0}
-                                max={critMaxPts}
-                                step={1}
-                                aria-label={`${criterion.title} doğrudan puan (0-${critMaxPts})`}
-                                placeholder={`0-${critMaxPts}`}
-                                value={
-                                  isScoreAssigned(directPts) ? directPts : ''
-                                }
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-                                  if (raw === '') {
-                                    onSetDirectCriterionScore(
-                                      criterion.id,
-                                      null
-                                    );
-                                    return;
-                                  }
-                                  const num = Math.max(
-                                    0,
-                                    Math.min(
-                                      critMaxPts,
-                                      Math.round(Number(raw))
-                                    )
-                                  );
-                                  onSetDirectCriterionScore(criterion.id, num);
-                                }}
-                                className="w-12 text-xs font-mono-num font-bold text-teal-950 text-right focus:outline-none"
-                              />
-                              <span className="text-[10px] font-mono-num text-slate-500">
-                                /{critMaxPts}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Clear (Set to null = unscored) button (P0 #1) */}
-                          {isAnswered && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onClearCriterionScore(criterion.id)
-                              }
-                              aria-label={`${criterion.title} puanını temizle`}
-                              title="Puanı temizle (puanlanmadı yap)"
-                              className="px-1.5 py-1 text-[10px] font-bold text-slate-400 hover:text-red-600 rounded cursor-pointer shrink-0"
-                            >
-                              ×
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                        criterion={criterion}
+                        criterionIndex={cIdx}
+                        selectedPoints={selectedPts}
+                        directPoints={directPts}
+                        viewMode={viewMode}
+                        precisionScoringMode={precisionScoringMode}
+                        onSelectLevel={(critId, pts) =>
+                          onSelectCriterionLevel(critId, pts, {
+                            advanceStudentOnComplete: autoAdvanceStudent,
+                          })
+                        }
+                        onSetDirectScore={(critId, dPts) =>
+                          onSetDirectCriterionScore(critId, dPts, {
+                            advanceStudentOnComplete: autoAdvanceStudent,
+                          })
+                        }
+                        onClearScore={onClearCriterionScore}
+                      />
                     );
                   })}
                 </div>
