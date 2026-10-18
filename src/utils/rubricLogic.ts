@@ -718,24 +718,71 @@ export function getSessionProgressStats(
 }
 
 /**
+ * Checks whether a group already has any recorded criterion scores, direct scores, or observation notes.
+ */
+export function hasGroupEvaluationData(group: StudentGroup): boolean {
+  const hasLevelScore = Object.values(group.criterionScores || {}).some((v) =>
+    isScoreAssigned(v)
+  );
+  const hasDirectScore = Object.values(group.directCriterionScores || {}).some(
+    (v) => isScoreAssigned(v)
+  );
+  const hasNote = Boolean(group.groupNote && group.groupNote.trim().length > 0);
+  const hasApplied = Boolean(group.lastAppliedAt);
+  return hasLevelScore || hasDirectScore || hasNote || hasApplied;
+}
+
+/**
  * Generates balanced random student groups and enforces unique membership (P1 #5).
+ * When `existingGroups` is provided and `preserveEvaluatedGroups !== false`, any group
+ * that already has scores or notes is preserved intact, and only the remaining students
+ * are redistributed into new balanced groups.
  */
 export function generateBalancedRandomGroups(
   students: Student[],
-  options: { groupCount?: number; targetGroupSize?: number; seed?: number }
+  options: {
+    groupCount?: number;
+    targetGroupSize?: number;
+    seed?: number;
+    existingGroups?: StudentGroup[];
+    preserveEvaluatedGroups?: boolean;
+  }
 ): StudentGroup[] {
   const activeStudents = students.filter((s) => !s.archived);
   if (activeStudents.length === 0) return [];
 
+  const shouldPreserve =
+    Array.isArray(options.existingGroups) &&
+    options.existingGroups.length > 0 &&
+    options.preserveEvaluatedGroups !== false;
+
+  const preservedGroups: StudentGroup[] = shouldPreserve
+    ? options.existingGroups!
+        .filter((g) => hasGroupEvaluationData(g))
+        .map((g) => JSON.parse(JSON.stringify(g)))
+    : [];
+
+  const lockedStudentIds = new Set<string>(
+    preservedGroups.flatMap((g) => g.studentIds)
+  );
+
+  const availableStudents = activeStudents.filter(
+    (s) => !lockedStudentIds.has(s.id)
+  );
+
+  if (availableStudents.length === 0) {
+    return preservedGroups;
+  }
+
   let numGroups = options.groupCount || 0;
   if (numGroups <= 0) {
     const size = Math.max(2, options.targetGroupSize || 3);
-    numGroups = Math.max(1, Math.ceil(activeStudents.length / size));
+    numGroups = Math.max(1, Math.ceil(availableStudents.length / size));
   }
-  numGroups = Math.min(numGroups, activeStudents.length);
+  numGroups = Math.min(numGroups, availableStudents.length);
 
   // Deterministic or seeded Fisher-Yates shuffle
-  const pool = [...activeStudents];
+  const pool = [...availableStudents];
   let currentSeed = options.seed ?? Date.now();
   const nextRand = () => {
     currentSeed = (currentSeed * 1664525 + 1013904223) % 4294967296;
@@ -754,13 +801,240 @@ export function generateBalancedRandomGroups(
     buckets[idx % numGroups].push(stu.id);
   });
 
-  return buckets.map((studentIds, idx) => ({
-    id: `grp-rand-${Date.now()}-${idx + 1}`,
-    name: `Grup ${idx + 1}`,
+  const startNum = preservedGroups.length;
+  const newGroups = buckets.map((studentIds, idx) => ({
+    id: `grp-rand-${Date.now()}-${startNum + idx + 1}`,
+    name: `Grup ${startNum + idx + 1}`,
     studentIds,
     criterionScores: {},
     groupNote: '',
   }));
+
+  return [...preservedGroups, ...newGroups];
+}
+
+/**
+ * Safely redistributes session groups while protecting already-evaluated groups from accidental loss.
+ * - By default (`preserveEvaluatedGroups: true`), keeps scored groups untouched and only distributes remaining students.
+ * - If `preserveEvaluatedGroups: false`, blocks overwriting scored groups unless `allowOverwriteEvaluated: true` is explicitly passed.
+ */
+export function redistributeGroupsSafely(
+  existingGroups: StudentGroup[],
+  students: Student[],
+  options: {
+    targetGroupSize?: number;
+    groupCount?: number;
+    seed?: number;
+    preserveEvaluatedGroups?: boolean;
+    allowOverwriteEvaluated?: boolean;
+  }
+): {
+  groups: StudentGroup[];
+  preservedGroupCount: number;
+  newGroupCount: number;
+  redistributedStudentCount: number;
+  blocked: boolean;
+  warning?: string;
+} {
+  const evaluatedExisting = (existingGroups || []).filter((g) =>
+    hasGroupEvaluationData(g)
+  );
+  const preserve = options.preserveEvaluatedGroups !== false;
+
+  if (!preserve && evaluatedExisting.length > 0 && !options.allowOverwriteEvaluated) {
+    return {
+      groups: existingGroups,
+      preservedGroupCount: evaluatedExisting.length,
+      newGroupCount: 0,
+      redistributedStudentCount: 0,
+      blocked: true,
+      warning: `${evaluatedExisting.length} grupta kayıtlı puan veya gözlem notu bulunduğu için açık onay olmadan mevcut gruplar silinemez.`,
+    };
+  }
+
+  const nextGroups = generateBalancedRandomGroups(students, {
+    targetGroupSize: options.targetGroupSize,
+    groupCount: options.groupCount,
+    seed: options.seed,
+    existingGroups,
+    preserveEvaluatedGroups: preserve,
+  });
+
+  const preservedCount = preserve ? evaluatedExisting.length : 0;
+  const newGroupCount = Math.max(0, nextGroups.length - preservedCount);
+  const lockedIds = new Set(
+    preserve ? evaluatedExisting.flatMap((g) => g.studentIds) : []
+  );
+  const redistributedStudentCount = students.filter(
+    (s) => !s.archived && !lockedIds.has(s.id)
+  ).length;
+
+  return {
+    groups: nextGroups,
+    preservedGroupCount: preservedCount,
+    newGroupCount,
+    redistributedStudentCount,
+    blocked: false,
+  };
+}
+
+/**
+ * Checks whether an evaluation session already has any scored students or scored groups.
+ */
+export function hasSessionEvaluations(session: EvaluationSession): {
+  hasEvaluations: boolean;
+  evaluatedStudentCount: number;
+  evaluatedGroupCount: number;
+} {
+  let evaluatedStudentCount = 0;
+  for (const ev of Object.values(session.evaluations || {})) {
+    const hasInd = Object.values(ev.criterionScores || {}).some((v) =>
+      isScoreAssigned(v)
+    );
+    const hasIndDirect = Object.values(ev.directCriterionScores || {}).some(
+      (v) => isScoreAssigned(v)
+    );
+    const hasGrp = Object.values(ev.groupCriterionScores || {}).some((v) =>
+      isScoreAssigned(v)
+    );
+    const hasGrpDirect = Object.values(ev.groupDirectScores || {}).some((v) =>
+      isScoreAssigned(v)
+    );
+    const hasNote = Boolean(ev.note && ev.note.trim().length > 0);
+    if (hasInd || hasIndDirect || hasGrp || hasGrpDirect || hasNote) {
+      evaluatedStudentCount += 1;
+    }
+  }
+
+  const evaluatedGroupCount = (session.groups || []).filter((g) =>
+    hasGroupEvaluationData(g)
+  ).length;
+
+  return {
+    hasEvaluations: evaluatedStudentCount > 0 || evaluatedGroupCount > 0,
+    evaluatedStudentCount,
+    evaluatedGroupCount,
+  };
+}
+
+/**
+ * Checks whether a session's rubric can be changed directly without losing scored evaluations.
+ */
+export function canChangeSessionRubric(
+  session: EvaluationSession,
+  targetRubricId: string
+): {
+  allowed: boolean;
+  evaluatedStudentCount: number;
+  evaluatedGroupCount: number;
+  reason?: string;
+} {
+  if (session.rubricId === targetRubricId) {
+    return {
+      allowed: true,
+      evaluatedStudentCount: 0,
+      evaluatedGroupCount: 0,
+    };
+  }
+
+  const stats = hasSessionEvaluations(session);
+  if (stats.hasEvaluations) {
+    return {
+      allowed: false,
+      evaluatedStudentCount: stats.evaluatedStudentCount,
+      evaluatedGroupCount: stats.evaluatedGroupCount,
+      reason: `Bu oturumda ${stats.evaluatedStudentCount} öğrenci ve ${stats.evaluatedGroupCount} grup için puanlama yapılmıştır. Mevcut puanların bozulmaması için oturum rubriği doğrudan değiştirilemez.`,
+    };
+  }
+
+  return {
+    allowed: true,
+    evaluatedStudentCount: 0,
+    evaluatedGroupCount: 0,
+  };
+}
+
+/**
+ * Safely changes a session's rubric:
+ * - Blocks in-place rubric changes if the session already has evaluations unless `confirmResetExistingScores` is true.
+ * - When `confirmResetExistingScores` is true, records the previous state (evaluations, groups, rubricId, rubricSnapshot)
+ *   into `undoHistory` before resetting criterion scores and freezing the new rubricSnapshot.
+ */
+export function changeSessionRubricSafely(
+  session: EvaluationSession,
+  newRubric: Rubric,
+  options?: { confirmResetExistingScores?: boolean }
+): {
+  allowed: boolean;
+  updatedSession: EvaluationSession;
+  evaluatedStudentCount: number;
+  evaluatedGroupCount: number;
+  blockedReason?: string;
+} {
+  if (session.rubricId === newRubric.id) {
+    return {
+      allowed: true,
+      updatedSession: session,
+      evaluatedStudentCount: 0,
+      evaluatedGroupCount: 0,
+    };
+  }
+
+  const check = canChangeSessionRubric(session, newRubric.id);
+  if (!check.allowed && !options?.confirmResetExistingScores) {
+    return {
+      allowed: false,
+      updatedSession: session,
+      evaluatedStudentCount: check.evaluatedStudentCount,
+      evaluatedGroupCount: check.evaluatedGroupCount,
+      blockedReason: check.reason,
+    };
+  }
+
+  const snapshot = freezeRubricSnapshot(newRubric);
+
+  if (!check.allowed && options?.confirmResetExistingScores) {
+    const undoHistory = recordSessionUndoEntry(session, {
+      scope: 'session',
+      description: `Rubrik değişimi öncesi puanlar yedeklendi (${newRubric.title})`,
+      previousEvaluations: session.evaluations,
+      previousGroups: session.groups,
+      previousRubricId: session.rubricId,
+      previousRubricSnapshot: session.rubricSnapshot,
+    });
+
+    const resetGroups = (session.groups || []).map((g) => ({
+      ...g,
+      criterionScores: {},
+      directCriterionScores: {},
+      lastAppliedAt: undefined,
+    }));
+
+    return {
+      allowed: true,
+      evaluatedStudentCount: check.evaluatedStudentCount,
+      evaluatedGroupCount: check.evaluatedGroupCount,
+      updatedSession: {
+        ...session,
+        rubricId: newRubric.id,
+        rubricSnapshot: snapshot,
+        evaluations: {},
+        groups: resetGroups,
+        undoHistory,
+      },
+    };
+  }
+
+  return {
+    allowed: true,
+    evaluatedStudentCount: 0,
+    evaluatedGroupCount: 0,
+    updatedSession: {
+      ...session,
+      rubricId: newRubric.id,
+      rubricSnapshot: snapshot,
+    },
+  };
 }
 
 /**
@@ -873,6 +1147,10 @@ export function recordSessionUndoEntry(
     previousEvaluations: JSON.parse(JSON.stringify(entry.previousEvaluations)),
     previousGroups: entry.previousGroups
       ? JSON.parse(JSON.stringify(entry.previousGroups))
+      : undefined,
+    previousRubricId: entry.previousRubricId,
+    previousRubricSnapshot: entry.previousRubricSnapshot
+      ? JSON.parse(JSON.stringify(entry.previousRubricSnapshot))
       : undefined,
   };
   const current = session.undoHistory || [];

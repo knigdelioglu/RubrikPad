@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ClipboardCheck,
   Users,
@@ -10,6 +10,7 @@ import {
   Upload,
   Check,
   AlertCircle,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   Classroom,
@@ -24,7 +25,8 @@ import {
   INITIAL_SESSIONS,
 } from './data/seedData.ts';
 import {
-  loadVerifiedInitialState,
+  loadVerifiedInitialStateWithMeta,
+  loadInitialStateWithRecovery,
   saveTransactionalState,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
@@ -41,8 +43,8 @@ import { ProgressAndReports } from './components/ProgressAndReports.tsx';
 type ActiveTab = 'evaluate' | 'classes' | 'rubrics' | 'reports';
 
 export function App() {
-  const [initialData] = useState(() =>
-    loadVerifiedInitialState({
+  const [initialMeta] = useState(() =>
+    loadVerifiedInitialStateWithMeta({
       classrooms: INITIAL_CLASSROOMS,
       students: INITIAL_STUDENTS,
       rubrics: INITIAL_RUBRICS,
@@ -51,13 +53,28 @@ export function App() {
   );
 
   const [classrooms, setClassrooms] = useState<Classroom[]>(
-    initialData.classrooms
+    initialMeta.state.classrooms
   );
-  const [students, setStudents] = useState<Student[]>(initialData.students);
-  const [rubrics, setRubrics] = useState<Rubric[]>(initialData.rubrics);
+  const [students, setStudents] = useState<Student[]>(
+    initialMeta.state.students
+  );
+  const [rubrics, setRubrics] = useState<Rubric[]>(initialMeta.state.rubrics);
   const [sessions, setSessions] = useState<EvaluationSession[]>(
-    initialData.sessions
+    initialMeta.state.sessions
   );
+
+  // If localStorage already had valid v3 or migrated v2 data, we are hydrated immediately.
+  // If it fell back to seed data (e.g. localStorage empty or corrupted), we check IndexedDB recovery first before saving!
+  const [isStorageHydrated, setIsStorageHydrated] = useState<boolean>(
+    () => initialMeta.source !== 'seed_fallback'
+  );
+
+  const [recoveryBanner, setRecoveryBanner] = useState<string | null>(() =>
+    initialMeta.source === 'migrated_v2'
+      ? 'Önceki sürüm (v2) verileriniz otomatik olarak v3 veri yapısına yükseltildi ve korundu.'
+      : null
+  );
+  const [storageSaveError, setStorageSaveError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('evaluate');
   const [activeClassId, setActiveClassId] = useState<string>(
@@ -74,15 +91,91 @@ export function App() {
     message: string;
   } | null>(null);
 
-  // Persist state transactionally to IndexedDB + verified localStorage snapshot (P0 #6)
+  // Automatic IndexedDB Recovery on startup when localStorage was missing or corrupted
   useEffect(() => {
-    void saveTransactionalState({
-      classrooms,
-      students,
-      rubrics,
-      sessions,
-    });
+    if (initialMeta.source !== 'seed_fallback') {
+      return;
+    }
+    let cancelled = false;
+    loadInitialStateWithRecovery({
+      classrooms: INITIAL_CLASSROOMS,
+      students: INITIAL_STUDENTS,
+      rubrics: INITIAL_RUBRICS,
+      sessions: INITIAL_SESSIONS,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        if (result.source === 'indexeddb_recovered' || result.source === 'migrated_v2') {
+          setClassrooms(result.state.classrooms);
+          setStudents(result.state.students);
+          setRubrics(result.state.rubrics);
+          setSessions(result.state.sessions);
+          if (result.state.classrooms[0]?.id) {
+            setActiveClassId(result.state.classrooms[0].id);
+          }
+          if (result.state.sessions.length > 0) {
+            setActiveSessionId(
+              result.state.sessions[result.state.sessions.length - 1].id
+            );
+          }
+          if (result.recoveryNotice) {
+            setRecoveryBanner(result.recoveryNotice);
+          }
+        }
+        setIsStorageHydrated(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIsStorageHydrated(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialMeta.source]);
+
+  // Listen for any global save-error events
+  useEffect(() => {
+    const handleSaveErrorEvent = (e: Event) => {
+      const custom = e as CustomEvent<{ errorMessage?: string }>;
+      if (custom.detail?.errorMessage) {
+        setStorageSaveError(custom.detail.errorMessage);
+      }
+    };
+    window.addEventListener('rubrikpad:save-error', handleSaveErrorEvent);
+    return () => {
+      window.removeEventListener('rubrikpad:save-error', handleSaveErrorEvent);
+    };
+  }, []);
+
+  // Persist state transactionally to IndexedDB + verified localStorage snapshot (P0 #6)
+  // Reports any save errors directly to the user instead of failing silently!
+  const performTransactionalSave = useCallback(async () => {
+    const res = await saveTransactionalState(
+      {
+        classrooms,
+        students,
+        rubrics,
+        sessions,
+      },
+      {
+        onSaveError: (errMsg) => {
+          setStorageSaveError(errMsg);
+        },
+      }
+    );
+    if (!res.ok || res.errors.length > 0) {
+      setStorageSaveError(res.errorMessage || res.errors.join(' '));
+    } else {
+      setStorageSaveError(null);
+    }
   }, [classrooms, students, rubrics, sessions]);
+
+  useEffect(() => {
+    if (!isStorageHydrated) return;
+    void performTransactionalSave();
+  }, [isStorageHydrated, performTransactionalSave]);
 
   const handleUpdateSession = (updated: EvaluationSession) => {
     setSessions((prev) =>
@@ -112,7 +205,6 @@ export function App() {
   const handleDeleteStudent = (studentId: string) => {
     const impact = checkStudentDeletionImpact(studentId, sessions);
     if (impact.hasHistory) {
-      // Safe archive instead of destructive hard delete
       const nowIso = new Date().toISOString();
       setStudents((prev) =>
         prev.map((s) =>
@@ -233,8 +325,9 @@ export function App() {
       );
       setBackupBanner({
         type: 'success',
-        message:
-          'Yedek dosyası bütünlük kontrolünden (Checksum) geçti ve başarıyla geri yüklendi.',
+        message: verified.migratedFromV2
+          ? 'v2 yedek dosyası v3 şemasına yükseltilerek başarıyla geri yüklendi.'
+          : 'Yedek dosyası bütünlük kontrolünden (Checksum) geçti ve başarıyla geri yüklendi.',
       });
     } catch {
       setBackupBanner({
@@ -364,6 +457,67 @@ export function App() {
         </div>
       </header>
 
+      {/* Storage Save Error Alert Banner (Issue #4) */}
+      {storageSaveError && (
+        <div
+          role="alert"
+          className="bg-red-50 border-b border-red-200 px-4 py-2.5 text-xs text-red-900"
+        >
+          <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertTriangle className="w-4 h-4 text-red-700 shrink-0" />
+              <span>Veri Kaydetme Uyarısı: {storageSaveError}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExportVerifiedBackup}
+                className="px-2.5 py-1 rounded bg-red-700 text-white font-bold hover:bg-red-800 cursor-pointer"
+              >
+                Acil Yedek İndir (.json)
+              </button>
+              <button
+                type="button"
+                onClick={() => void performTransactionalSave()}
+                className="px-2.5 py-1 rounded bg-white border border-red-300 text-red-900 font-semibold hover:bg-red-100 cursor-pointer"
+              >
+                Tekrar Kaydet
+              </button>
+              <button
+                type="button"
+                onClick={() => setStorageSaveError(null)}
+                className="px-2 py-1 text-red-700 hover:underline cursor-pointer"
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Automatic IndexedDB Recovery / v2->v3 Migration Notice Banner (Issues #1 & #3) */}
+      {recoveryBanner && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="bg-emerald-50 border-b border-emerald-200 px-4 py-2 text-xs text-emerald-950"
+        >
+          <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 font-semibold">
+              <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>{recoveryBanner}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRecoveryBanner(null)}
+              className="text-emerald-800 font-bold hover:underline cursor-pointer"
+            >
+              Tamam
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Area */}
       <main className="flex-1">
         {activeTab === 'evaluate' && (
@@ -449,10 +603,9 @@ export function App() {
                 </span>
               </div>
               <p className="text-slate-600">
-                Verileriniz tarayıcıda hem işlemsel <strong>IndexedDB</strong>{' '}
-                deposunda hem de şema sürümlü yerel depoda saklanır. Dışa
-                aktarılan JSON yedekleri bütünlük imzası (checksum) ile
-                doğrulanır.
+                Bütün bireysel puanlar, grup puanları, gözlem notları ve rubrik
+                ölçütleri <strong>IndexedDB</strong> ve bütünlük imzalı (checksum)
+                paket ile korunur.
               </p>
             </div>
 

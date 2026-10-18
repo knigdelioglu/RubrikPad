@@ -9,6 +9,11 @@ import {
   validateRubric,
   applyGroupScoresToMembers,
   generateBalancedRandomGroups,
+  redistributeGroupsSafely,
+  hasGroupEvaluationData,
+  hasSessionEvaluations,
+  canChangeSessionRubric,
+  changeSessionRubricSafely,
   findDuplicateGroupMemberships,
   getGroupProgressHistory,
   recordSessionUndoEntry,
@@ -23,9 +28,16 @@ import {
   generateSessionCsv,
 } from './rubricLogic.ts';
 import {
+  STORAGE_KEY,
   computePayloadChecksum,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
+  migrateV2ToV3,
+  loadVerifiedInitialState,
+  loadInitialStateWithRecovery,
+  saveTransactionalState,
+  __clearMemoryIndexedDbForTests,
+  __setSimulateIndexedDbFailureForTests,
 } from './storageLayer.ts';
 import { generatePaginatedSessionPdfBytes } from './pdfGenerator.ts';
 import type { Rubric, Student, EvaluationSession, StudentGroup } from '../types.ts';
@@ -476,3 +488,469 @@ test('getSessionProgressStats and getNextPendingStudent work with 0-point valid 
   assert.equal(history.length, 1);
   assert.equal(history[0].scoreOutOf100, 0);
 });
+
+test('Audit #1: v2 -> v3 data migration upgrades students, rubrics (0-point level & maxPoints), frozen snapshots, and separates group scores', () => {
+  const v2Raw = {
+    classrooms: [
+      { id: 'cls-7a', name: '7-A Sınıfı', gradeLevel: '7. Sınıf', subject: 'Fen', academicYear: '2026' },
+    ],
+    students: [
+      // v2 student without firstName/lastName
+      { id: 'stu-1', studentNumber: '101', fullName: 'Zeynep Çelik', classId: 'cls-7a' },
+    ],
+    rubrics: [
+      {
+        id: 'rub-v2',
+        title: 'V2 Rubrik',
+        subject: 'Fen',
+        description: 'V2 açıklama',
+        maxLevelPoints: 4,
+        createdAt: '2026-09-01',
+        criteria: [
+          // v2 criterion without maxPoints and without level 0
+          {
+            id: 'crit-1',
+            title: 'Hipotez Kurma',
+            category: 'Bilim',
+            weight: 100,
+            levels: [
+              { level: 1, label: 'Destek Gerekli', points: 1, description: 'D1' },
+              { level: 4, label: 'Örnek Düzey', points: 4, description: 'D4' },
+            ],
+          },
+        ],
+      },
+    ],
+    sessions: [
+      {
+        id: 'ses-v2',
+        title: 'V2 Oturumu',
+        classId: 'cls-7a',
+        rubricId: 'rub-v2',
+        date: '2026-09-15',
+        status: 'in_progress' as const,
+        mode: 'group' as const,
+        generalSessionNote: 'V2 not',
+        groups: [
+          {
+            id: 'grp-v2',
+            name: 'Grup 1',
+            studentIds: ['stu-1'],
+            criterionScores: { 'crit-1': 4 },
+            groupNote: 'Grup gözlemi',
+          },
+        ],
+        evaluations: {
+          'stu-1': {
+            studentId: 'stu-1',
+            criterionScores: { 'crit-1': 3 },
+            note: 'Bireysel gözlem',
+            tags: [],
+            updatedAt: '2026-09-15',
+            evaluatedViaGroup: 'Grup 1',
+          },
+        },
+      },
+    ],
+  };
+
+  const migrated = migrateV2ToV3(v2Raw);
+  // 1. Student firstName & lastName split
+  assert.equal(migrated.students[0].firstName, 'Zeynep');
+  assert.equal(migrated.students[0].lastName, 'Çelik');
+
+  // 2. Rubric criterion has maxPoints and 0-point level added
+  assert.equal(migrated.rubrics[0].criteria[0].maxPoints, 100);
+  assert.equal(migrated.rubrics[0].criteria[0].levels[0].points, 0);
+  assert.equal(migrated.rubrics[0].version, 3);
+
+  // 3. Session has frozen rubricSnapshot & classIds
+  assert.ok(migrated.sessions[0].rubricSnapshot);
+  assert.deepEqual(migrated.sessions[0].classIds, ['cls-7a']);
+
+  // 4. Group scores separated from individual scores
+  const stuEval = migrated.sessions[0].evaluations['stu-1'];
+  assert.equal(stuEval.criterionScores['crit-1'], 3);
+  assert.equal(stuEval.groupCriterionScores?.['crit-1'], 4);
+  assert.equal(stuEval.groupNote, 'Grup gözlemi');
+});
+
+test('Audit #2: Checksum covers ALL scores (individual, direct, group) and ALL notes (student, group, session)', () => {
+  const baseState = migrateV2ToV3({
+    classrooms: [{ id: 'c1', name: '7-A', gradeLevel: '7', subject: 'Fen', academicYear: '2026' }],
+    students: [{ id: 's1', studentNumber: '101', firstName: 'Elif', lastName: 'Yılmaz', fullName: 'Elif Yılmaz', classId: 'c1' }],
+    rubrics: [sampleRubric],
+    sessions: [
+      {
+        id: 'ses-1',
+        title: 'Deney',
+        classId: 'c1',
+        rubricId: 'rub-test',
+        date: '2026-10-18',
+        status: 'in_progress',
+        mode: 'individual',
+        generalSessionNote: 'Oturum notu 1',
+        groups: [
+          {
+            id: 'g1',
+            name: 'Grup 1',
+            studentIds: ['s1'],
+            criterionScores: { c1: 3, c2: 3 },
+            groupNote: 'Grup notu 1',
+          },
+        ],
+        evaluations: {
+          s1: {
+            studentId: 's1',
+            criterionScores: { c1: 3, c2: 4 },
+            directCriterionScores: { c1: 40 },
+            groupCriterionScores: { c1: 3, c2: 3 },
+            note: 'Öğrenci bireysel notu 1',
+            groupNote: 'Grup notu 1',
+            tags: ['Aktif'],
+            updatedAt: '2026-10-18',
+          },
+        },
+      },
+    ],
+  });
+
+  const baseChecksum = computePayloadChecksum(baseState);
+
+  // Changing a single criterion score changes checksum
+  const stateChangedScore = JSON.parse(JSON.stringify(baseState));
+  stateChangedScore.sessions[0].evaluations.s1.criterionScores.c1 = 2;
+  assert.notEqual(computePayloadChecksum(stateChangedScore), baseChecksum);
+
+  // Changing a direct integer score changes checksum
+  const stateChangedDirect = JSON.parse(JSON.stringify(baseState));
+  stateChangedDirect.sessions[0].evaluations.s1.directCriterionScores.c1 = 45;
+  assert.notEqual(computePayloadChecksum(stateChangedDirect), baseChecksum);
+
+  // Changing a student note changes checksum
+  const stateChangedNote = JSON.parse(JSON.stringify(baseState));
+  stateChangedNote.sessions[0].evaluations.s1.note = 'Öğrenci bireysel notu DEĞİŞTİ';
+  assert.notEqual(computePayloadChecksum(stateChangedNote), baseChecksum);
+
+  // Changing a group note or group score changes checksum
+  const stateChangedGroup = JSON.parse(JSON.stringify(baseState));
+  stateChangedGroup.sessions[0].groups[0].groupNote = 'Farklı grup notu';
+  assert.notEqual(computePayloadChecksum(stateChangedGroup), baseChecksum);
+
+  // Tampering with a score inside a backup bundle causes verifyAndParseBackupBundle to fail
+  const bundle = createVerifiedBackupBundle(baseState);
+  bundle.payload.sessions[0].evaluations.s1.note = 'Yetkisiz değişiklik';
+  const verifyTampered = verifyAndParseBackupBundle(JSON.stringify(bundle));
+  assert.equal(verifyTampered.isValid, false);
+  assert.match(verifyTampered.error || '', /Checksum/);
+});
+
+test('Audit #3 & #4: IndexedDB automatic recovery and user-facing save error notification', async () => {
+  __clearMemoryIndexedDbForTests();
+  __setSimulateIndexedDbFailureForTests(false);
+
+  const store: Record<string, string> = {};
+  let throwQuotaOnSet = false;
+
+  const mockLocalStorage = {
+    getItem: (k: string) => (k in store ? store[k] : null),
+    setItem: (k: string, v: string) => {
+      if (throwQuotaOnSet) {
+        throw new Error('QuotaExceededError: localStorage full');
+      }
+      store[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete store[k];
+    },
+  };
+
+  const prevLocalStorage = (globalThis as Record<string, unknown>).localStorage;
+  (globalThis as Record<string, unknown>).localStorage = mockLocalStorage;
+
+  try {
+    const validState = migrateV2ToV3({
+      classrooms: [{ id: 'c1', name: '7-A', gradeLevel: '7', subject: 'Fen', academicYear: '2026' }],
+      students: [{ id: 's1', studentNumber: '101', fullName: 'Elif Yılmaz', classId: 'c1' }],
+      rubrics: [sampleRubric],
+      sessions: [
+        {
+          id: 'ses-idb',
+          title: 'IndexedDB Kurtarma Oturumu',
+          classId: 'c1',
+          rubricId: 'rub-test',
+          date: '2026-10-18',
+          status: 'in_progress',
+          mode: 'individual',
+          generalSessionNote: 'Önemli oturum verisi',
+          groups: [],
+          evaluations: {
+            s1: {
+              studentId: 's1',
+              criterionScores: { c1: 4, c2: 4 },
+              note: 'Kurtarılacak öğrenci notu',
+              tags: [],
+              updatedAt: '2026-10-18',
+            },
+          },
+        },
+      ],
+    });
+
+    // 1. Save transactionally
+    const saveRes = await saveTransactionalState(validState);
+    assert.equal(saveRes.ok, true);
+    assert.equal(saveRes.localStorageSaved, true);
+    assert.equal(saveRes.indexedDbSaved, true);
+
+    // 2. Corrupt or delete localStorage and verify automatic IndexedDB recovery!
+    store[STORAGE_KEY] = '{corrupted_json';
+    const fallbackSeed = migrateV2ToV3({
+      classrooms: [{ id: 'c-seed', name: 'Seed', gradeLevel: '7', subject: 'Fen', academicYear: '2026' }],
+      students: [],
+      rubrics: [sampleRubric],
+      sessions: [],
+    });
+
+    const recovered = await loadInitialStateWithRecovery(fallbackSeed);
+    assert.equal(recovered.source, 'indexeddb_recovered');
+    assert.equal(recovered.state.sessions[0].id, 'ses-idb');
+    assert.equal(
+      recovered.state.sessions[0].evaluations['s1'].note,
+      'Kurtarılacak öğrenci notu'
+    );
+    // Also verify localStorage was healed automatically
+    const healedLocal = loadVerifiedInitialState(fallbackSeed);
+    assert.equal(healedLocal.sessions[0].id, 'ses-idb');
+
+    // 3. Verify save error notification when localStorage throws QuotaExceededError
+    throwQuotaOnSet = true;
+    let notifiedError = '';
+    const failedSave = await saveTransactionalState(validState, {
+      onSaveError: (msg: string) => {
+        notifiedError = msg;
+      },
+    });
+    assert.equal(failedSave.ok, false);
+    assert.equal(failedSave.localStorageSaved, false);
+    assert.ok(failedSave.errors.length > 0);
+    assert.ok(notifiedError.includes('localStorage'));
+  } finally {
+    (globalThis as Record<string, unknown>).localStorage = prevLocalStorage;
+    __setSimulateIndexedDbFailureForTests(false);
+  }
+});
+
+test('Audit #5: Safe group redistribution preserves scored/annotated groups and only redistributes remaining students', () => {
+  const students: Student[] = [
+    { id: 's1', studentNumber: '101', fullName: 'Elif Yılmaz', classId: 'c1' },
+    { id: 's2', studentNumber: '102', fullName: 'Kerem Demir', classId: 'c1' },
+    { id: 's3', studentNumber: '103', fullName: 'Zeynep Kaya', classId: 'c1' },
+    { id: 's4', studentNumber: '104', fullName: 'Mert Çelik', classId: 'c1' },
+    { id: 's5', studentNumber: '105', fullName: 'Defne Şahin', classId: 'c1' },
+    { id: 's6', studentNumber: '106', fullName: 'Caner Aydın', classId: 'c1' },
+  ];
+
+  const existingGroups: StudentGroup[] = [
+    {
+      id: 'grp-scored',
+      name: 'Grup 1: Puanlanmış Ekip',
+      studentIds: ['s1', 's2'],
+      criterionScores: { c1: 4, c2: 3 },
+      groupNote: 'Deneyi tamamladılar',
+    },
+    {
+      id: 'grp-empty',
+      name: 'Grup 2: Boş Ekip',
+      studentIds: ['s3', 's4'],
+      criterionScores: {},
+      groupNote: '',
+    },
+  ];
+
+  assert.equal(hasGroupEvaluationData(existingGroups[0]), true);
+  assert.equal(hasGroupEvaluationData(existingGroups[1]), false);
+
+  // 1. Default safe redistribution preserves grp-scored (s1, s2) and distributes s3, s4, s5, s6 into 2-person groups
+  const safeRes = redistributeGroupsSafely(existingGroups, students, {
+    targetGroupSize: 2,
+    seed: 12345,
+  });
+  assert.equal(safeRes.blocked, false);
+  assert.equal(safeRes.preservedGroupCount, 1);
+  assert.equal(safeRes.redistributedStudentCount, 4);
+  assert.equal(safeRes.groups[0].id, 'grp-scored');
+  assert.deepEqual(safeRes.groups[0].criterionScores, { c1: 4, c2: 3 });
+
+  const allAssigned = safeRes.groups.flatMap((g) => g.studentIds);
+  assert.equal(allAssigned.length, 6);
+  assert.equal(new Set(allAssigned).size, 6);
+
+  // 2. Attempting to overwrite scored groups without allowOverwriteEvaluated is blocked
+  const blockedRes = redistributeGroupsSafely(existingGroups, students, {
+    targetGroupSize: 3,
+    preserveEvaluatedGroups: false,
+    allowOverwriteEvaluated: false,
+  });
+  assert.equal(blockedRes.blocked, true);
+  assert.ok(blockedRes.warning);
+});
+
+test('Audit #6: Scored-session rubric change protection blocks silent overwrites and supports safe reset with undo', () => {
+  const secondRubric: Rubric = {
+    ...sampleRubric,
+    id: 'rub-second',
+    title: 'İkinci Rubrik (Yeni)',
+  };
+
+  const scoredSession: EvaluationSession = {
+    id: 'ses-scored',
+    title: 'Puanlanmış Oturum',
+    classId: 'cls-7a',
+    rubricId: 'rub-test',
+    rubricSnapshot: sampleRubric,
+    date: '2026-10-18',
+    status: 'in_progress',
+    mode: 'individual',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      s1: {
+        studentId: 's1',
+        criterionScores: { c1: 4, c2: 3 },
+        note: 'Kaydedilmiş not',
+        tags: [],
+        updatedAt: '2026-10-18',
+      },
+    },
+  };
+
+  // 1. Check blocks direct rubric change when session has evaluations
+  const check = canChangeSessionRubric(scoredSession, 'rub-second');
+  assert.equal(check.allowed, false);
+  assert.equal(check.evaluatedStudentCount, 1);
+
+  const blockedChange = changeSessionRubricSafely(scoredSession, secondRubric);
+  assert.equal(blockedChange.allowed, false);
+  assert.equal(blockedChange.updatedSession.rubricId, 'rub-test');
+  assert.deepEqual(
+    blockedChange.updatedSession.evaluations['s1'].criterionScores,
+    { c1: 4, c2: 3 }
+  );
+
+  // 2. Explicit confirmResetExistingScores backs up evaluations + previousRubricId into undoHistory
+  const confirmedChange = changeSessionRubricSafely(scoredSession, secondRubric, {
+    confirmResetExistingScores: true,
+  });
+  assert.equal(confirmedChange.allowed, true);
+  assert.equal(confirmedChange.updatedSession.rubricId, 'rub-second');
+  assert.equal(
+    confirmedChange.updatedSession.undoHistory?.[0]?.previousRubricId,
+    'rub-test'
+  );
+  assert.deepEqual(
+    confirmedChange.updatedSession.undoHistory?.[0]?.previousEvaluations['s1']
+      .criterionScores,
+    { c1: 4, c2: 3 }
+  );
+});
+
+test('Audit #7: PDF generator includes ALL criteria (10+ criteria without truncation) and preserves Turkish characters', () => {
+  const tenCriteriaRubric: Rubric = {
+    id: 'rub-10',
+    title: 'Kapsamlı 10 Ölçütlü Değerlendirme Rubriği',
+    subject: 'Fen Bilimleri',
+    description: '10 ölçütlü rubrik',
+    maxLevelPoints: 4,
+    createdAt: '2026-10-18',
+    criteria: Array.from({ length: 10 }, (_, idx) => ({
+      id: `crit-${idx + 1}`,
+      title: `Ölçüt ${idx + 1} — Çağdaş Bilimsel Gözlem ve Çözümleme`,
+      category: 'Uygulama',
+      weight: 10,
+      maxPoints: 10,
+      required: true,
+      levels: [
+        { level: 0, label: 'Gözlenmedi', points: 0, description: 'D0' },
+        { level: 4, label: 'Örnek Düzey', points: 4, description: 'D4' },
+      ],
+    })),
+  };
+
+  const session10: EvaluationSession = {
+    id: 'ses-10',
+    title: '3. Ünite: Yoğunluk ve Karışımların Ayrıştırılması',
+    classId: 'cls-7a',
+    rubricId: 'rub-10',
+    rubricSnapshot: tenCriteriaRubric,
+    date: '2026-10-18',
+    status: 'completed',
+    mode: 'individual',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      'stu-tr': {
+        studentId: 'stu-tr',
+        criterionScores: {
+          'crit-1': 4,
+          'crit-2': 4,
+          'crit-3': 4,
+          'crit-4': 4,
+          'crit-5': 4,
+          'crit-6': 4,
+          'crit-7': 4,
+          'crit-8': 4,
+          'crit-9': 4,
+          'crit-10': 4,
+        },
+        note: 'Öğrenci ğüşiöç ĞÜŞİÖÇ karakterli gözlem notu.',
+        tags: [],
+        updatedAt: '2026-10-18',
+      },
+    },
+  };
+
+  const students: Student[] = [
+    {
+      id: 'stu-tr',
+      studentNumber: '108',
+      firstName: 'Çağrı',
+      lastName: 'Öztürk',
+      fullName: 'Çağrı Öztürk',
+      classId: 'cls-7a',
+    },
+  ];
+
+  const pdfBytes = generatePaginatedSessionPdfBytes(
+    session10,
+    tenCriteriaRubric,
+    {
+      id: 'cls-7a',
+      name: '7-A Sınıfı',
+      gradeLevel: '7. Sınıf',
+      subject: 'Fen Bilimleri',
+      academicYear: '2026-2027',
+    },
+    students
+  );
+
+  const pdfText = new TextDecoder('utf-8').decode(pdfBytes);
+
+  // Verify Turkish characters are preserved (never stripped to ASCII!)
+  assert.ok(pdfText.includes('ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - 7-A Sınıfı'));
+  assert.ok(pdfText.includes('Çağrı Öztürk'));
+  assert.ok(pdfText.includes('ğüşiöç ĞÜŞİÖÇ'));
+
+  // Verify ALL 10 criteria (including criterion 9 and criterion 10!) are included in the PDF
+  for (let i = 1; i <= 10; i++) {
+    assert.ok(
+      pdfText.includes(`K${i}: Ölçüt ${i} - Çağdaş Bilimsel Gözlem ve Çözümleme`),
+      `Missing criterion ${i} in PDF legend`
+    );
+    assert.ok(
+      pdfText.includes(`K${i}:4`),
+      `Missing student score for criterion K${i} in PDF row`
+    );
+  }
+});
+

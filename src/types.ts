@@ -88,6 +88,8 @@ export interface EvaluationActionHistoryEntry {
   description: string;
   previousEvaluations: Record<string, StudentEvaluation>;
   previousGroups?: StudentGroup[];
+  previousRubricId?: string;
+  previousRubricSnapshot?: Rubric;
 }
 
 export interface EvaluationSession {

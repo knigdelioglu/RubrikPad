@@ -17,9 +17,10 @@ import type {
 import {
   calculateWeightedScore,
   findDuplicateGroupMemberships,
-  generateBalancedRandomGroups,
   getGroupProgressHistory,
+  hasGroupEvaluationData,
   isScoreAssigned,
+  redistributeGroupsSafely,
 } from '../../utils/rubricLogic.ts';
 
 interface GroupEvaluationViewProps {
@@ -62,9 +63,15 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   const [newGroupMemberIds, setNewGroupMemberIds] = useState<string[]>([]);
   const [groupFormError, setGroupFormError] = useState<string | null>(null);
 
-  // Balanced Random Group Generator state (P1 #5)
+  // Balanced Random Group Generator state with safe redistribution protection (Issue #5)
   const [showRandomModal, setShowRandomModal] = useState(false);
   const [randomTargetSize, setRandomTargetSize] = useState(3);
+  const [preserveScoredGroups, setPreserveScoredGroups] = useState(true);
+  const [confirmOverwriteScoredGroups, setConfirmOverwriteScoredGroups] =
+    useState(false);
+  const [randomRedistributeWarning, setRandomRedistributeWarning] = useState<
+    string | null
+  >(null);
 
   // Longitudinal Group History toggle (P1 #6)
   const [showGroupHistory, setShowGroupHistory] = useState(false);
@@ -74,6 +81,13 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
       activeSession.groups.find((g) => g.id === selectedGroupId) ||
       activeSession.groups[0],
     [activeSession.groups, selectedGroupId]
+  );
+
+  const evaluatedGroupsCount = useMemo(
+    () =>
+      (activeSession.groups || []).filter((g) => hasGroupEvaluationData(g))
+        .length,
+    [activeSession.groups]
   );
 
   const groupHistory = useMemo(
@@ -127,13 +141,30 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   };
 
   const handleGenerateBalancedRandom = () => {
-    const generated = generateBalancedRandomGroups(classStudents, {
-      targetGroupSize: randomTargetSize,
-    });
-    if (generated.length > 0) {
-      onReplaceAllGroups(generated);
-      onSelectGroup(generated[0].id);
+    setRandomRedistributeWarning(null);
+    const result = redistributeGroupsSafely(
+      activeSession.groups,
+      classStudents,
+      {
+        targetGroupSize: randomTargetSize,
+        preserveEvaluatedGroups: preserveScoredGroups,
+        allowOverwriteEvaluated: confirmOverwriteScoredGroups,
+      }
+    );
+
+    if (result.blocked) {
+      setRandomRedistributeWarning(
+        result.warning ||
+          'Puanlanmış grupların üzerine yazmak için onay kutusunu işaretleyin.'
+      );
+      return;
+    }
+
+    if (result.groups.length > 0) {
+      onReplaceAllGroups(result.groups);
+      onSelectGroup(result.groups[result.groups.length - 1].id);
       setShowRandomModal(false);
+      setConfirmOverwriteScoredGroups(false);
     }
   };
 
@@ -155,7 +186,10 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setShowRandomModal(!showRandomModal)}
+            onClick={() => {
+              setRandomRedistributeWarning(null);
+              setShowRandomModal(!showRandomModal);
+            }}
             className="px-3 py-1.5 text-xs font-bold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg flex items-center gap-1.5 cursor-pointer"
           >
             <Shuffle className="w-3.5 h-3.5" />
@@ -177,52 +211,108 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
         </div>
       </div>
 
-      {/* Balanced Random Group Modal/Drawer (P1 #5) */}
+      {/* Balanced Random Group Modal/Drawer with Safe Redistribution Protection (Issue #5) */}
       {showRandomModal && (
-        <div className="bg-teal-50/80 border border-teal-300 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="text-sm font-bold text-teal-950">
-              Dengeli Rastgele Grup Oluşturucu ({classStudents.length} Aktif
-              Öğrenci)
+        <div className="bg-teal-50/80 border border-teal-300 rounded-xl p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-sm font-bold text-teal-950">
+                Güvenli Dengeli Rastgele Grup Dağıtımı ({classStudents.length}{' '}
+                Aktif Öğrenci)
+              </div>
+              <p className="text-xs text-teal-900">
+                Varsayılan olarak puanlanmış veya not girilmiş grupları ({evaluatedGroupsCount}{' '}
+                grup) korur ve yalnızca kalan öğrencileri yeni gruplara dağıtır.
+              </p>
             </div>
-            <p className="text-xs text-teal-900">
-              Sınıftaki tüm öğrencileri mükerrer üyelik olmadan eşit büyüklükte
-              rastgele çalışma gruplarına dağıtır.
-            </p>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <label
+                htmlFor="rand-group-size"
+                className="text-xs font-bold text-teal-950"
+              >
+                Grup Başına Öğrenci:
+              </label>
+              <select
+                id="rand-group-size"
+                value={randomTargetSize}
+                onChange={(e) => setRandomTargetSize(Number(e.target.value))}
+                className="px-2.5 py-1.5 text-xs font-bold bg-white border border-teal-300 rounded-lg"
+              >
+                <option value={2}>2 Kişilik Eşli Gruplar</option>
+                <option value={3}>3 Kişilik Takımlar</option>
+                <option value={4}>4 Kişilik Takımlar</option>
+                <option value={5}>5 Kişilik Takımlar</option>
+              </select>
+              <button
+                type="button"
+                onClick={handleGenerateBalancedRandom}
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer"
+              >
+                Grupları Dağıt
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRandomModal(false)}
+                className="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded-lg cursor-pointer"
+              >
+                Kapat
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <label
-              htmlFor="rand-group-size"
-              className="text-xs font-bold text-teal-950"
+
+          {evaluatedGroupsCount > 0 && (
+            <div className="pt-2 border-t border-teal-200/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-1.5 font-semibold text-teal-950 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="group-redistribute-mode"
+                    checked={preserveScoredGroups}
+                    onChange={() => {
+                      setPreserveScoredGroups(true);
+                      setRandomRedistributeWarning(null);
+                    }}
+                  />
+                  Puanlanmış {evaluatedGroupsCount} Grubu Koru, Kalan Öğrencileri
+                  Dağıt (Önerilen)
+                </label>
+
+                <label className="flex items-center gap-1.5 font-semibold text-amber-900 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="group-redistribute-mode"
+                    checked={!preserveScoredGroups}
+                    onChange={() => setPreserveScoredGroups(false)}
+                  />
+                  Tüm Grupları Baştan Oluştur
+                </label>
+              </div>
+
+              {!preserveScoredGroups && (
+                <label className="flex items-center gap-1.5 font-bold text-red-800 bg-white px-2.5 py-1 rounded border border-red-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={confirmOverwriteScoredGroups}
+                    onChange={(e) =>
+                      setConfirmOverwriteScoredGroups(e.target.checked)
+                    }
+                  />
+                  Puanlanmış grupların sıfırlanacağını onaylıyorum (Geri Al ile
+                  kurtarılabilir)
+                </label>
+              )}
+            </div>
+          )}
+
+          {randomRedistributeWarning && (
+            <div
+              role="alert"
+              className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-900 text-xs font-semibold flex items-center gap-2"
             >
-              Grup Başına Öğrenci:
-            </label>
-            <select
-              id="rand-group-size"
-              value={randomTargetSize}
-              onChange={(e) => setRandomTargetSize(Number(e.target.value))}
-              className="px-2.5 py-1.5 text-xs font-bold bg-white border border-teal-300 rounded-lg"
-            >
-              <option value={2}>2 Kişilik Eşli Gruplar</option>
-              <option value={3}>3 Kişilik Takımlar</option>
-              <option value={4}>4 Kişilik Takımlar</option>
-              <option value={5}>5 Kişilik Takımlar</option>
-            </select>
-            <button
-              type="button"
-              onClick={handleGenerateBalancedRandom}
-              className="px-3.5 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer"
-            >
-              Grupları Dağıt
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowRandomModal(false)}
-              className="px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded-lg cursor-pointer"
-            >
-              Kapat
-            </button>
-          </div>
+              <AlertCircle className="w-4 h-4 text-red-700 shrink-0" />
+              <span>{randomRedistributeWarning}</span>
+            </div>
+          )}
         </div>
       )}
 

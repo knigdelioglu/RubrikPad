@@ -55,6 +55,15 @@ interface FastEvaluationViewProps {
   } | null;
   onDismissBanner: () => void;
   statusAnnouncement: string;
+  pendingRubricChange?: {
+    targetRubric: Rubric;
+    evaluatedStudentCount: number;
+    evaluatedGroupCount: number;
+    reason: string;
+  } | null;
+  onCreateNewSessionWithRubric?: (targetRubric: Rubric) => void;
+  onConfirmResetAndChangeRubric?: (targetRubric: Rubric) => void;
+  onCancelRubricChange?: () => void;
 }
 
 export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
@@ -80,6 +89,10 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   fastCompletionBanner,
   onDismissBanner,
   statusAnnouncement,
+  pendingRubricChange,
+  onCreateNewSessionWithRubric,
+  onConfirmResetAndChangeRubric,
+  onCancelRubricChange,
 }) => {
   const currentStudentEval = selectedStudent
     ? activeSession.evaluations[selectedStudent.id]
@@ -120,7 +133,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               </h1>
             </div>
 
-            {/* Rubric Switcher (allows testing 4-criterion or 8-criterion rubrics immediately) */}
+            {/* Rubric Switcher with Scored-Session Protection (Issue #6) */}
             <label htmlFor="fast-rubric-select" className="sr-only">
               Değerlendirme Rubriği Seçin
             </label>
@@ -192,6 +205,57 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Scored Session Rubric Change Protection Banner (Issue #6) */}
+        {pendingRubricChange && (
+          <div
+            role="alert"
+            className="mb-2 p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs"
+          >
+            <div className="font-semibold">
+              <span>
+                Rubrik Değiştirme Koruması: {pendingRubricChange.reason}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {onCreateNewSessionWithRubric && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onCreateNewSessionWithRubric(
+                      pendingRubricChange.targetRubric
+                    )
+                  }
+                  className="px-2.5 py-1 rounded bg-teal-700 text-white font-bold hover:bg-teal-800 cursor-pointer"
+                >
+                  Yeni Oturumda Aç (Mevcut Notları Koru)
+                </button>
+              )}
+              {onConfirmResetAndChangeRubric && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onConfirmResetAndChangeRubric(
+                      pendingRubricChange.targetRubric
+                    )
+                  }
+                  className="px-2.5 py-1 rounded bg-white border border-amber-400 text-amber-950 font-semibold hover:bg-amber-100 cursor-pointer"
+                >
+                  Puanları Sıfırlayarak Değiştir (Geri Alınabilir)
+                </button>
+              )}
+              {onCancelRubricChange && (
+                <button
+                  type="button"
+                  onClick={onCancelRubricChange}
+                  className="px-2 py-1 text-slate-700 font-medium hover:underline cursor-pointer"
+                >
+                  İptal
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Split Layout: Left Student Roster | Right Ultra-Compact Criteria List (4 to 8 criteria fit without scroll) */}
         <div className="grid grid-cols-12 gap-3 flex-1 min-h-0 overflow-hidden">

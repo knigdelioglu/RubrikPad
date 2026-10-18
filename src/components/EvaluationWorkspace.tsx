@@ -23,6 +23,7 @@ import {
   getStudentEvaluationBreakdown,
   getEffectiveSessionRubric,
   freezeRubricSnapshot,
+  changeSessionRubricSafely,
   applyGroupScoresToMembers,
   applyCriterionScoreToStudents,
   getSessionProgressStats,
@@ -120,6 +121,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     rubrics[0]?.id || ''
   );
 
+  // Scored-Session Rubric Change Protection state (Issue #6)
+  const [pendingRubricChange, setPendingRubricChange] = useState<{
+    targetRubric: Rubric;
+    evaluatedStudentCount: number;
+    evaluatedGroupCount: number;
+    reason: string;
+  } | null>(null);
+
   // Fast Mode & Precision Scoring State
   const [activeCriterionIndex, setActiveCriterionIndex] = useState<number>(0);
   const [autoAdvanceStudent, setAutoAdvanceStudent] = useState<boolean>(false);
@@ -159,6 +168,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       setActiveCriterionIndex(0);
     }
   }, [classStudents, selectedStudentId]);
+
+  useEffect(() => {
+    setPendingRubricChange(null);
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (activeSession?.groups && activeSession.groups.length > 0) {
@@ -208,7 +221,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     [classStudents, selectedStudentId]
   );
 
-  // Undo handler (P1 #7)
+  // Undo handler (P1 #7 & Issue #6 rubric restore)
   const handleUndoLastAction = useCallback(() => {
     if (
       !activeSession ||
@@ -220,6 +233,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     const [latestUndo, ...remainingHistory] = activeSession.undoHistory;
     onUpdateSession({
       ...activeSession,
+      rubricId: latestUndo.previousRubricId ?? activeSession.rubricId,
+      rubricSnapshot:
+        latestUndo.previousRubricSnapshot ?? activeSession.rubricSnapshot,
       evaluations: latestUndo.previousEvaluations,
       groups: latestUndo.previousGroups ?? activeSession.groups,
       undoHistory: remainingHistory,
@@ -448,16 +464,68 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     [activeSession, onUpdateSession]
   );
 
-  // Change session rubric (and freeze new rubricSnapshot)
+  // Change session rubric safely (Issue #6: protect scored sessions from accidental rubric overwrite)
   const handleChangeSessionRubric = (rubricId: string) => {
     if (!activeSession) return;
     const targetRubric = rubricsById[rubricId];
     if (!targetRubric) return;
-    onUpdateSession({
-      ...activeSession,
-      rubricId,
+
+    const checkResult = changeSessionRubricSafely(activeSession, targetRubric);
+    if (!checkResult.allowed) {
+      setPendingRubricChange({
+        targetRubric,
+        evaluatedStudentCount: checkResult.evaluatedStudentCount,
+        evaluatedGroupCount: checkResult.evaluatedGroupCount,
+        reason:
+          checkResult.blockedReason ||
+          'Bu oturumda kayıtlı puanlar bulunduğu için rubrik doğrudan değiştirilemez.',
+      });
+      return;
+    }
+
+    setPendingRubricChange(null);
+    onUpdateSession(checkResult.updatedSession);
+  };
+
+  const handleCreateNewSessionWithRubric = (targetRubric: Rubric) => {
+    if (!activeSession) return;
+    const newSes: EvaluationSession = {
+      id: `ses-${Date.now()}`,
+      title: `${targetRubric.title} Uygulaması`,
+      classId: activeSession.classId,
+      classIds: sessionClassIds,
+      rubricId: targetRubric.id,
       rubricSnapshot: freezeRubricSnapshot(targetRubric),
+      date: new Date().toISOString().slice(0, 10),
+      status: 'in_progress',
+      mode: activeSession.mode,
+      generalSessionNote: '',
+      groups: [
+        {
+          id: `grp-${Date.now()}-1`,
+          name: 'Grup 1: Çalışma Ekibi',
+          studentIds: [],
+          criterionScores: {},
+          groupNote: '',
+        },
+      ],
+      evaluations: {},
+      undoHistory: [],
+    };
+    onCreateSession(newSes);
+    onSelectSession(newSes.id);
+    setPendingRubricChange(null);
+  };
+
+  const handleConfirmResetAndChangeRubric = (targetRubric: Rubric) => {
+    if (!activeSession) return;
+    const forced = changeSessionRubricSafely(activeSession, targetRubric, {
+      confirmResetExistingScores: true,
     });
+    if (forced.allowed) {
+      onUpdateSession(forced.updatedSession);
+    }
+    setPendingRubricChange(null);
   };
 
   const handleCreateNewSessionSubmit = (e: React.FormEvent) => {
@@ -631,6 +699,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         fastCompletionBanner={fastCompletionBanner}
         onDismissBanner={() => setFastCompletionBanner(null)}
         statusAnnouncement={statusAnnouncement}
+        pendingRubricChange={pendingRubricChange}
+        onCreateNewSessionWithRubric={handleCreateNewSessionWithRubric}
+        onConfirmResetAndChangeRubric={handleConfirmResetAndChangeRubric}
+        onCancelRubricChange={() => setPendingRubricChange(null)}
       />
     );
   }
@@ -844,6 +916,52 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Scored Session Rubric Change Protection Banner (Issue #6) */}
+        {pendingRubricChange && (
+          <div
+            role="alert"
+            className="mt-3 p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs"
+          >
+            <div className="space-y-0.5">
+              <div className="font-bold text-amber-950">
+                Puanlanmış Oturumda Rubrik Değiştirme Koruması
+              </div>
+              <p className="text-amber-900">{pendingRubricChange.reason}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() =>
+                  handleCreateNewSessionWithRubric(
+                    pendingRubricChange.targetRubric
+                  )
+                }
+                className="px-3 py-1.5 rounded-lg bg-teal-700 text-white font-bold hover:bg-teal-800 cursor-pointer"
+              >
+                Yeni Rubrikle Yeni Oturum Başlat (Mevcut Notları Koru)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  handleConfirmResetAndChangeRubric(
+                    pendingRubricChange.targetRubric
+                  )
+                }
+                className="px-3 py-1.5 rounded-lg bg-white border border-amber-400 text-amber-950 font-semibold hover:bg-amber-100 cursor-pointer"
+              >
+                Puanları Sıfırlayarak Değiştir (Geri Alınabilir)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingRubricChange(null)}
+                className="px-2.5 py-1.5 text-slate-700 font-medium hover:underline cursor-pointer"
+              >
+                İptal
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* New Session Modal (Multi-Classroom Support P1 #9) */}
