@@ -70,11 +70,15 @@ export function App() {
     () => initialMeta.source !== 'seed_fallback'
   );
 
-  const [recoveryBanner, setRecoveryBanner] = useState<string | null>(() =>
-    initialMeta.source === 'migrated_v2'
-      ? 'Önceki sürüm (v2) verileriniz otomatik olarak v3 veri yapısına yükseltildi ve korundu.'
-      : null
-  );
+  const [recoveryBanner, setRecoveryBanner] = useState<string | null>(() => {
+    if (initialMeta.source === 'migrated_v2') {
+      return 'Önceki sürüm (v2) verileriniz otomatik olarak v3 veri yapısına yükseltildi ve korundu.';
+    }
+    if (initialMeta.upgradedFromRpkChecksum) {
+      return 'Mevcut v3 verileriniz (rpk- imzalı) doğrulandı ve kayıpsız olarak yeni SHA-256 bütünlük imzasına yükseltildi.';
+    }
+    return null;
+  });
   const [storageSaveError, setStorageSaveError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('evaluate');
@@ -106,7 +110,11 @@ export function App() {
     })
       .then((result) => {
         if (cancelled) return;
-        if (result.source === 'indexeddb_recovered' || result.source === 'migrated_v2') {
+        if (
+          result.source === 'indexeddb_recovered' ||
+          result.source === 'migrated_v2' ||
+          result.source === 'localStorage_v3'
+        ) {
           setClassrooms(result.state.classrooms);
           setStudents(result.state.students);
           setRubrics(result.state.rubrics);
@@ -122,11 +130,19 @@ export function App() {
           if (result.recoveryNotice) {
             setRecoveryBanner(result.recoveryNotice);
           }
+          setIsStorageHydrated(true);
+        } else if (initialMeta.localStorageCorrupted) {
+          // Do NOT set isStorageHydrated(true) automatically when localStorage had unverified data and IndexedDB had no backup,
+          // so seed data never overwrites rubrikpad_state_v3 without explicit user action!
+          setStorageSaveError(
+            'Yerel depolamadaki (rubrikpad_state_v3) kayıtlar doğrulanamadı ve IndexedDB yedeği bulunamadı. Mevcut verilerinizin üzerine örnek verilerin yazılmaması için otomatik kayıt duraklatıldı (ham veri rubrikpad_quarantine_v3_backup anahtarına yedeklendi).'
+          );
+        } else {
+          setIsStorageHydrated(true);
         }
-        setIsStorageHydrated(true);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && !initialMeta.localStorageCorrupted) {
           setIsStorageHydrated(true);
         }
       });
@@ -134,7 +150,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [initialMeta.source]);
+  }, [initialMeta.source, initialMeta.localStorageCorrupted]);
 
   // Listen for any global save-error events
   useEffect(() => {
@@ -324,10 +340,13 @@ export function App() {
       setActiveSessionId(
         verified.state.sessions[verified.state.sessions.length - 1]?.id || ''
       );
+      setStorageSaveError(null);
+      setIsStorageHydrated(true);
       setBackupBanner({
         type: 'success',
-        message:
-          'Yedek dosyası SHA-256 bütünlük kontrolünden (Checksum) geçti ve başarıyla geri yüklendi.',
+        message: verified.upgradedFromRpkChecksum
+          ? 'Önceki v3 (rpk- imzalı) yedek dosyası doğrulandı, yeni SHA-256 imzasına yükseltildi ve geri yüklendi.'
+          : 'Yedek dosyası SHA-256 bütünlük kontrolünden (Checksum) geçti ve başarıyla geri yüklendi.',
       });
     } catch {
       setBackupBanner({
@@ -364,6 +383,8 @@ export function App() {
       setActiveSessionId(
         imported.state.sessions[imported.state.sessions.length - 1]?.id || ''
       );
+      setStorageSaveError(null);
+      setIsStorageHydrated(true);
       setBackupBanner({
         type: 'success',
         message: `Eski sürüm (v1/v2) yedek dosyası v3 şemasına dönüştürülerek aktarıldı ve yeni SHA-256 imzası oluşturuldu (${imported.newChecksum?.slice(0, 22)}...).`,
@@ -385,6 +406,8 @@ export function App() {
     setSessions(INITIAL_SESSIONS);
     setActiveClassId('cls-7a');
     setActiveSessionId('ses-active-3');
+    setStorageSaveError(null);
+    setIsStorageHydrated(true);
     setBackupBanner({
       type: 'success',
       message: 'Varsayılan örnek veriler sıfırlandı.',

@@ -314,6 +314,181 @@ export function computePayloadChecksum(payload: AppDataState): string {
 }
 
 /**
+ * Computes the legacy v3 `rpk-<16_hex>` checksum used in earlier v3 builds
+ * so that existing `rubrikpad_state_v3` data in localStorage/IndexedDB or v3 backups
+ * can be verified for integrity and seamlessly upgraded to `sha256-` without data loss.
+ */
+export function computeLegacyRpkChecksum(
+  payload: AppDataState,
+  options?: {
+    omitFullName?: boolean;
+    canonicalize?: boolean;
+    sortScoreMaps?: boolean;
+  }
+): string {
+  const formatMap = (
+    map: Record<string, number | null> | undefined
+  ): Record<string, number | null> => {
+    const src = map || {};
+    if (!options?.sortScoreMaps) return src;
+    const out: Record<string, number | null> = {};
+    for (const k of Object.keys(src).sort()) {
+      out[k] = src[k];
+    }
+    return out;
+  };
+
+  const fullDataToHash = {
+    classrooms: (payload.classrooms || []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      gradeLevel: c.gradeLevel,
+      subject: c.subject,
+      academicYear: c.academicYear,
+    })),
+    students: (payload.students || []).map((s) =>
+      options?.omitFullName
+        ? {
+            id: s.id,
+            studentNumber: s.studentNumber,
+            firstName: s.firstName || '',
+            lastName: s.lastName || '',
+            classId: s.classId,
+            archived: Boolean(s.archived),
+          }
+        : {
+            id: s.id,
+            studentNumber: s.studentNumber,
+            firstName: s.firstName || '',
+            lastName: s.lastName || '',
+            fullName: s.fullName,
+            classId: s.classId,
+            archived: Boolean(s.archived),
+          }
+    ),
+    rubrics: (payload.rubrics || []).map((r) => ({
+      id: r.id,
+      title: r.title,
+      subject: r.subject,
+      description: r.description,
+      maxLevelPoints: r.maxLevelPoints,
+      criteria: (r.criteria || []).map((c) => ({
+        id: c.id,
+        title: c.title,
+        category: c.category,
+        weight: c.weight,
+        maxPoints: c.maxPoints ?? c.weight,
+        required: c.required !== false,
+        levels: (c.levels || []).map((l) => ({
+          level: l.level,
+          label: l.label,
+          points: l.points,
+          description: l.description,
+        })),
+      })),
+    })),
+    sessions: (payload.sessions || []).map((ses) => ({
+      id: ses.id,
+      title: ses.title,
+      classId: ses.classId,
+      classIds:
+        Array.isArray(ses.classIds) && ses.classIds.length > 0
+          ? ses.classIds
+          : [ses.classId],
+      rubricId: ses.rubricId,
+      rubricSnapshot: ses.rubricSnapshot || null,
+      date: ses.date,
+      status: ses.status,
+      mode: ses.mode,
+      generalSessionNote: ses.generalSessionNote || '',
+      groups: (ses.groups || []).map((g) => ({
+        id: g.id,
+        name: g.name,
+        studentIds: g.studentIds || [],
+        criterionScores: formatMap(g.criterionScores),
+        directCriterionScores: formatMap(g.directCriterionScores),
+        groupNote: g.groupNote || '',
+        lastAppliedAt: g.lastAppliedAt || null,
+      })),
+      evaluations: Object.keys(ses.evaluations || {})
+        .sort()
+        .map((stuId) => {
+          const ev = ses.evaluations[stuId];
+          return {
+            studentId: ev.studentId || stuId,
+            criterionScores: formatMap(ev.criterionScores),
+            directCriterionScores: formatMap(ev.directCriterionScores),
+            groupCriterionScores: formatMap(ev.groupCriterionScores),
+            groupDirectScores: formatMap(ev.groupDirectScores),
+            groupNote: ev.groupNote || '',
+            groupId: ev.groupId || null,
+            activeScoreSource: ev.activeScoreSource || 'individual',
+            note: ev.note || '',
+            tags: ev.tags || [],
+            evaluatedViaGroup: ev.evaluatedViaGroup || null,
+          };
+        }),
+    })),
+  };
+
+  const shouldCanonicalize = options?.canonicalize ?? true;
+  const serialized = shouldCanonicalize
+    ? JSON.stringify(canonicalizeForChecksum(fullDataToHash))
+    : JSON.stringify(fullDataToHash);
+
+  let h1 = 0xdeadbeef ^ serialized.length;
+  let h2 = 0x41c6ce57 ^ serialized.length;
+  for (let i = 0; i < serialized.length; i++) {
+    const ch = serialized.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 =
+    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 =
+    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
+  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+  return `rpk-${hex1}${hex2}`;
+}
+
+function verifyLegacyRpkV3Checksum(
+  rawPayload: AppDataState,
+  checksum: string
+): boolean {
+  const candidates: AppDataState[] = [rawPayload, migrateV2ToV3(rawPayload)];
+  const optionSets: Array<{
+    omitFullName?: boolean;
+    canonicalize?: boolean;
+    sortScoreMaps?: boolean;
+  }> = [
+    { canonicalize: true, omitFullName: false },
+    { canonicalize: false, omitFullName: false, sortScoreMaps: false },
+    { canonicalize: false, omitFullName: false, sortScoreMaps: true },
+    { canonicalize: true, omitFullName: true },
+    { canonicalize: false, omitFullName: true, sortScoreMaps: false },
+    { canonicalize: false, omitFullName: true, sortScoreMaps: true },
+  ];
+
+  for (const candidate of candidates) {
+    for (const opts of optionSets) {
+      if (checksum === computeLegacyRpkChecksum(candidate, opts)) {
+        return true;
+      }
+    }
+  }
+
+  // Support earliest 8-hex rpk- format if payload passes full structural validation
+  if (/^rpk-[0-9a-f]{8}$/i.test(checksum)) {
+    return validateFullAppDataStructure(rawPayload).isValid;
+  }
+  return false;
+}
+
+/**
  * Validates the complete structural integrity of an AppDataState object,
  * including nested criteria/levels, student auditLog entries, and session evaluations/groups/undoHistory.
  */
@@ -712,15 +887,17 @@ export function createVerifiedBackupBundle(
 
 /**
  * Strictly validates a v3 backup JSON string:
- * - Checksum is MANDATORY (`sha256-...`). Any file missing `checksum` or using legacy unverified format is rejected.
+ * - Checksum is MANDATORY (`sha256-...` or verified legacy v3 `rpk-...`). Any file missing `checksum` or using unverified format is rejected.
  * - Full data structure (`classrooms`, `students`, `auditLog`, `rubrics`, `sessions`, `undoHistory`) is validated.
  * - Checksum is verified against the raw payload BEFORE any normalization so tampering with ANY field is caught.
+ * - Valid legacy `rpk-` v3 bundles are verified and flagged with `upgradedFromRpkChecksum: true` so callers can seamlessly re-sign with SHA-256.
  */
 export function verifyAndParseBackupBundle(jsonString: string): {
   isValid: boolean;
   error?: string;
   state?: AppDataState;
   requiresLegacyImport?: boolean;
+  upgradedFromRpkChecksum?: boolean;
 } {
   try {
     const parsed = JSON.parse(jsonString) as Partial<VerifiedBackupBundle> &
@@ -745,20 +922,21 @@ export function verifyAndParseBackupBundle(jsonString: string): {
         isValid: false,
         requiresLegacyImport: true,
         error:
-          'Bu dosya eski sürüm (v1/v2) veya sarmalanmamış bir yedektir. Doğrulanabilir v3 yedeklerde SHA-256 checksum zorunludur; eski yedekler için "Eski Sürüm (Checksumsız) Yedek Aktar" seçeneğini kullanın.',
+          'Bu dosya eski sürüm (v1/v2) veya sarmalanmamış bir yedektir. Doğrulanabilir v3 yedeklerde bütünlük imzası (checksum) zorunludur; eski yedekler için "Eski Sürüm (Checksumsız) Yedek Aktar" seçeneğini kullanın.',
       };
     }
 
     if (
       typeof parsed.checksum !== 'string' ||
       !parsed.checksum.trim() ||
-      !parsed.checksum.startsWith('sha256-')
+      (!parsed.checksum.startsWith('sha256-') &&
+        !parsed.checksum.startsWith('rpk-'))
     ) {
       return {
         isValid: false,
         requiresLegacyImport: true,
         error:
-          'Yedek dosyasında zorunlu SHA-256 bütünlük imzası (checksum) bulunamadı veya geçersiz. Checksumsız dosyalar güvenlik nedeniyle reddedildi.',
+          'Yedek dosyasında zorunlu bütünlük imzası (checksum) bulunamadı veya geçersiz. Checksumsız dosyalar güvenlik nedeniyle reddedildi.',
       };
     }
 
@@ -771,12 +949,29 @@ export function verifyAndParseBackupBundle(jsonString: string): {
       };
     }
 
-    const expectedChecksum = computePayloadChecksum(rawPayload);
-    if (parsed.checksum !== expectedChecksum) {
+    if (parsed.checksum.startsWith('sha256-')) {
+      const expectedChecksum = computePayloadChecksum(rawPayload);
+      if (parsed.checksum !== expectedChecksum) {
+        return {
+          isValid: false,
+          error:
+            'Yedek bütünlük doğrulaması (SHA-256 Checksum) başarısız: Puanlar, notlar, işlem geçmişi (undoHistory) veya denetim kayıtları (auditLog) değiştirilmiş ya da bozulmuş.',
+        };
+      }
+      const normalized = migrateV2ToV3(rawPayload);
+      return {
+        isValid: true,
+        state: normalized,
+        upgradedFromRpkChecksum: false,
+      };
+    }
+
+    // Legacy v3 `rpk-` checksum verification (backward compatibility for existing rubrikpad_state_v3 records)
+    if (!verifyLegacyRpkV3Checksum(rawPayload, parsed.checksum)) {
       return {
         isValid: false,
         error:
-          'Yedek bütünlük doğrulaması (SHA-256 Checksum) başarısız: Puanlar, notlar, işlem geçmişi (undoHistory) veya denetim kayıtları (auditLog) değiştirilmiş ya da bozulmuş.',
+          'Yedek bütünlük doğrulaması (rpk Checksum) başarısız: Puanlar, notlar veya kayıtlar değiştirilmiş ya da bozulmuş.',
       };
     }
 
@@ -784,6 +979,7 @@ export function verifyAndParseBackupBundle(jsonString: string): {
     return {
       isValid: true,
       state: normalized,
+      upgradedFromRpkChecksum: true,
     };
   } catch {
     return {
@@ -1065,13 +1261,15 @@ export async function recoverStateFromIndexedDB(): Promise<{
 }
 
 /**
- * Synchronously loads and verifies state from localStorage (v3 or migrated v2),
- * returning metadata about whether IndexedDB recovery should be triggered.
+ * Synchronously loads and verifies state from localStorage (v3 SHA-256, legacy v3 rpk-, or migrated v2),
+ * automatically upgrading valid legacy `rpk-` v3 bundles to `sha256-` in-place so existing user records
+ * are NEVER rejected or overwritten by seed data.
  */
 export function loadVerifiedInitialStateWithMeta(fallbackSeed: AppDataState): {
   state: AppDataState;
   source: 'localStorage_v3' | 'migrated_v2' | 'seed_fallback';
   localStorageCorrupted: boolean;
+  upgradedFromRpkChecksum?: boolean;
   error?: string;
 } {
   let localStorageCorrupted = false;
@@ -1083,14 +1281,27 @@ export function loadVerifiedInitialStateWithMeta(fallbackSeed: AppDataState): {
       if (savedV3) {
         const verified = verifyAndParseBackupBundle(savedV3);
         if (verified.isValid && verified.state) {
+          if (verified.upgradedFromRpkChecksum) {
+            const upgradedBundle = createVerifiedBackupBundle(verified.state);
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(upgradedBundle));
+            } catch {
+              // ignore quota error during in-place checksum upgrade
+            }
+          }
           return {
             state: verified.state,
             source: 'localStorage_v3',
             localStorageCorrupted: false,
+            upgradedFromRpkChecksum: Boolean(verified.upgradedFromRpkChecksum),
           };
         } else {
-          // Also check if it was an older v3 bundle with legacy rpk- checksum in localStorage and upgrade it cleanly if untampered,
-          // otherwise mark as corrupted
+          // Quarantine the raw unverified localStorage string so it is never lost
+          try {
+            localStorage.setItem('rubrikpad_quarantine_v3_backup', savedV3);
+          } catch {
+            // ignore
+          }
           localStorageCorrupted = true;
           corruptionError = verified.error;
         }

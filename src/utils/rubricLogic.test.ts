@@ -36,11 +36,13 @@ import {
   STORAGE_KEY,
   sha256Hex,
   computePayloadChecksum,
+  computeLegacyRpkChecksum,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
   importLegacyBackupBundle,
   migrateV2ToV3,
   loadVerifiedInitialState,
+  loadVerifiedInitialStateWithMeta,
   loadInitialStateWithRecovery,
   saveTransactionalState,
   __clearMemoryIndexedDbForTests,
@@ -1238,5 +1240,128 @@ test('Audit #9: Group membership changes and group deletion automatically reconc
   assert.deepEqual(session.evaluations['s3'].groupCriterionScores, {});
   assert.equal(session.evaluations['s3'].groupId, undefined);
 });
+
+test('Audit #10: Existing rubrikpad_state_v3 data signed with legacy rpk- checksum is verified, never falls back to seed data, and upgrades in-place to SHA-256', () => {
+  const store: Record<string, string> = {};
+  const mockLocalStorage = {
+    getItem: (k: string) => (k in store ? store[k] : null),
+    setItem: (k: string, v: string) => {
+      store[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete store[k];
+    },
+  };
+
+  const prevLocalStorage = (globalThis as Record<string, unknown>).localStorage;
+  (globalThis as Record<string, unknown>).localStorage = mockLocalStorage;
+
+  try {
+    const realUserV3State = migrateV2ToV3({
+      classrooms: [
+        {
+          id: 'cls-real',
+          name: '8-C Gerçek Sınıf',
+          gradeLevel: '8. Sınıf',
+          subject: 'Fen Bilimleri',
+          academicYear: '2026-2027',
+        },
+      ],
+      students: [
+        {
+          id: 'stu-real-1',
+          studentNumber: '991',
+          firstName: 'Ayşe',
+          lastName: 'Korkmaz',
+          fullName: 'Ayşe Korkmaz',
+          classId: 'cls-real',
+        },
+      ],
+      rubrics: [sampleRubric],
+      sessions: [
+        {
+          id: 'ses-real-1',
+          title: 'Gerçek Öğrenci Değerlendirme Oturumu',
+          classId: 'cls-real',
+          rubricId: 'rub-test',
+          date: '2026-10-18',
+          status: 'in_progress',
+          mode: 'individual',
+          generalSessionNote: 'Silinmemesi gereken gerçek oturum notu',
+          groups: [],
+          evaluations: {
+            'stu-real-1': {
+              studentId: 'stu-real-1',
+              criterionScores: { c1: 4, c2: 3 },
+              note: 'Ayşe gerçek gözlem kaydı',
+              tags: [],
+              updatedAt: '2026-10-18T10:00:00Z',
+            },
+          },
+        },
+      ],
+    });
+
+    const fallbackSeed = migrateV2ToV3({
+      classrooms: [
+        {
+          id: 'cls-seed',
+          name: '7-A Örnek Sınıf',
+          gradeLevel: '7. Sınıf',
+          subject: 'Fen Bilimleri',
+          academicYear: '2026-2027',
+        },
+      ],
+      students: [],
+      rubrics: [sampleRubric],
+      sessions: [],
+    });
+
+    // 1. Simulate existing rubrikpad_state_v3 saved with non-canonicalized (property declaration order) rpk- checksum
+    const rpkChecksumNonCanonical = computeLegacyRpkChecksum(realUserV3State, {
+      canonicalize: false,
+      sortScoreMaps: false,
+    });
+    assert.match(rpkChecksumNonCanonical, /^rpk-[0-9a-f]{16}$/);
+
+    const legacyV3Bundle = {
+      schemaVersion: 3,
+      exportedAt: '2026-10-17T12:00:00Z',
+      checksum: rpkChecksumNonCanonical,
+      payload: realUserV3State,
+    };
+    store[STORAGE_KEY] = JSON.stringify(legacyV3Bundle);
+
+    // 2. Startup load must accept the rpk- v3 bundle, preserve real students/evaluations, and NOT fall back to seed data
+    const loadedMeta = loadVerifiedInitialStateWithMeta(fallbackSeed);
+    assert.equal(loadedMeta.source, 'localStorage_v3');
+    assert.equal(loadedMeta.localStorageCorrupted, false);
+    assert.equal(loadedMeta.upgradedFromRpkChecksum, true);
+    assert.equal(loadedMeta.state.classrooms[0].id, 'cls-real');
+    assert.equal(loadedMeta.state.students[0].fullName, 'Ayşe Korkmaz');
+    assert.equal(
+      loadedMeta.state.sessions[0].evaluations['stu-real-1'].note,
+      'Ayşe gerçek gözlem kaydı'
+    );
+
+    // 3. Verify that rubrikpad_state_v3 in localStorage was seamlessly upgraded in-place to sha256-
+    const upgradedRaw = JSON.parse(store[STORAGE_KEY]);
+    assert.match(upgradedRaw.checksum, /^sha256-[0-9a-f]{64}$/);
+
+    // 4. Tampering with a score in an rpk- bundle is still caught and rejected
+    const tamperedRpkBundle = JSON.parse(JSON.stringify(legacyV3Bundle));
+    tamperedRpkBundle.payload.sessions[0].evaluations[
+      'stu-real-1'
+    ].criterionScores.c1 = 1;
+    const tamperedCheck = verifyAndParseBackupBundle(
+      JSON.stringify(tamperedRpkBundle)
+    );
+    assert.equal(tamperedCheck.isValid, false);
+    assert.match(tamperedCheck.error || '', /rpk Checksum/);
+  } finally {
+    (globalThis as Record<string, unknown>).localStorage = prevLocalStorage;
+  }
+});
+
 
 
