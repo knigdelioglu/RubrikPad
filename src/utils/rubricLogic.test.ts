@@ -34,6 +34,9 @@ import {
 } from './rubricLogic.ts';
 import {
   STORAGE_KEY,
+  LEGACY_V3_ROLLBACK_KEY,
+  STORAGE_CONFLICT_BACKUP_KEY,
+  INDEXEDDB_QUARANTINE_KEY,
   sha256Hex,
   computePayloadChecksum,
   computeLegacyRpkChecksum,
@@ -45,7 +48,14 @@ import {
   loadVerifiedInitialStateWithMeta,
   loadInitialStateWithRecovery,
   saveTransactionalState,
+  getV3RollbackBackup,
+  getStorageConflictBackup,
+  getQuarantinedIndexedDbBackup,
+  isStorageWriteLocked,
+  unlockStorageWriteLock,
   __clearMemoryIndexedDbForTests,
+  __setMemoryIndexedDbSnapshotForTests,
+  __getMemoryIndexedDbSnapshotForTests,
   __setSimulateIndexedDbFailureForTests,
 } from './storageLayer.ts';
 import {
@@ -1344,7 +1354,11 @@ test('Audit #10: Existing rubrikpad_state_v3 data signed with legacy rpk- checks
       'Ayşe gerçek gözlem kaydı'
     );
 
-    // 3. Verify that rubrikpad_state_v3 in localStorage was seamlessly upgraded in-place to sha256-
+    // 3. Verify that an original rollback copy was created BEFORE upgrading rubrikpad_state_v3 in-place (P1)
+    assert.equal(loadedMeta.rollbackBackupKey, LEGACY_V3_ROLLBACK_KEY);
+    assert.equal(store[LEGACY_V3_ROLLBACK_KEY], JSON.stringify(legacyV3Bundle));
+    assert.equal(getV3RollbackBackup(), JSON.stringify(legacyV3Bundle));
+
     const upgradedRaw = JSON.parse(store[STORAGE_KEY]);
     assert.match(upgradedRaw.checksum, /^sha256-[0-9a-f]{64}$/);
 
@@ -1360,8 +1374,283 @@ test('Audit #10: Existing rubrikpad_state_v3 data signed with legacy rpk- checks
     assert.match(tamperedCheck.error || '', /rpk Checksum/);
   } finally {
     (globalThis as Record<string, unknown>).localStorage = prevLocalStorage;
+    __clearMemoryIndexedDbForTests();
   }
 });
+
+test('Audit #11: 8-char rpk- bypass is removed and manual legacy backup import strictly verifies rpk- and sha256- signatures', () => {
+  const validPayload = migrateV2ToV3({
+    classrooms: [
+      {
+        id: 'c1',
+        name: '7-A',
+        gradeLevel: '7',
+        subject: 'Fen',
+        academicYear: '2026',
+      },
+    ],
+    students: [
+      {
+        id: 's1',
+        studentNumber: '101',
+        firstName: 'Elif',
+        lastName: 'Yılmaz',
+        fullName: 'Elif Yılmaz',
+        classId: 'c1',
+      },
+    ],
+    rubrics: [sampleRubric],
+    sessions: [],
+  });
+
+  // 1. P0: Arbitrary 8-character rpk- checksum (e.g. rpk-deadbeef or rpk-12345678) MUST be rejected!
+  const fake8CharBundle = {
+    schemaVersion: 3,
+    exportedAt: '2026-10-18T10:00:00Z',
+    checksum: 'rpk-deadbeef',
+    payload: validPayload,
+  };
+  const verifyFake8 = verifyAndParseBackupBundle(JSON.stringify(fake8CharBundle));
+  assert.equal(verifyFake8.isValid, false);
+  assert.match(verifyFake8.error || '', /rpk Checksum/);
+
+  // 2. P1: Manual legacy import (importLegacyBackupBundle) also rejects 8-char rpk- and tampered 16-char rpk-
+  const legacyImportFake8 = importLegacyBackupBundle(
+    JSON.stringify(fake8CharBundle)
+  );
+  assert.equal(legacyImportFake8.isValid, false);
+  assert.match(legacyImportFake8.error || '', /rpk-/);
+
+  const realRpkChecksum = computeLegacyRpkChecksum(validPayload);
+  const validRpkBundle = {
+    schemaVersion: 3,
+    exportedAt: '2026-10-18T10:00:00Z',
+    checksum: realRpkChecksum,
+    payload: validPayload,
+  };
+
+  // Valid 16-hex rpk- is accepted by importLegacyBackupBundle
+  const legacyImportValidRpk = importLegacyBackupBundle(
+    JSON.stringify(validRpkBundle)
+  );
+  assert.equal(legacyImportValidRpk.isValid, true);
+  assert.match(legacyImportValidRpk.newChecksum || '', /^sha256-[0-9a-f]{64}$/);
+
+  // Tampered payload with 16-hex rpk- is rejected by importLegacyBackupBundle
+  const tamperedRpkForLegacy = JSON.parse(JSON.stringify(validRpkBundle));
+  tamperedRpkForLegacy.payload.students[0].fullName = 'Yetkisiz İsim';
+  const legacyImportTamperedRpk = importLegacyBackupBundle(
+    JSON.stringify(tamperedRpkForLegacy)
+  );
+  assert.equal(legacyImportTamperedRpk.isValid, false);
+  assert.match(legacyImportTamperedRpk.error || '', /rpk-/);
+
+  // Unknown checksum prefix is rejected by importLegacyBackupBundle
+  const unknownChecksumBundle = {
+    ...validRpkBundle,
+    checksum: 'md5-1234567890abcdef',
+  };
+  const legacyImportUnknown = importLegacyBackupBundle(
+    JSON.stringify(unknownChecksumBundle)
+  );
+  assert.equal(legacyImportUnknown.isValid, false);
+});
+
+test('Audit #12: Corrupted IndexedDB data is quarantined and write-locked so seed data NEVER overwrites IndexedDB', async () => {
+  __clearMemoryIndexedDbForTests();
+
+  const store: Record<string, string> = {};
+  const mockLocalStorage = {
+    getItem: (k: string) => (k in store ? store[k] : null),
+    setItem: (k: string, v: string) => {
+      store[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete store[k];
+    },
+  };
+
+  const prevLocalStorage = (globalThis as Record<string, unknown>).localStorage;
+  (globalThis as Record<string, unknown>).localStorage = mockLocalStorage;
+
+  try {
+    // Simulate empty localStorage, but IndexedDB contains a corrupted/tampered v3 record
+    const corruptedIdbJson = JSON.stringify({
+      schemaVersion: 3,
+      exportedAt: '2026-10-18T11:00:00Z',
+      checksum: 'sha256-0000000000000000000000000000000000000000000000000000000000000000',
+      payload: {
+        classrooms: [{ id: 'c-user', name: 'Kullanıcı Sınıfı', gradeLevel: '8', subject: 'Fen', academicYear: '2026' }],
+        students: [{ id: 's-user', studentNumber: '555', fullName: 'Önemli Öğrenci', classId: 'c-user' }],
+        rubrics: [sampleRubric],
+        sessions: [],
+      },
+    });
+    __setMemoryIndexedDbSnapshotForTests(corruptedIdbJson);
+
+    const fallbackSeed = migrateV2ToV3({
+      classrooms: [{ id: 'c-seed', name: 'Örnek Seed Sınıfı', gradeLevel: '7', subject: 'Fen', academicYear: '2026' }],
+      students: [],
+      rubrics: [sampleRubric],
+      sessions: [],
+    });
+
+    // 1. Startup recovery must detect corrupted IndexedDB, quarantine it, and activate write-lock
+    const initRes = await loadInitialStateWithRecovery(fallbackSeed);
+    assert.equal(initRes.source, 'seed_fallback');
+    assert.equal(initRes.indexedDbCorrupted, true);
+    assert.equal(initRes.writeLocked, true);
+    assert.equal(isStorageWriteLocked(), true);
+
+    // 2. Verify corrupted IndexedDB record was quarantined and NOT overwritten by fallbackSeed
+    assert.equal(getQuarantinedIndexedDbBackup(), corruptedIdbJson);
+    assert.equal(store[INDEXEDDB_QUARANTINE_KEY], corruptedIdbJson);
+    assert.equal(__getMemoryIndexedDbSnapshotForTests(), corruptedIdbJson);
+    assert.equal(store[STORAGE_KEY], undefined);
+
+    // 3. Attempting to call saveTransactionalState(fallbackSeed) while write-locked MUST refuse to overwrite IndexedDB or localStorage!
+    const blockedSave = await saveTransactionalState(fallbackSeed);
+    assert.equal(blockedSave.ok, false);
+    assert.equal(blockedSave.localStorageSaved, false);
+    assert.equal(blockedSave.indexedDbSaved, false);
+    assert.equal(__getMemoryIndexedDbSnapshotForTests(), corruptedIdbJson);
+    assert.equal(store[STORAGE_KEY], undefined);
+
+    // 4. Explicit user reset/unlock (`forceUnlockCorruptionLock: true`) unlocks and allows saving
+    const unlockedSave = await saveTransactionalState(fallbackSeed, {
+      forceUnlockCorruptionLock: true,
+    });
+    assert.equal(unlockedSave.ok, true);
+    assert.equal(isStorageWriteLocked(), false);
+  } finally {
+    (globalThis as Record<string, unknown>).localStorage = prevLocalStorage;
+    __clearMemoryIndexedDbForTests();
+  }
+});
+
+test('Audit #13: Version conflicts between localStorage and IndexedDB are safely resolved and the losing version is archived', async () => {
+  __clearMemoryIndexedDbForTests();
+
+  const store: Record<string, string> = {};
+  const mockLocalStorage = {
+    getItem: (k: string) => (k in store ? store[k] : null),
+    setItem: (k: string, v: string) => {
+      store[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete store[k];
+    },
+  };
+
+  const prevLocalStorage = (globalThis as Record<string, unknown>).localStorage;
+  (globalThis as Record<string, unknown>).localStorage = mockLocalStorage;
+
+  try {
+    const olderLocalState = migrateV2ToV3({
+      classrooms: [{ id: 'c1', name: '7-A', gradeLevel: '7', subject: 'Fen', academicYear: '2026' }],
+      students: [
+        { id: 's1', studentNumber: '101', fullName: 'Elif Yılmaz', classId: 'c1' },
+        { id: 's2', studentNumber: '102', fullName: 'Kerem Demir', classId: 'c1' },
+      ],
+      rubrics: [sampleRubric],
+      sessions: [
+        {
+          id: 'ses-1',
+          title: 'Oturum 1',
+          classId: 'c1',
+          rubricId: 'rub-test',
+          date: '2026-10-18',
+          status: 'in_progress',
+          mode: 'individual',
+          generalSessionNote: 'Eski localStorage sürümü (1 öğrenci puanlı)',
+          groups: [],
+          evaluations: {
+            s1: {
+              studentId: 's1',
+              criterionScores: { c1: 3, c2: 3 },
+              note: 'Eski not',
+              tags: [],
+              updatedAt: '2026-10-18T08:00:00Z',
+            },
+          },
+        },
+      ],
+    });
+
+    const newerIdbState = migrateV2ToV3({
+      ...olderLocalState,
+      sessions: [
+        {
+          ...olderLocalState.sessions[0],
+          generalSessionNote: 'Güncel IndexedDB sürümü (2 öğrenci puanlı)',
+          evaluations: {
+            s1: {
+              studentId: 's1',
+              criterionScores: { c1: 4, c2: 4 },
+              note: 'Güncellenmiş Elif notu',
+              tags: [],
+              updatedAt: '2026-10-18T11:30:00Z',
+            },
+            s2: {
+              studentId: 's2',
+              criterionScores: { c1: 4, c2: 3 },
+              note: 'Yeni eklenen Kerem notu',
+              tags: [],
+              updatedAt: '2026-10-18T11:35:00Z',
+            },
+          },
+        },
+      ],
+    });
+
+    const localBundle = {
+      schemaVersion: 3,
+      exportedAt: '2026-10-18T08:00:00Z',
+      checksum: computePayloadChecksum(olderLocalState),
+      payload: olderLocalState,
+    };
+    const idbBundle = {
+      schemaVersion: 3,
+      exportedAt: '2026-10-18T11:35:00Z',
+      checksum: computePayloadChecksum(newerIdbState),
+      payload: newerIdbState,
+    };
+
+    // Put older bundle in localStorage and newer bundle in IndexedDB
+    store[STORAGE_KEY] = JSON.stringify(localBundle);
+    __setMemoryIndexedDbSnapshotForTests(JSON.stringify(idbBundle));
+
+    const resolved = await loadInitialStateWithRecovery(olderLocalState);
+    assert.equal(resolved.conflictDetected, true);
+    assert.equal(resolved.conflictWinner, 'indexeddb');
+    assert.equal(resolved.source, 'conflict_resolved_indexeddb');
+    assert.equal(resolved.conflictBackupKey, STORAGE_CONFLICT_BACKUP_KEY);
+
+    // Winning state has both s1 (updated) and s2 evaluations from IndexedDB
+    assert.equal(
+      resolved.state.sessions[0].evaluations['s1'].note,
+      'Güncellenmiş Elif notu'
+    );
+    assert.equal(
+      resolved.state.sessions[0].evaluations['s2'].note,
+      'Yeni eklenen Kerem notu'
+    );
+
+    // Losing localStorage bundle was safely archived in STORAGE_CONFLICT_BACKUP_KEY
+    const archivedConflictRaw = getStorageConflictBackup();
+    assert.ok(archivedConflictRaw);
+    const archivedConflictParsed = JSON.parse(archivedConflictRaw!);
+    assert.equal(
+      archivedConflictParsed.payload.sessions[0].evaluations['s1'].note,
+      'Eski not'
+    );
+    assert.equal(archivedConflictParsed. checksum, localBundle.checksum);
+  } finally {
+    (globalThis as Record<string, unknown>).localStorage = prevLocalStorage;
+    __clearMemoryIndexedDbForTests();
+  }
+});
+
 
 
 

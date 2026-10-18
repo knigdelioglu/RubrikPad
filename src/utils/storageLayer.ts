@@ -17,6 +17,10 @@ import {
 
 export const CURRENT_SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'rubrikpad_state_v3';
+export const LEGACY_V3_ROLLBACK_KEY = 'rubrikpad_state_v3_rollback_backup';
+export const STORAGE_CONFLICT_BACKUP_KEY = 'rubrikpad_state_v3_conflict_backup';
+export const LOCALSTORAGE_QUARANTINE_KEY = 'rubrikpad_quarantine_v3_backup';
+export const INDEXEDDB_QUARANTINE_KEY = 'rubrikpad_quarantine_idb_backup';
 export const LEGACY_V2_BUNDLE_KEY = 'rubrikpad_state_v2';
 export const LEGACY_V2_KEYS = {
   classrooms: ['rubrikpad_classrooms_v2', 'rubrikpad_classrooms_v1', 'rubrikpad_classrooms'],
@@ -30,6 +34,10 @@ const IDB_STORE = 'app_state_tx';
 
 // Fallback transactional store for environments without native window.indexedDB (e.g. Node unit tests)
 let memoryIndexedDbSnapshot: string | null = null;
+let memoryV3RollbackSnapshot: string | null = null;
+let memoryConflictBackupSnapshot: string | null = null;
+let memoryIndexedDbQuarantineSnapshot: string | null = null;
+let storageWriteLockedDueToCorruption = false;
 let simulateIndexedDbFailure = false;
 
 export function __setSimulateIndexedDbFailureForTests(fail: boolean): void {
@@ -38,6 +46,62 @@ export function __setSimulateIndexedDbFailureForTests(fail: boolean): void {
 
 export function __clearMemoryIndexedDbForTests(): void {
   memoryIndexedDbSnapshot = null;
+  memoryV3RollbackSnapshot = null;
+  memoryConflictBackupSnapshot = null;
+  memoryIndexedDbQuarantineSnapshot = null;
+  storageWriteLockedDueToCorruption = false;
+}
+
+export function __setMemoryIndexedDbSnapshotForTests(raw: string | null): void {
+  memoryIndexedDbSnapshot = raw;
+}
+
+export function __getMemoryIndexedDbSnapshotForTests(): string | null {
+  return memoryIndexedDbSnapshot;
+}
+
+export function isStorageWriteLocked(): boolean {
+  return storageWriteLockedDueToCorruption;
+}
+
+export function unlockStorageWriteLock(): void {
+  storageWriteLockedDueToCorruption = false;
+}
+
+export function getV3RollbackBackup(): string | null {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const fromLs = localStorage.getItem(LEGACY_V3_ROLLBACK_KEY);
+      if (fromLs) return fromLs;
+    } catch {
+      // ignore
+    }
+  }
+  return memoryV3RollbackSnapshot;
+}
+
+export function getStorageConflictBackup(): string | null {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const fromLs = localStorage.getItem(STORAGE_CONFLICT_BACKUP_KEY);
+      if (fromLs) return fromLs;
+    } catch {
+      // ignore
+    }
+  }
+  return memoryConflictBackupSnapshot;
+}
+
+export function getQuarantinedIndexedDbBackup(): string | null {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const fromLs = localStorage.getItem(INDEXEDDB_QUARANTINE_KEY);
+      if (fromLs) return fromLs;
+    } catch {
+      // ignore
+    }
+  }
+  return memoryIndexedDbQuarantineSnapshot;
 }
 
 export interface AppDataState {
@@ -459,32 +523,26 @@ function verifyLegacyRpkV3Checksum(
   rawPayload: AppDataState,
   checksum: string
 ): boolean {
-  const candidates: AppDataState[] = [rawPayload, migrateV2ToV3(rawPayload)];
+  // P0: Only accept genuine computed 16-hex rpk- checksum matches (no 8-char wildcard bypass!)
+  if (!/^rpk-[0-9a-f]{16}$/i.test(checksum)) {
+    return false;
+  }
+
   const optionSets: Array<{
-    omitFullName?: boolean;
     canonicalize?: boolean;
     sortScoreMaps?: boolean;
   }> = [
-    { canonicalize: true, omitFullName: false },
-    { canonicalize: false, omitFullName: false, sortScoreMaps: false },
-    { canonicalize: false, omitFullName: false, sortScoreMaps: true },
-    { canonicalize: true, omitFullName: true },
-    { canonicalize: false, omitFullName: true, sortScoreMaps: false },
-    { canonicalize: false, omitFullName: true, sortScoreMaps: true },
+    { canonicalize: true },
+    { canonicalize: false, sortScoreMaps: false },
+    { canonicalize: false, sortScoreMaps: true },
   ];
 
-  for (const candidate of candidates) {
-    for (const opts of optionSets) {
-      if (checksum === computeLegacyRpkChecksum(candidate, opts)) {
-        return true;
-      }
+  for (const opts of optionSets) {
+    if (checksum === computeLegacyRpkChecksum(rawPayload, opts)) {
+      return true;
     }
   }
 
-  // Support earliest 8-hex rpk- format if payload passes full structural validation
-  if (/^rpk-[0-9a-f]{8}$/i.test(checksum)) {
-    return validateFullAppDataStructure(rawPayload).isValid;
-  }
   return false;
 }
 
@@ -1023,23 +1081,56 @@ export function importLegacyBackupBundle(jsonString: string): {
           sessions: parsed.sessions,
         };
 
-    // If the legacy file happens to carry a checksum, verify it if it's sha256
+    // P1: If the legacy file carries ANY checksum (sha256- or rpk-), strictly verify it against the payload!
     if (
-      typeof parsed.checksum === 'string' &&
-      parsed.checksum.startsWith('sha256-') &&
-      rawPayload &&
-      Array.isArray(rawPayload.classrooms) &&
-      Array.isArray(rawPayload.students) &&
-      Array.isArray(rawPayload.rubrics) &&
-      Array.isArray(rawPayload.sessions)
+      parsed.checksum !== undefined &&
+      parsed.checksum !== null &&
+      String(parsed.checksum).trim() !== ''
     ) {
-      const computed = computePayloadChecksum(rawPayload as AppDataState);
-      if (parsed.checksum !== computed) {
+      if (typeof parsed.checksum !== 'string') {
+        return {
+          isValid: false,
+          migratedFromV2: false,
+          error: 'Dosyadaki bütünlük imzası (Checksum) geçersiz tipte.',
+        };
+      }
+      const trimmedChecksum = parsed.checksum.trim();
+      const preStructureCheck = validateFullAppDataStructure(rawPayload);
+      if (!preStructureCheck.isValid) {
         return {
           isValid: false,
           migratedFromV2: false,
           error:
-            'Dosyadaki SHA-256 bütünlük imzası (Checksum) veri içeriğiyle eşleşmiyor.',
+            preStructureCheck.error ||
+            'Dosya veri yapısı doğrulaması başarısız.',
+        };
+      }
+
+      if (trimmedChecksum.startsWith('sha256-')) {
+        const computed = computePayloadChecksum(rawPayload as AppDataState);
+        if (trimmedChecksum !== computed) {
+          return {
+            isValid: false,
+            migratedFromV2: false,
+            error:
+              'Dosyadaki SHA-256 bütünlük imzası (Checksum) veri içeriğiyle eşleşmiyor.',
+          };
+        }
+      } else if (trimmedChecksum.startsWith('rpk-')) {
+        if (!verifyLegacyRpkV3Checksum(rawPayload as AppDataState, trimmedChecksum)) {
+          return {
+            isValid: false,
+            migratedFromV2: false,
+            error:
+              'Dosyadaki eski sürüm (rpk-) bütünlük imzası veri içeriğiyle eşleşmiyor. Veri değiştirilmiş veya bozulmuş.',
+          };
+        }
+      } else {
+        return {
+          isValid: false,
+          migratedFromV2: false,
+          error:
+            'Dosyadaki bütünlük imzası (Checksum) formatı tanınmıyor veya geçersiz.',
         };
       }
     }
@@ -1072,14 +1163,164 @@ export function importLegacyBackupBundle(jsonString: string): {
 }
 
 /**
+ * Creates a verifiable pre-upgrade rollback copy of an existing v3 record (e.g., before upgrading `rpk-` -> `sha256-`)
+ * so the original unmodified v3 payload & checksum are preserved for recovery.
+ */
+function saveOriginalV3RollbackCopy(rawOriginalJson: string): boolean {
+  memoryV3RollbackSnapshot = rawOriginalJson;
+  let savedToLocal = false;
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(LEGACY_V3_ROLLBACK_KEY, rawOriginalJson);
+      savedToLocal = true;
+    } catch {
+      savedToLocal = false;
+    }
+  } else {
+    savedToLocal = true;
+  }
+
+  if (typeof indexedDB !== 'undefined' && !simulateIndexedDbFailure) {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        if (db.objectStoreNames.contains(IDB_STORE)) {
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put(rawOriginalJson, 'v3_rollback_backup');
+          tx.oncomplete = () => db.close();
+          tx.onerror = () => db.close();
+        } else {
+          db.close();
+        }
+      };
+    } catch {
+      // ignore async IDB rollback copy error
+    }
+  }
+
+  return savedToLocal;
+}
+
+/**
+ * Archives the non-winning bundle during a localStorage <-> IndexedDB version conflict
+ * so neither version is ever lost.
+ */
+function saveConflictBackupCopy(rawLoserJson: string): void {
+  memoryConflictBackupSnapshot = rawLoserJson;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_CONFLICT_BACKUP_KEY, rawLoserJson);
+    } catch {
+      // ignore quota error
+    }
+  }
+  if (typeof indexedDB !== 'undefined' && !simulateIndexedDbFailure) {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        if (db.objectStoreNames.contains(IDB_STORE)) {
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put(rawLoserJson, 'conflict_backup');
+          tx.oncomplete = () => db.close();
+          tx.onerror = () => db.close();
+        } else {
+          db.close();
+        }
+      };
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Quarantines a corrupted IndexedDB record without overwriting the original IndexedDB record.
+ */
+function quarantineCorruptedIndexedDbRecord(rawCorruptedJson: string): void {
+  memoryIndexedDbQuarantineSnapshot = rawCorruptedJson;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(INDEXEDDB_QUARANTINE_KEY, rawCorruptedJson);
+    } catch {
+      // ignore
+    }
+  }
+  if (typeof indexedDB !== 'undefined' && !simulateIndexedDbFailure) {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        if (db.objectStoreNames.contains(IDB_STORE)) {
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put(rawCorruptedJson, 'quarantine_corrupted_v3');
+          tx.oncomplete = () => db.close();
+          tx.onerror = () => db.close();
+        } else {
+          db.close();
+        }
+      };
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
  * Saves state transactionally into IndexedDB + verified localStorage snapshot.
- * Never swallows errors silently: returns structured `TransactionalSaveResult` and invokes `onSaveError` if any storage layer fails.
+ * P0: Refuses to overwrite corrupted localStorage/IndexedDB records with fallback seed data
+ * while `storageWriteLockedDueToCorruption` is active, unless `forceUnlockCorruptionLock: true` is passed.
  */
 export async function saveTransactionalState(
   state: AppDataState,
-  options?: { onSaveError?: (errorMessage: string, errors: string[]) => void }
+  options?: {
+    onSaveError?: (errorMessage: string, errors: string[]) => void;
+    forceUnlockCorruptionLock?: boolean;
+  }
 ): Promise<TransactionalSaveResult> {
+  if (options?.forceUnlockCorruptionLock) {
+    storageWriteLockedDueToCorruption = false;
+  }
+
   const bundle = createVerifiedBackupBundle(state);
+
+  if (storageWriteLockedDueToCorruption) {
+    const lockMsg =
+      'Depolama alanında (localStorage veya IndexedDB) doğrulanamayan/bozuk veri tespit edildiği için mevcut kayıtların üzerine örnek veri yazılması engellendi.';
+    const errors = [lockMsg];
+    if (options?.onSaveError) {
+      options.onSaveError(lockMsg, errors);
+    }
+    return {
+      ok: false,
+      localStorageSaved: false,
+      indexedDbSaved: false,
+      checksum: bundle.checksum,
+      errors,
+      errorMessage: lockMsg,
+    };
+  }
+
   const serialized = JSON.stringify(bundle);
   const errors: string[] = [];
   let localStorageSaved = false;
@@ -1174,12 +1415,16 @@ export async function saveTransactionalState(
 }
 
 /**
- * Reads and verifies the latest transactional backup from IndexedDB, automatically healing localStorage if valid.
+ * Internal helper that reads and inspects the raw IndexedDB snapshot without mutating localStorage.
  */
-export async function recoverStateFromIndexedDB(): Promise<{
-  recovered: boolean;
+async function inspectIndexedDbState(): Promise<{
+  hasRecord: boolean;
+  isValid: boolean;
+  corrupted: boolean;
+  rawJson: string | null;
+  exportedAt?: string;
   state?: AppDataState;
-  checksum?: string;
+  upgradedFromRpkChecksum?: boolean;
   error?: string;
 }> {
   let rawBundleJson: string | null = null;
@@ -1215,7 +1460,7 @@ export async function recoverStateFromIndexedDB(): Promise<{
         req.onerror = () => reject(req.error);
       });
 
-      if (idbRecord) {
+      if (idbRecord !== null && idbRecord !== undefined) {
         rawBundleJson =
           typeof idbRecord === 'string' ? idbRecord : JSON.stringify(idbRecord);
       }
@@ -1224,30 +1469,99 @@ export async function recoverStateFromIndexedDB(): Promise<{
     }
   }
 
-  if (!rawBundleJson && memoryIndexedDbSnapshot) {
+  if (rawBundleJson === null && memoryIndexedDbSnapshot !== null) {
     rawBundleJson = memoryIndexedDbSnapshot;
   }
 
-  if (!rawBundleJson) {
+  if (rawBundleJson === null) {
     return {
-      recovered: false,
+      hasRecord: false,
+      isValid: false,
+      corrupted: false,
+      rawJson: null,
       error: 'IndexedDB deposunda kurtarılacak kayıt bulunamadı.',
     };
   }
 
   const verified = verifyAndParseBackupBundle(rawBundleJson);
   if (!verified.isValid || !verified.state) {
+    quarantineCorruptedIndexedDbRecord(rawBundleJson);
     return {
-      recovered: false,
-      error: verified.error || 'IndexedDB kaydı doğrulanamadı.',
+      hasRecord: true,
+      isValid: false,
+      corrupted: true,
+      rawJson: rawBundleJson,
+      error: verified.error || 'IndexedDB kaydı bozuk veya doğrulanamadı.',
     };
   }
 
+  let exportedAt: string | undefined;
+  try {
+    const parsedMeta = JSON.parse(rawBundleJson) as { exportedAt?: string };
+    if (typeof parsedMeta.exportedAt === 'string') {
+      exportedAt = parsedMeta.exportedAt;
+    }
+  } catch {
+    // ignore
+  }
+
+  return {
+    hasRecord: true,
+    isValid: true,
+    corrupted: false,
+    rawJson: rawBundleJson,
+    exportedAt,
+    state: verified.state,
+    upgradedFromRpkChecksum: Boolean(verified.upgradedFromRpkChecksum),
+  };
+}
+
+/**
+ * Reads and verifies the latest transactional backup from IndexedDB, automatically healing localStorage if valid.
+ * If IndexedDB contains corrupted data, quarantines it and locks storage writes so seed data cannot overwrite it.
+ */
+export async function recoverStateFromIndexedDB(): Promise<{
+  recovered: boolean;
+  indexedDbCorrupted?: boolean;
+  state?: AppDataState;
+  checksum?: string;
+  upgradedFromRpkChecksum?: boolean;
+  rollbackBackupKey?: string;
+  error?: string;
+}> {
+  const inspected = await inspectIndexedDbState();
+  if (!inspected.hasRecord) {
+    return {
+      recovered: false,
+      indexedDbCorrupted: false,
+      error: inspected.error,
+    };
+  }
+
+  if (!inspected.isValid || !inspected.state) {
+    storageWriteLockedDueToCorruption = true;
+    return {
+      recovered: false,
+      indexedDbCorrupted: true,
+      error: inspected.error || 'IndexedDB kaydı doğrulanamadı.',
+    };
+  }
+
+  let rollbackBackupKey: string | undefined;
+  if (inspected.upgradedFromRpkChecksum && inspected.rawJson) {
+    saveOriginalV3RollbackCopy(inspected.rawJson);
+    rollbackBackupKey = LEGACY_V3_ROLLBACK_KEY;
+  }
+
+  storageWriteLockedDueToCorruption = false;
+
   // Heal localStorage with the verified IndexedDB bundle
-  const healedBundle = createVerifiedBackupBundle(verified.state);
+  const healedBundle = createVerifiedBackupBundle(inspected.state);
+  const healedSerialized = JSON.stringify(healedBundle);
+  memoryIndexedDbSnapshot = healedSerialized;
   if (typeof localStorage !== 'undefined') {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(healedBundle));
+      localStorage.setItem(STORAGE_KEY, healedSerialized);
     } catch {
       // ignore if localStorage is still full
     }
@@ -1255,21 +1569,92 @@ export async function recoverStateFromIndexedDB(): Promise<{
 
   return {
     recovered: true,
-    state: verified.state,
+    indexedDbCorrupted: false,
+    state: inspected.state,
     checksum: healedBundle.checksum,
+    upgradedFromRpkChecksum: inspected.upgradedFromRpkChecksum,
+    rollbackBackupKey,
   };
 }
 
 /**
- * Synchronously loads and verifies state from localStorage (v3 SHA-256, legacy v3 rpk-, or migrated v2),
- * automatically upgrading valid legacy `rpk-` v3 bundles to `sha256-` in-place so existing user records
- * are NEVER rejected or overwritten by seed data.
+ * Extracts the latest valid timestamp (ms since epoch) from a bundle and its nested evaluations/auditLogs/undoHistory
+ * for deterministic conflict resolution between localStorage and IndexedDB.
+ */
+function getLatestStateActivityMs(
+  exportedAtIso: string | undefined,
+  state: AppDataState
+): number {
+  let maxMs = 0;
+  const considerIso = (iso?: string | null) => {
+    if (!iso || typeof iso !== 'string') return;
+    const t = Date.parse(iso);
+    if (!Number.isNaN(t) && t > maxMs) {
+      maxMs = t;
+    }
+  };
+
+  considerIso(exportedAtIso);
+  for (const stu of state.students || []) {
+    considerIso(stu.updatedAt);
+    for (const log of stu.auditLog || []) {
+      considerIso(log.timestamp);
+    }
+  }
+  for (const ses of state.sessions || []) {
+    for (const grp of ses.groups || []) {
+      considerIso(grp.lastAppliedAt);
+    }
+    for (const ev of Object.values(ses.evaluations || {})) {
+      considerIso(ev.updatedAt);
+    }
+    for (const u of ses.undoHistory || []) {
+      considerIso(u.timestamp);
+    }
+  }
+  return maxMs;
+}
+
+/**
+ * Secondary tie-breaker for conflict resolution when timestamps are identical:
+ * counts total assigned scores, notes, sessions, and students.
+ */
+function getStateCompletenessScore(state: AppDataState): number {
+  let score = 0;
+  score += (state.classrooms || []).length * 2;
+  score += (state.students || []).length * 5;
+  score += (state.sessions || []).length * 10;
+  for (const ses of state.sessions || []) {
+    if (ses.generalSessionNote?.trim()) score += 3;
+    for (const grp of ses.groups || []) {
+      score += Object.values(grp.criterionScores || {}).filter(isScoreAssigned).length * 4;
+      if (grp.groupNote?.trim()) score += 2;
+    }
+    for (const ev of Object.values(ses.evaluations || {})) {
+      score += Object.values(ev.criterionScores || {}).filter(isScoreAssigned).length * 4;
+      score += Object.values(ev.directCriterionScores || {}).filter(isScoreAssigned).length * 4;
+      score += Object.values(ev.groupCriterionScores || {}).filter(isScoreAssigned).length * 2;
+      if (ev.note?.trim()) score += 3;
+      if (ev.groupNote?.trim()) score += 2;
+    }
+    score += (ses.undoHistory || []).length;
+  }
+  return score;
+}
+
+/**
+ * Synchronously loads and verifies state from localStorage (v3 SHA-256, legacy v3 rpk-, or migrated v2).
+ * P1: Before upgrading a valid legacy `rpk-` v3 bundle to `sha256-` in-place, creates an untouched rollback copy
+ * under `rubrikpad_state_v3_rollback_backup` (`LEGACY_V3_ROLLBACK_KEY`).
  */
 export function loadVerifiedInitialStateWithMeta(fallbackSeed: AppDataState): {
   state: AppDataState;
   source: 'localStorage_v3' | 'migrated_v2' | 'seed_fallback';
   localStorageCorrupted: boolean;
   upgradedFromRpkChecksum?: boolean;
+  rollbackBackupKey?: string;
+  originalRawJson?: string;
+  originalExportedAt?: string;
   error?: string;
 } {
   let localStorageCorrupted = false;
@@ -1281,12 +1666,33 @@ export function loadVerifiedInitialStateWithMeta(fallbackSeed: AppDataState): {
       if (savedV3) {
         const verified = verifyAndParseBackupBundle(savedV3);
         if (verified.isValid && verified.state) {
+          let originalExportedAt: string | undefined;
+          try {
+            const parsedMeta = JSON.parse(savedV3) as { exportedAt?: string };
+            if (typeof parsedMeta.exportedAt === 'string') {
+              originalExportedAt = parsedMeta.exportedAt;
+            }
+          } catch {
+            // ignore
+          }
+
+          let rollbackBackupKey: string | undefined;
           if (verified.upgradedFromRpkChecksum) {
-            const upgradedBundle = createVerifiedBackupBundle(verified.state);
-            try {
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(upgradedBundle));
-            } catch {
-              // ignore quota error during in-place checksum upgrade
+            // P1: Always create an original rollback copy BEFORE updating the v3 record in-place!
+            const rollbackSaved = saveOriginalV3RollbackCopy(savedV3);
+            if (rollbackSaved) {
+              rollbackBackupKey = LEGACY_V3_ROLLBACK_KEY;
+              const upgradedBundle: VerifiedBackupBundle = {
+                schemaVersion: CURRENT_SCHEMA_VERSION,
+                exportedAt: originalExportedAt || new Date().toISOString(),
+                checksum: computePayloadChecksum(verified.state),
+                payload: verified.state,
+              };
+              try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(upgradedBundle));
+              } catch {
+                // ignore quota error during in-place checksum upgrade
+              }
             }
           }
           return {
@@ -1294,36 +1700,43 @@ export function loadVerifiedInitialStateWithMeta(fallbackSeed: AppDataState): {
             source: 'localStorage_v3',
             localStorageCorrupted: false,
             upgradedFromRpkChecksum: Boolean(verified.upgradedFromRpkChecksum),
+            rollbackBackupKey,
+            originalRawJson: savedV3,
+            originalExportedAt,
           };
         } else {
           // Quarantine the raw unverified localStorage string so it is never lost
           try {
-            localStorage.setItem('rubrikpad_quarantine_v3_backup', savedV3);
+            localStorage.setItem(LOCALSTORAGE_QUARANTINE_KEY, savedV3);
           } catch {
             // ignore
           }
           localStorageCorrupted = true;
+          storageWriteLockedDueToCorruption = true;
           corruptionError = verified.error;
         }
       }
 
-      // Check for legacy v2 / v1 data in localStorage and migrate automatically
-      const migratedV2 = loadLegacyV2FromLocalStorage(fallbackSeed);
-      if (migratedV2) {
-        const v3Bundle = createVerifiedBackupBundle(migratedV2);
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(v3Bundle));
-        } catch {
-          // ignore
+      // Check for legacy v2 / v1 data in localStorage and migrate automatically (only if v3 wasn't corrupted)
+      if (!localStorageCorrupted) {
+        const migratedV2 = loadLegacyV2FromLocalStorage(fallbackSeed);
+        if (migratedV2) {
+          const v3Bundle = createVerifiedBackupBundle(migratedV2);
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(v3Bundle));
+          } catch {
+            // ignore
+          }
+          return {
+            state: migratedV2,
+            source: 'migrated_v2',
+            localStorageCorrupted: false,
+          };
         }
-        return {
-          state: migratedV2,
-          source: 'migrated_v2',
-          localStorageCorrupted: false,
-        };
       }
     } catch {
       localStorageCorrupted = true;
+      storageWriteLockedDueToCorruption = true;
     }
   }
 
@@ -1345,7 +1758,10 @@ export function loadVerifiedInitialState(
 }
 
 /**
- * Full asynchronous initialization with automatic IndexedDB recovery when localStorage is empty or corrupted.
+ * Full asynchronous initialization with:
+ * 1. Automatic IndexedDB recovery when localStorage is empty or corrupted.
+ * 2. Safe version conflict detection & resolution between localStorage and IndexedDB (archiving the losing version in `rubrikpad_state_v3_conflict_backup`).
+ * 3. Write-lock protection when IndexedDB or localStorage contains corrupted data so fallback seed data NEVER overwrites user storage.
  */
 export async function loadInitialStateWithRecovery(
   fallbackSeed: AppDataState
@@ -1355,41 +1771,229 @@ export async function loadInitialStateWithRecovery(
     | 'localStorage_v3'
     | 'migrated_v2'
     | 'indexeddb_recovered'
+    | 'conflict_resolved_indexeddb'
+    | 'conflict_resolved_localstorage'
     | 'seed_fallback';
+  localStorageCorrupted?: boolean;
+  indexedDbCorrupted?: boolean;
+  writeLocked?: boolean;
+  conflictDetected?: boolean;
+  conflictWinner?: 'indexeddb' | 'localStorage';
+  conflictBackupKey?: string;
+  upgradedFromRpkChecksum?: boolean;
+  rollbackBackupKey?: string;
   recoveryNotice?: string;
+  error?: string;
 }> {
   const syncResult = loadVerifiedInitialStateWithMeta(fallbackSeed);
+  const idbInspect = await inspectIndexedDbState();
 
-  if (syncResult.source === 'localStorage_v3') {
+  // Case 1: Both localStorage and IndexedDB have valid v3 states -> check for version conflict!
+  if (
+    syncResult.source === 'localStorage_v3' &&
+    idbInspect.hasRecord &&
+    idbInspect.isValid &&
+    idbInspect.state
+  ) {
+    if (idbInspect.upgradedFromRpkChecksum && idbInspect.rawJson) {
+      saveOriginalV3RollbackCopy(idbInspect.rawJson);
+    }
+
+    const localChecksum = computePayloadChecksum(syncResult.state);
+    const idbChecksum = computePayloadChecksum(idbInspect.state);
+
+    storageWriteLockedDueToCorruption = false;
+
+    if (localChecksum === idbChecksum) {
+      // Both stores are in sync; ensure IndexedDB also has the upgraded SHA-256 bundle if needed
+      if (syncResult.upgradedFromRpkChecksum || idbInspect.upgradedFromRpkChecksum) {
+        await saveTransactionalState(syncResult.state, {
+          forceUnlockCorruptionLock: true,
+        });
+      }
+      return {
+        state: syncResult.state,
+        source: 'localStorage_v3',
+        localStorageCorrupted: false,
+        indexedDbCorrupted: false,
+        writeLocked: false,
+        conflictDetected: false,
+        upgradedFromRpkChecksum: Boolean(
+          syncResult.upgradedFromRpkChecksum || idbInspect.upgradedFromRpkChecksum
+        ),
+        rollbackBackupKey:
+          syncResult.rollbackBackupKey ||
+          (idbInspect.upgradedFromRpkChecksum ? LEGACY_V3_ROLLBACK_KEY : undefined),
+        recoveryNotice:
+          syncResult.upgradedFromRpkChecksum || idbInspect.upgradedFromRpkChecksum
+            ? 'Mevcut v3 verileriniz (rpk- imzalı) doğrulandı, orijinal geri dönüş kopyası oluşturuldu ve yeni SHA-256 bütünlük imzasına yükseltildi.'
+            : undefined,
+      };
+    }
+
+    // Conflict detected between localStorage and IndexedDB!
+    const localTimeMs = getLatestStateActivityMs(
+      syncResult.originalExportedAt,
+      syncResult.state
+    );
+    const idbTimeMs = getLatestStateActivityMs(
+      idbInspect.exportedAt,
+      idbInspect.state
+    );
+
+    let winner: 'indexeddb' | 'localStorage';
+    if (idbTimeMs !== localTimeMs) {
+      winner = idbTimeMs > localTimeMs ? 'indexeddb' : 'localStorage';
+    } else {
+      const localCompleteness = getStateCompletenessScore(syncResult.state);
+      const idbCompleteness = getStateCompletenessScore(idbInspect.state);
+      if (idbCompleteness !== localCompleteness) {
+        winner = idbCompleteness > localCompleteness ? 'indexeddb' : 'localStorage';
+      } else {
+        winner =
+          syncResult.upgradedFromRpkChecksum && !idbInspect.upgradedFromRpkChecksum
+            ? 'indexeddb'
+            : !syncResult.upgradedFromRpkChecksum && idbInspect.upgradedFromRpkChecksum
+            ? 'localStorage'
+            : 'indexeddb';
+      }
+    }
+
+    const winningState =
+      winner === 'indexeddb' ? idbInspect.state : syncResult.state;
+    const losingRawJson =
+      winner === 'indexeddb'
+        ? syncResult.originalRawJson ||
+          JSON.stringify(createVerifiedBackupBundle(syncResult.state))
+        : idbInspect.rawJson ||
+          JSON.stringify(createVerifiedBackupBundle(idbInspect.state));
+
+    // Archive the losing snapshot BEFORE syncing both stores
+    saveConflictBackupCopy(losingRawJson);
+    await saveTransactionalState(winningState, {
+      forceUnlockCorruptionLock: true,
+    });
+
     return {
-      state: syncResult.state,
-      source: 'localStorage_v3',
+      state: winningState,
+      source:
+        winner === 'indexeddb'
+          ? 'conflict_resolved_indexeddb'
+          : 'conflict_resolved_localstorage',
+      localStorageCorrupted: false,
+      indexedDbCorrupted: false,
+      writeLocked: false,
+      conflictDetected: true,
+      conflictWinner: winner,
+      conflictBackupKey: STORAGE_CONFLICT_BACKUP_KEY,
+      upgradedFromRpkChecksum: Boolean(
+        syncResult.upgradedFromRpkChecksum || idbInspect.upgradedFromRpkChecksum
+      ),
+      recoveryNotice:
+        winner === 'indexeddb'
+          ? 'localStorage ile IndexedDB arasında sürüm farkı tespit edildi. Daha güncel olan IndexedDB verisi yüklendi; diğer sürüm rubrikpad_state_v3_conflict_backup anahtarına yedeklendi.'
+          : 'localStorage ile IndexedDB arasında sürüm farkı tespit edildi. Daha güncel olan localStorage verisi yüklendi; diğer sürüm rubrikpad_state_v3_conflict_backup anahtarına yedeklendi.',
     };
   }
 
+  // Case 2: localStorage has valid v3 data, and IndexedDB is either empty or corrupted
+  if (syncResult.source === 'localStorage_v3') {
+    storageWriteLockedDueToCorruption = false;
+    await saveTransactionalState(syncResult.state, {
+      forceUnlockCorruptionLock: true,
+    });
+    return {
+      state: syncResult.state,
+      source: 'localStorage_v3',
+      localStorageCorrupted: false,
+      indexedDbCorrupted: idbInspect.corrupted,
+      writeLocked: false,
+      upgradedFromRpkChecksum: syncResult.upgradedFromRpkChecksum,
+      rollbackBackupKey: syncResult.rollbackBackupKey,
+      recoveryNotice: idbInspect.corrupted
+        ? 'IndexedDB kaydı bozulmuştu; karantinaya alınarak doğrulanmış localStorage verisiyle onarıldı.'
+        : syncResult.upgradedFromRpkChecksum
+        ? 'Mevcut v3 verileriniz (rpk- imzalı) doğrulandı, orijinal geri dönüş kopyası oluşturuldu ve yeni SHA-256 bütünlük imzasına yükseltildi.'
+        : undefined,
+    };
+  }
+
+  // Case 3: localStorage had legacy v2 data, but check if IndexedDB actually has a valid v3 state first!
   if (syncResult.source === 'migrated_v2') {
+    if (idbInspect.hasRecord && idbInspect.isValid && idbInspect.state) {
+      saveConflictBackupCopy(
+        JSON.stringify(createVerifiedBackupBundle(syncResult.state))
+      );
+      storageWriteLockedDueToCorruption = false;
+      await saveTransactionalState(idbInspect.state, {
+        forceUnlockCorruptionLock: true,
+      });
+      return {
+        state: idbInspect.state,
+        source: 'conflict_resolved_indexeddb',
+        conflictDetected: true,
+        conflictWinner: 'indexeddb',
+        conflictBackupKey: STORAGE_CONFLICT_BACKUP_KEY,
+        recoveryNotice:
+          'IndexedDB üzerinde daha yeni v3 kayıtları bulunduğu için IndexedDB verisi yüklendi; eski v2 verisi çakışma yedeğine alındı.',
+      };
+    }
+    storageWriteLockedDueToCorruption = false;
+    await saveTransactionalState(syncResult.state, {
+      forceUnlockCorruptionLock: true,
+    });
     return {
       state: syncResult.state,
       source: 'migrated_v2',
+      localStorageCorrupted: false,
+      indexedDbCorrupted: idbInspect.corrupted,
+      writeLocked: false,
       recoveryNotice:
         'Önceki sürüm (v2) verileriniz otomatik olarak v3 veri yapısına yükseltildi ve korundu.',
     };
   }
 
-  // localStorage was missing or corrupted: attempt automatic recovery from IndexedDB!
-  const idbRecovery = await recoverStateFromIndexedDB();
-  if (idbRecovery.recovered && idbRecovery.state) {
+  // Case 4: localStorage was empty or corrupted -> attempt recovery from IndexedDB!
+  if (idbInspect.hasRecord && idbInspect.isValid && idbInspect.state) {
+    let rollbackBackupKey: string | undefined;
+    if (idbInspect.upgradedFromRpkChecksum && idbInspect.rawJson) {
+      saveOriginalV3RollbackCopy(idbInspect.rawJson);
+      rollbackBackupKey = LEGACY_V3_ROLLBACK_KEY;
+    }
+    storageWriteLockedDueToCorruption = false;
+    await saveTransactionalState(idbInspect.state, {
+      forceUnlockCorruptionLock: true,
+    });
     return {
-      state: idbRecovery.state,
+      state: idbInspect.state,
       source: 'indexeddb_recovered',
+      localStorageCorrupted: syncResult.localStorageCorrupted,
+      indexedDbCorrupted: false,
+      writeLocked: false,
+      upgradedFromRpkChecksum: idbInspect.upgradedFromRpkChecksum,
+      rollbackBackupKey,
       recoveryNotice: syncResult.localStorageCorrupted
         ? 'Yerel önbellek (localStorage) bozulmuştu; tüm puan ve notlarınız işlemsel IndexedDB deposundan otomatik olarak kurtarıldı.'
         : 'Yerel önbellek bulunamadı; verileriniz işlemsel IndexedDB deposundan otomatik olarak geri yüklendi.',
     };
   }
 
+  // Case 5: Neither store had valid data. If EITHER localStorage OR IndexedDB had corrupted data,
+  // lock storage writes so seed data NEVER overwrites the corrupted records!
+  const anyCorrupted = Boolean(
+    syncResult.localStorageCorrupted || idbInspect.corrupted
+  );
+  if (anyCorrupted) {
+    storageWriteLockedDueToCorruption = true;
+  }
+
   return {
     state: syncResult.state,
     source: 'seed_fallback',
+    localStorageCorrupted: syncResult.localStorageCorrupted,
+    indexedDbCorrupted: idbInspect.corrupted,
+    writeLocked: anyCorrupted,
+    error: idbInspect.error || syncResult.error,
   };
 }
+

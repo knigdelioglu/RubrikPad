@@ -31,6 +31,7 @@ import {
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
   importLegacyBackupBundle,
+  unlockStorageWriteLock,
 } from './utils/storageLayer.ts';
 import {
   checkStudentDeletionImpact,
@@ -64,18 +65,16 @@ export function App() {
     initialMeta.state.sessions
   );
 
-  // If localStorage already had valid v3 or migrated v2 data, we are hydrated immediately.
-  // If it fell back to seed data (e.g. localStorage empty or corrupted), we check IndexedDB recovery first before saving!
-  const [isStorageHydrated, setIsStorageHydrated] = useState<boolean>(
-    () => initialMeta.source !== 'seed_fallback'
-  );
+  // Wait for loadInitialStateWithRecovery to verify both localStorage and IndexedDB
+  // (and resolve any conflicts or corruption locks) before enabling automatic saves!
+  const [isStorageHydrated, setIsStorageHydrated] = useState<boolean>(false);
 
   const [recoveryBanner, setRecoveryBanner] = useState<string | null>(() => {
     if (initialMeta.source === 'migrated_v2') {
       return 'Önceki sürüm (v2) verileriniz otomatik olarak v3 veri yapısına yükseltildi ve korundu.';
     }
     if (initialMeta.upgradedFromRpkChecksum) {
-      return 'Mevcut v3 verileriniz (rpk- imzalı) doğrulandı ve kayıpsız olarak yeni SHA-256 bütünlük imzasına yükseltildi.';
+      return 'Mevcut v3 verileriniz (rpk- imzalı) doğrulandı, orijinal geri dönüş kopyası oluşturuldu ve yeni SHA-256 bütünlük imzasına yükseltildi.';
     }
     return null;
   });
@@ -96,11 +95,8 @@ export function App() {
     message: string;
   } | null>(null);
 
-  // Automatic IndexedDB Recovery on startup when localStorage was missing or corrupted
+  // Cross-layer verification, conflict resolution, and IndexedDB recovery on startup
   useEffect(() => {
-    if (initialMeta.source !== 'seed_fallback') {
-      return;
-    }
     let cancelled = false;
     loadInitialStateWithRecovery({
       classrooms: INITIAL_CLASSROOMS,
@@ -112,6 +108,8 @@ export function App() {
         if (cancelled) return;
         if (
           result.source === 'indexeddb_recovered' ||
+          result.source === 'conflict_resolved_indexeddb' ||
+          result.source === 'conflict_resolved_localstorage' ||
           result.source === 'migrated_v2' ||
           result.source === 'localStorage_v3'
         ) {
@@ -131,11 +129,18 @@ export function App() {
             setRecoveryBanner(result.recoveryNotice);
           }
           setIsStorageHydrated(true);
-        } else if (initialMeta.localStorageCorrupted) {
-          // Do NOT set isStorageHydrated(true) automatically when localStorage had unverified data and IndexedDB had no backup,
-          // so seed data never overwrites rubrikpad_state_v3 without explicit user action!
+        } else if (
+          result.writeLocked ||
+          result.localStorageCorrupted ||
+          result.indexedDbCorrupted ||
+          initialMeta.localStorageCorrupted
+        ) {
+          // Do NOT set isStorageHydrated(true) when localStorage or IndexedDB had corrupted data and no valid backup existed,
+          // so seed data NEVER overwrites rubrikpad_state_v3 or IndexedDB without explicit user action!
           setStorageSaveError(
-            'Yerel depolamadaki (rubrikpad_state_v3) kayıtlar doğrulanamadı ve IndexedDB yedeği bulunamadı. Mevcut verilerinizin üzerine örnek verilerin yazılmaması için otomatik kayıt duraklatıldı (ham veri rubrikpad_quarantine_v3_backup anahtarına yedeklendi).'
+            result.indexedDbCorrupted && !result.localStorageCorrupted
+              ? 'IndexedDB deposundaki kayıtlar bozulmuş ve doğrulanamadı. Bozuk IndexedDB verisinin üzerine örnek verilerin yazılmaması için otomatik kayıt duraklatıldı (ham veri rubrikpad_quarantine_idb_backup anahtarına karantinaya alındı).'
+              : 'Yerel depolamadaki (localStorage / IndexedDB) kayıtlar doğrulanamadı ve geçerli yedek bulunamadı. Mevcut verilerinizin üzerine örnek verilerin yazılmaması için otomatik kayıt duraklatıldı.'
           );
         } else {
           setIsStorageHydrated(true);
@@ -150,7 +155,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [initialMeta.source, initialMeta.localStorageCorrupted]);
+  }, [initialMeta.localStorageCorrupted]);
 
   // Listen for any global save-error events
   useEffect(() => {
@@ -332,6 +337,7 @@ export function App() {
         return;
       }
 
+      unlockStorageWriteLock();
       setClassrooms(verified.state.classrooms);
       setStudents(verified.state.students);
       setRubrics(verified.state.rubrics);
@@ -375,6 +381,7 @@ export function App() {
         return;
       }
 
+      unlockStorageWriteLock();
       setClassrooms(imported.state.classrooms);
       setStudents(imported.state.students);
       setRubrics(imported.state.rubrics);
@@ -400,6 +407,7 @@ export function App() {
   };
 
   const handleResetDemoData = () => {
+    unlockStorageWriteLock();
     setClassrooms(INITIAL_CLASSROOMS);
     setStudents(INITIAL_STUDENTS);
     setRubrics(INITIAL_RUBRICS);
