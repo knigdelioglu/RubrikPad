@@ -25,6 +25,9 @@ import {
   freezeRubricSnapshot,
   changeSessionRubricSafely,
   applyGroupScoresToMembers,
+  reconcileGroupEvaluationsWithMemberships,
+  deleteGroupAndReconcile,
+  toggleGroupMemberAndReconcile,
   applyCriterionScoreToStudents,
   getSessionProgressStats,
   getNextPendingStudent,
@@ -1157,44 +1160,60 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           selectedGroupId={selectedGroupId}
           onSelectGroup={setSelectedGroupId}
           onAddGroup={(newGroup) => {
+            const nowIso = new Date().toISOString();
+            const nextGroups = [...activeSession.groups, newGroup];
+            const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
+              activeSession.evaluations,
+              nextGroups,
+              nowIso
+            );
             onUpdateSession({
               ...activeSession,
-              groups: [...activeSession.groups, newGroup],
+              groups: nextGroups,
+              evaluations: nextEvaluations,
             });
           }}
           onReplaceAllGroups={(groups) => {
+            const nowIso = new Date().toISOString();
             const undoHistory = recordSessionUndoEntry(activeSession, {
               scope: 'group',
               description: 'Dengeli rastgele gruplar oluşturuldu',
               previousEvaluations: activeSession.evaluations,
               previousGroups: activeSession.groups,
             });
+            const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
+              activeSession.evaluations,
+              groups,
+              nowIso
+            );
             onUpdateSession({
               ...activeSession,
               groups,
+              evaluations: nextEvaluations,
               undoHistory,
             });
           }}
           onDeleteGroup={(groupId) => {
-            onUpdateSession({
-              ...activeSession,
-              groups: activeSession.groups.filter((g) => g.id !== groupId),
-            });
+            onUpdateSession(
+              deleteGroupAndReconcile(
+                activeSession,
+                groupId,
+                new Date().toISOString()
+              )
+            );
           }}
           onToggleGroupMember={(groupId, studentId) => {
-            const updatedGroups = activeSession.groups.map((g) => {
-              if (g.id !== groupId) return g;
-              const exists = g.studentIds.includes(studentId);
-              return {
-                ...g,
-                studentIds: exists
-                  ? g.studentIds.filter((id) => id !== studentId)
-                  : [...g.studentIds, studentId],
-              };
-            });
-            onUpdateSession({ ...activeSession, groups: updatedGroups });
+            onUpdateSession(
+              toggleGroupMemberAndReconcile(
+                activeSession,
+                groupId,
+                studentId,
+                new Date().toISOString()
+              )
+            );
           }}
           onSelectGroupCriterionLevel={(criterionId, points) => {
+            const nowIso = new Date().toISOString();
             const updatedGroups = activeSession.groups.map((g) =>
               g.id === selectedGroupId
                 ? {
@@ -1206,13 +1225,32 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                   }
                 : g
             );
-            onUpdateSession({ ...activeSession, groups: updatedGroups });
+            const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
+              activeSession.evaluations,
+              updatedGroups,
+              nowIso
+            );
+            onUpdateSession({
+              ...activeSession,
+              groups: updatedGroups,
+              evaluations: nextEvaluations,
+            });
           }}
           onUpdateGroupNote={(note) => {
+            const nowIso = new Date().toISOString();
             const updatedGroups = activeSession.groups.map((g) =>
               g.id === selectedGroupId ? { ...g, groupNote: note } : g
             );
-            onUpdateSession({ ...activeSession, groups: updatedGroups });
+            const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
+              activeSession.evaluations,
+              updatedGroups,
+              nowIso
+            );
+            onUpdateSession({
+              ...activeSession,
+              groups: updatedGroups,
+              evaluations: nextEvaluations,
+            });
           }}
           onApplyGroupScoresToMembers={(group) => {
             const nowIso = new Date().toISOString();

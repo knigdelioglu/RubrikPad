@@ -1058,6 +1058,232 @@ export function findDuplicateGroupMemberships(
 }
 
 /**
+ * Reconciles all students' reflected group scores (`groupCriterionScores`, `groupDirectScores`,
+ * `groupNote`, `groupId`, `evaluatedViaGroup`, `'Grup Çalışması'` tag, and `activeScoreSource`)
+ * with the current `groups` list in the session (P2 Group Membership & Score Reconciliation):
+ * - When a student is removed from a group or their group is deleted, clears their stale reflected
+ *   group scores/notes/groupId and switches `activeScoreSource` back to `'individual'`, while
+ *   preserving 100% of their individual `criterionScores` and `note`.
+ * - When a student is added to a group that already has recorded/applied scores, or remains in an
+ *   evaluated group, keeps their reflected group scores synchronized with that group.
+ */
+export function reconcileGroupEvaluationsWithMemberships(
+  currentEvaluations: Record<string, StudentEvaluation>,
+  groups: StudentGroup[],
+  timestampIso = new Date().toISOString()
+): Record<string, StudentEvaluation> {
+  const updated: Record<string, StudentEvaluation> = { ...currentEvaluations };
+
+  const currentGroupByStudentId = new Map<string, StudentGroup>();
+  for (const grp of groups || []) {
+    for (const sid of grp.studentIds || []) {
+      currentGroupByStudentId.set(sid, grp);
+    }
+  }
+
+  // 1. Clean or update existing student evaluation records
+  for (const [stuId, existing] of Object.entries(updated)) {
+    if (!existing) continue;
+    const assignedGroup = currentGroupByStudentId.get(stuId);
+
+    const hadReflectedGroupData =
+      Boolean(existing.groupId) ||
+      Boolean(existing.evaluatedViaGroup) ||
+      Boolean(existing.groupNote && existing.groupNote.trim()) ||
+      Object.values(existing.groupCriterionScores || {}).some((v) =>
+        isScoreAssigned(v)
+      ) ||
+      Object.values(existing.groupDirectScores || {}).some((v) =>
+        isScoreAssigned(v)
+      ) ||
+      existing.activeScoreSource === 'group';
+
+    if (!assignedGroup) {
+      // Student is no longer a member of ANY group: strip stale reflected group scores/metadata
+      if (hadReflectedGroupData) {
+        updated[stuId] = {
+          ...existing,
+          groupCriterionScores: {},
+          groupDirectScores: undefined,
+          groupNote: '',
+          groupId: undefined,
+          evaluatedViaGroup: undefined,
+          activeScoreSource: 'individual',
+          tags: (existing.tags || []).filter((t) => t !== 'Grup Çalışması'),
+          updatedAt: timestampIso,
+        };
+      }
+      continue;
+    }
+
+    // Student IS in `assignedGroup`
+    const groupHasScores = hasGroupEvaluationData(assignedGroup);
+    if (!groupHasScores) {
+      // Student is in an unscored group: clear any stale scores from a previous group
+      if (hadReflectedGroupData) {
+        updated[stuId] = {
+          ...existing,
+          groupCriterionScores: {},
+          groupDirectScores: undefined,
+          groupNote: '',
+          groupId: assignedGroup.id,
+          evaluatedViaGroup: undefined,
+          activeScoreSource: 'individual',
+          tags: (existing.tags || []).filter((t) => t !== 'Grup Çalışması'),
+          updatedAt: timestampIso,
+        };
+      }
+    } else if (
+      Boolean(assignedGroup.lastAppliedAt) ||
+      hadReflectedGroupData
+    ) {
+      // Sync student's reflected group scores with their current evaluated group
+      const hasIndScores =
+        Object.values(existing.criterionScores || {}).some((v) =>
+          isScoreAssigned(v)
+        ) ||
+        Object.values(existing.directCriterionScores || {}).some((v) =>
+          isScoreAssigned(v)
+        );
+      const existingTags = existing.tags || [];
+      const nextTags = existingTags.includes('Grup Çalışması')
+        ? existingTags
+        : [...existingTags, 'Grup Çalışması'];
+
+      updated[stuId] = {
+        ...existing,
+        groupCriterionScores: { ...(assignedGroup.criterionScores || {}) },
+        groupDirectScores: assignedGroup.directCriterionScores
+          ? { ...assignedGroup.directCriterionScores }
+          : undefined,
+        groupNote: assignedGroup.groupNote || '',
+        groupId: assignedGroup.id,
+        evaluatedViaGroup: assignedGroup.name,
+        activeScoreSource: hasIndScores
+          ? existing.activeScoreSource || 'individual'
+          : 'group',
+        tags: nextTags,
+        updatedAt: timestampIso,
+      };
+    }
+  }
+
+  // 2. Also ensure any newly added member of a group that already has scores gets synced even if they had no prior evaluation entry
+  for (const [stuId, grp] of currentGroupByStudentId.entries()) {
+    if (!updated[stuId] && hasGroupEvaluationData(grp)) {
+      updated[stuId] = {
+        studentId: stuId,
+        criterionScores: {},
+        groupCriterionScores: { ...(grp.criterionScores || {}) },
+        groupDirectScores: grp.directCriterionScores
+          ? { ...grp.directCriterionScores }
+          : undefined,
+        groupNote: grp.groupNote || '',
+        groupId: grp.id,
+        evaluatedViaGroup: grp.name,
+        activeScoreSource: 'group',
+        note: '',
+        tags: ['Grup Çalışması'],
+        updatedAt: timestampIso,
+      };
+    }
+  }
+
+  return updated;
+}
+
+/**
+ * Deletes a group from a session and automatically reconciles all former members' reflected
+ * `groupCriterionScores`, `groupDirectScores`, `groupNote`, and `groupId` while recording an undo entry.
+ */
+export function deleteGroupAndReconcile(
+  session: EvaluationSession,
+  groupId: string,
+  timestampIso = new Date().toISOString()
+): EvaluationSession {
+  const targetGroup = (session.groups || []).find((g) => g.id === groupId);
+  const nextGroups = (session.groups || []).filter((g) => g.id !== groupId);
+  const undoHistory = recordSessionUndoEntry(session, {
+    scope: 'group',
+    groupId,
+    description: `${targetGroup?.name || 'Grup'} silindi ve üye grup puanları uzlaştırıldı`,
+    previousEvaluations: session.evaluations,
+    previousGroups: session.groups,
+  });
+  const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
+    session.evaluations,
+    nextGroups,
+    timestampIso
+  );
+
+  return {
+    ...session,
+    groups: nextGroups,
+    evaluations: nextEvaluations,
+    undoHistory,
+  };
+}
+
+/**
+ * Toggles a student's membership in a group and automatically reconciles reflected group scores:
+ * - Removing a student from a group immediately clears their stale `groupCriterionScores`, `groupNote`, and `groupId`.
+ * - Adding a student to an evaluated group syncs that group's scores to the student's `groupCriterionScores`.
+ */
+export function toggleGroupMemberAndReconcile(
+  session: EvaluationSession,
+  groupId: string,
+  studentId: string,
+  timestampIso = new Date().toISOString()
+): EvaluationSession {
+  const conflicts = findDuplicateGroupMemberships(
+    session.groups || [],
+    [studentId],
+    groupId
+  );
+  if (conflicts.length > 0) {
+    return session;
+  }
+
+  const targetGroup = (session.groups || []).find((g) => g.id === groupId);
+  if (!targetGroup) return session;
+
+  const isRemoving = targetGroup.studentIds.includes(studentId);
+  const nextGroups = (session.groups || []).map((g) => {
+    if (g.id !== groupId) return g;
+    return {
+      ...g,
+      studentIds: isRemoving
+        ? g.studentIds.filter((id) => id !== studentId)
+        : [...g.studentIds, studentId],
+    };
+  });
+
+  const undoHistory = recordSessionUndoEntry(session, {
+    scope: 'group',
+    groupId,
+    studentId,
+    description: isRemoving
+      ? `${targetGroup.name} grubundan öğrenci çıkarıldı`
+      : `${targetGroup.name} grubuna öğrenci eklendi`,
+    previousEvaluations: session.evaluations,
+    previousGroups: session.groups,
+  });
+
+  const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
+    session.evaluations,
+    nextGroups,
+    timestampIso
+  );
+
+  return {
+    ...session,
+    groups: nextGroups,
+    evaluations: nextEvaluations,
+    undoHistory,
+  };
+}
+
+/**
  * Computes longitudinal group evaluation history across sessions (P1 #6).
  */
 export function getGroupProgressHistory(

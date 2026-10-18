@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 import {
   isScoreAssigned,
   calculateWeightedScore,
@@ -8,6 +10,9 @@ import {
   getEffectiveSessionRubric,
   validateRubric,
   applyGroupScoresToMembers,
+  reconcileGroupEvaluationsWithMemberships,
+  deleteGroupAndReconcile,
+  toggleGroupMemberAndReconcile,
   generateBalancedRandomGroups,
   redistributeGroupsSafely,
   hasGroupEvaluationData,
@@ -29,9 +34,11 @@ import {
 } from './rubricLogic.ts';
 import {
   STORAGE_KEY,
+  sha256Hex,
   computePayloadChecksum,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
+  importLegacyBackupBundle,
   migrateV2ToV3,
   loadVerifiedInitialState,
   loadInitialStateWithRecovery,
@@ -39,7 +46,10 @@ import {
   __clearMemoryIndexedDbForTests,
   __setSimulateIndexedDbFailureForTests,
 } from './storageLayer.ts';
-import { generatePaginatedSessionPdfBytes } from './pdfGenerator.ts';
+import {
+  generatePaginatedSessionPdfBytes,
+  decodePdfTextWithToUnicode,
+} from './pdfGenerator.ts';
 import type { Rubric, Student, EvaluationSession, StudentGroup } from '../types.ts';
 
 const sampleRubric: Rubric = {
@@ -919,6 +929,22 @@ test('Audit #7: PDF generator includes ALL criteria (10+ criteria without trunca
       fullName: 'Çağrı Öztürk',
       classId: 'cls-7a',
     },
+    {
+      id: 'stu-tr-2',
+      studentNumber: '109',
+      firstName: 'İdil',
+      lastName: 'Şahin',
+      fullName: 'İdil Şahin',
+      classId: 'cls-7a',
+    },
+    {
+      id: 'stu-tr-3',
+      studentNumber: '110',
+      firstName: 'Işıl',
+      lastName: 'Gümüş',
+      fullName: 'Işıl Gümüş',
+      classId: 'cls-7a',
+    },
   ];
 
   const pdfBytes = generatePaginatedSessionPdfBytes(
@@ -934,23 +960,283 @@ test('Audit #7: PDF generator includes ALL criteria (10+ criteria without trunca
     students
   );
 
-  const pdfText = new TextDecoder('utf-8').decode(pdfBytes);
+  // 1. Verify embedded TrueType Type0 / CIDFontType2 / Identity-H and /ToUnicode CMap structure
+  const pdfRawAscii = new TextDecoder('latin1').decode(pdfBytes);
+  assert.ok(pdfRawAscii.includes('/Subtype /Type0'));
+  assert.ok(pdfRawAscii.includes('/Subtype /CIDFontType2'));
+  assert.ok(pdfRawAscii.includes('/Encoding /Identity-H'));
+  assert.ok(pdfRawAscii.includes('/FontFile2'));
+  assert.ok(pdfRawAscii.includes('/ToUnicode'));
 
-  // Verify Turkish characters are preserved (never stripped to ASCII!)
-  assert.ok(pdfText.includes('ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - 7-A Sınıfı'));
-  assert.ok(pdfText.includes('Çağrı Öztürk'));
-  assert.ok(pdfText.includes('ğüşiöç ĞÜŞİÖÇ'));
+  // 2. Decode <GGGG> Tj glyph operators using the embedded /ToUnicode CMap
+  const decodedViaToUnicode = decodePdfTextWithToUnicode(pdfBytes);
+  assert.ok(
+    decodedViaToUnicode.includes(
+      'ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - 7-A Sınıfı'
+    )
+  );
+  assert.ok(decodedViaToUnicode.includes('Çağrı Öztürk'));
+  assert.ok(decodedViaToUnicode.includes('İdil Şahin'));
+  assert.ok(decodedViaToUnicode.includes('Işıl Gümüş'));
+  assert.ok(decodedViaToUnicode.includes('ğüşiöç ĞÜŞİÖÇ'));
 
-  // Verify ALL 10 criteria (including criterion 9 and criterion 10!) are included in the PDF
   for (let i = 1; i <= 10; i++) {
     assert.ok(
-      pdfText.includes(`K${i}: Ölçüt ${i} - Çağdaş Bilimsel Gözlem ve Çözümleme`),
-      `Missing criterion ${i} in PDF legend`
+      decodedViaToUnicode.includes(
+        `K${i}: Ölçüt ${i} - Çağdaş Bilimsel Gözlem ve Çözümleme`
+      ),
+      `Missing criterion ${i} in ToUnicode decoded PDF text`
     );
     assert.ok(
-      pdfText.includes(`K${i}:4`),
-      `Missing student score for criterion K${i} in PDF row`
+      decodedViaToUnicode.includes(`K${i}:4`),
+      `Missing student score for criterion K${i} in ToUnicode decoded PDF row`
     );
   }
+
+  // 3. Verify with real Ghostscript PDF engine (text extraction + PNG rasterization)
+  const tmpPdfPath = '/tmp/rubrikpad_test_tr_report.pdf';
+  const tmpPngPath = '/tmp/rubrikpad_test_tr_report.png';
+  fs.writeFileSync(tmpPdfPath, pdfBytes);
+  const gsExtracted = execSync(
+    `gs -q -dNOPAUSE -dBATCH -sDEVICE=txtwrite -sOutputFile=- ${tmpPdfPath}`
+  ).toString('utf8');
+
+  assert.ok(
+    gsExtracted.includes('ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - 7-A Sınıfı')
+  );
+  assert.ok(gsExtracted.includes('Çağrı Öztürk'));
+  assert.ok(gsExtracted.includes('İdil Şahin'));
+  assert.ok(gsExtracted.includes('Işıl Gümüş'));
+  assert.ok(gsExtracted.includes('ğüşiöç ĞÜŞİÖÇ'));
+
+  execSync(
+    `gs -q -dNOPAUSE -dBATCH -sDEVICE=png16m -r150 -sOutputFile=${tmpPngPath} ${tmpPdfPath}`
+  );
+  assert.ok(fs.statSync(tmpPngPath).size > 15000);
 });
+
+test('Audit #8: Mandatory SHA-256 backup checksums cover undoHistory and auditLog, reject checksumless v3 files, and support separate legacy import', () => {
+  // Verify standard NIST SHA-256 vector ("abc")
+  assert.equal(
+    sha256Hex('abc'),
+    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+  );
+
+  const stateWithHistory = migrateV2ToV3({
+    classrooms: [
+      {
+        id: 'c1',
+        name: '7-A',
+        gradeLevel: '7',
+        subject: 'Fen',
+        academicYear: '2026',
+      },
+    ],
+    students: [
+      {
+        id: 's1',
+        studentNumber: '101',
+        firstName: 'Elif',
+        lastName: 'Yılmaz',
+        fullName: 'Elif Yılmaz',
+        classId: 'c1',
+        auditLog: [
+          {
+            timestamp: '2026-10-18T08:00:00Z',
+            action: 'created',
+            details: 'Öğrenci eklendi',
+          },
+        ],
+      },
+    ],
+    rubrics: [sampleRubric],
+    sessions: [
+      {
+        id: 'ses-1',
+        title: 'Deney Oturumu',
+        classId: 'c1',
+        rubricId: 'rub-test',
+        date: '2026-10-18',
+        status: 'in_progress',
+        mode: 'individual',
+        generalSessionNote: '',
+        groups: [],
+        evaluations: {},
+        undoHistory: [
+          {
+            id: 'undo-1',
+            timestamp: '2026-10-18T08:05:00Z',
+            scope: 'criterion',
+            studentId: 's1',
+            criterionId: 'c1',
+            description: 'Önceki puan: 3P',
+            previousEvaluations: {},
+          },
+        ],
+      },
+    ],
+  });
+
+  const bundle = createVerifiedBackupBundle(stateWithHistory);
+  assert.match(bundle.checksum, /^sha256-[0-9a-f]{64}$/);
+
+  // 1. Tampering with student auditLog invalidates SHA-256 checksum
+  const tamperedAuditLog = JSON.parse(JSON.stringify(bundle));
+  tamperedAuditLog.payload.students[0].auditLog[0].details =
+    'Yetkisiz denetim kaydı değişikliği';
+  const resAudit = verifyAndParseBackupBundle(JSON.stringify(tamperedAuditLog));
+  assert.equal(resAudit.isValid, false);
+  assert.match(resAudit.error || '', /SHA-256 Checksum/);
+
+  // 2. Tampering with session undoHistory invalidates SHA-256 checksum
+  const tamperedUndo = JSON.parse(JSON.stringify(bundle));
+  tamperedUndo.payload.sessions[0].undoHistory[0].description =
+    'Değiştirilmiş geçmiş';
+  const resUndo = verifyAndParseBackupBundle(JSON.stringify(tamperedUndo));
+  assert.equal(resUndo.isValid, false);
+  assert.match(resUndo.error || '', /SHA-256 Checksum/);
+
+  // 3. Removing checksum field from v3 backup is strictly REJECTED by verifyAndParseBackupBundle
+  const missingChecksumBundle = JSON.parse(JSON.stringify(bundle));
+  delete missingChecksumBundle.checksum;
+  const resMissingChecksum = verifyAndParseBackupBundle(
+    JSON.stringify(missingChecksumBundle)
+  );
+  assert.equal(resMissingChecksum.isValid, false);
+  assert.equal(resMissingChecksum.requiresLegacyImport, true);
+
+  // 4. Legacy v2 unverified backup is rejected by strict verifyAndParseBackupBundle,
+  //    but cleanly imported and migrated by importLegacyBackupBundle
+  const rawLegacyV2 = {
+    classrooms: stateWithHistory.classrooms,
+    students: stateWithHistory.students,
+    rubrics: stateWithHistory.rubrics,
+    sessions: stateWithHistory.sessions,
+  };
+  const strictOnLegacy = verifyAndParseBackupBundle(
+    JSON.stringify(rawLegacyV2)
+  );
+  assert.equal(strictOnLegacy.isValid, false);
+  assert.equal(strictOnLegacy.requiresLegacyImport, true);
+
+  const legacyImportRes = importLegacyBackupBundle(JSON.stringify(rawLegacyV2));
+  assert.equal(legacyImportRes.isValid, true);
+  assert.equal(legacyImportRes.migratedFromV2, true);
+  assert.match(legacyImportRes.newChecksum || '', /^sha256-[0-9a-f]{64}$/);
+});
+
+test('Audit #9: Group membership changes and group deletion automatically reconcile reflected student group scores', () => {
+  const group1: StudentGroup = {
+    id: 'grp-1',
+    name: 'Grup 1: Robotik Takımı',
+    studentIds: ['s1', 's2'],
+    criterionScores: { c1: 4, c2: 4 },
+    groupNote: 'Grup 1 ortak gözlemi',
+    lastAppliedAt: '2026-10-18T09:00:00Z',
+  };
+
+  let session: EvaluationSession = {
+    id: 'ses-grp-sync',
+    title: 'Grup Uzlaştırma Testi',
+    classId: 'c1',
+    rubricId: 'rub-test',
+    rubricSnapshot: sampleRubric,
+    date: '2026-10-18',
+    status: 'in_progress',
+    mode: 'group',
+    generalSessionNote: '',
+    groups: [group1],
+    evaluations: {
+      s1: {
+        studentId: 's1',
+        criterionScores: { c1: 2, c2: 2 },
+        note: 'Elif bireysel notu',
+        tags: [],
+        updatedAt: '2026-10-18T08:50:00Z',
+      },
+    },
+    undoHistory: [],
+  };
+
+  // Apply group1 scores to s1 and s2
+  session = {
+    ...session,
+    evaluations: applyGroupScoresToMembers(
+      session.evaluations,
+      group1,
+      '2026-10-18T09:00:00Z'
+    ),
+  };
+
+  assert.deepEqual(session.evaluations['s1'].groupCriterionScores, {
+    c1: 4,
+    c2: 4,
+  });
+  assert.equal(session.evaluations['s1'].groupId, 'grp-1');
+  assert.deepEqual(session.evaluations['s2'].groupCriterionScores, {
+    c1: 4,
+    c2: 4,
+  });
+  assert.equal(session.evaluations['s2'].groupId, 'grp-1');
+  assert.equal(session.evaluations['s2'].activeScoreSource, 'group');
+
+  // 1. Remove s2 from grp-1 via toggleGroupMemberAndReconcile:
+  //    s2's reflected groupCriterionScores, groupNote, groupId, and evaluatedViaGroup MUST be cleared!
+  session = toggleGroupMemberAndReconcile(
+    session,
+    'grp-1',
+    's2',
+    '2026-10-18T09:05:00Z'
+  );
+  assert.deepEqual(session.groups[0].studentIds, ['s1']);
+  assert.deepEqual(session.evaluations['s2'].groupCriterionScores, {});
+  assert.equal(session.evaluations['s2'].groupId, undefined);
+  assert.equal(session.evaluations['s2'].evaluatedViaGroup, undefined);
+  assert.equal(session.evaluations['s2'].groupNote, '');
+  assert.equal(session.evaluations['s2'].activeScoreSource, 'individual');
+  assert.equal(
+    session.evaluations['s2'].tags.includes('Grup Çalışması'),
+    false
+  );
+  // Meanwhile s1 (still in grp-1) keeps group scores
+  assert.deepEqual(session.evaluations['s1'].groupCriterionScores, {
+    c1: 4,
+    c2: 4,
+  });
+  assert.equal(session.evaluations['s1'].groupId, 'grp-1');
+
+  // 2. Add s3 to grp-1 (which already has applied scores): s3 automatically receives grp-1's reflected scores
+  session = toggleGroupMemberAndReconcile(
+    session,
+    'grp-1',
+    's3',
+    '2026-10-18T09:06:00Z'
+  );
+  assert.deepEqual(session.evaluations['s3'].groupCriterionScores, {
+    c1: 4,
+    c2: 4,
+  });
+  assert.equal(session.evaluations['s3'].groupId, 'grp-1');
+  assert.equal(session.evaluations['s3'].evaluatedViaGroup, 'Grup 1: Robotik Takımı');
+
+  // 3. Delete grp-1 via deleteGroupAndReconcile:
+  //    s1 and s3 have their reflected group scores cleared, while s1's individual scores (c1: 2, c2: 2) and individual note remain intact!
+  session = deleteGroupAndReconcile(
+    session,
+    'grp-1',
+    '2026-10-18T09:10:00Z'
+  );
+  assert.equal(session.groups.length, 0);
+  assert.deepEqual(session.evaluations['s1'].groupCriterionScores, {});
+  assert.equal(session.evaluations['s1'].groupId, undefined);
+  assert.equal(session.evaluations['s1'].evaluatedViaGroup, undefined);
+  assert.deepEqual(session.evaluations['s1'].criterionScores, {
+    c1: 2,
+    c2: 2,
+  });
+  assert.equal(session.evaluations['s1'].note, 'Elif bireysel notu');
+  assert.deepEqual(session.evaluations['s3'].groupCriterionScores, {});
+  assert.equal(session.evaluations['s3'].groupId, undefined);
+});
+
 

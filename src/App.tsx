@@ -30,6 +30,7 @@ import {
   saveTransactionalState,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
+  importLegacyBackupBundle,
 } from './utils/storageLayer.ts';
 import {
   checkStudentDeletionImpact,
@@ -325,14 +326,52 @@ export function App() {
       );
       setBackupBanner({
         type: 'success',
-        message: verified.migratedFromV2
-          ? 'v2 yedek dosyası v3 şemasına yükseltilerek başarıyla geri yüklendi.'
-          : 'Yedek dosyası bütünlük kontrolünden (Checksum) geçti ve başarıyla geri yüklendi.',
+        message:
+          'Yedek dosyası SHA-256 bütünlük kontrolünden (Checksum) geçti ve başarıyla geri yüklendi.',
       });
     } catch {
       setBackupBanner({
         type: 'error',
         message: 'Yedek dosyası okunurken bir hata oluştu.',
+      });
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleImportLegacyBackup = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const imported = importLegacyBackupBundle(text);
+      if (!imported.isValid || !imported.state) {
+        setBackupBanner({
+          type: 'error',
+          message:
+            imported.error || 'Eski sürüm yedek aktarma işlemi başarısız oldu.',
+        });
+        return;
+      }
+
+      setClassrooms(imported.state.classrooms);
+      setStudents(imported.state.students);
+      setRubrics(imported.state.rubrics);
+      setSessions(imported.state.sessions);
+      setActiveClassId(imported.state.classrooms[0]?.id || '');
+      setActiveSessionId(
+        imported.state.sessions[imported.state.sessions.length - 1]?.id || ''
+      );
+      setBackupBanner({
+        type: 'success',
+        message: `Eski sürüm (v1/v2) yedek dosyası v3 şemasına dönüştürülerek aktarıldı ve yeni SHA-256 imzası oluşturuldu (${imported.newChecksum?.slice(0, 22)}...).`,
+      });
+    } catch {
+      setBackupBanner({
+        type: 'error',
+        message: 'Eski sürüm yedek dosyası okunurken bir hata oluştu.',
       });
     } finally {
       e.target.value = '';
@@ -594,18 +633,22 @@ export function App() {
             </div>
 
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-slate-700">
-                  Aktif Veri Bütünlük Özeti (Checksum):
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-slate-700 shrink-0">
+                  Aktif SHA-256 Bütünlük Özeti:
                 </span>
-                <span className="font-mono-num font-bold text-teal-900 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
+                <span
+                  className="font-mono-num font-bold text-teal-900 bg-teal-50 px-2 py-0.5 rounded border border-teal-200 truncate max-w-[240px]"
+                  title={currentChecksum}
+                >
                   {currentChecksum}
                 </span>
               </div>
               <p className="text-slate-600">
-                Bütün bireysel puanlar, grup puanları, gözlem notları ve rubrik
-                ölçütleri <strong>IndexedDB</strong> ve bütünlük imzalı (checksum)
-                paket ile korunur.
+                Bütün bireysel puanlar, grup puanları, gözlem notları, işlem
+                geçmişi (undoHistory) ve denetim kayıtları (auditLog){' '}
+                <strong>IndexedDB</strong> ve zorunlu{' '}
+                <strong>SHA-256 Checksum</strong> ile korunur.
               </p>
             </div>
 
@@ -634,16 +677,33 @@ export function App() {
                 className="p-3.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                Doğrulanabilir Yedek İndir (.json)
+                SHA-256 İmzalı Yedek İndir (.json)
               </button>
 
               <label className="p-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer text-center">
                 <Upload className="w-4 h-4" />
-                <span>Yedekten Doğrula ve Geri Yükle</span>
+                <span>SHA-256 Doğrulamalı Geri Yükle (v3)</span>
                 <input
                   type="file"
                   accept="application/json,.json"
                   onChange={handleImportVerifiedBackup}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <div className="text-amber-950">
+                <span className="font-bold">Eski Sürüm (v1/v2 Checksumsız) Yedek:</span>{' '}
+                İmzasız eski yedek dosyalarını v3 şemasına dönüştürerek aktarın.
+              </div>
+              <label className="px-3 py-1.5 rounded-lg bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold flex items-center gap-1.5 cursor-pointer shrink-0">
+                <Upload className="w-3.5 h-3.5" />
+                <span>Eski Sürüm Yedek Aktar</span>
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={handleImportLegacyBackup}
                   className="hidden"
                 />
               </label>

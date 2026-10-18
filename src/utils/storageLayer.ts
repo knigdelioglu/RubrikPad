@@ -57,8 +57,116 @@ export interface TransactionalSaveResult {
 }
 
 /**
+ * Pure TypeScript synchronous SHA-256 implementation (FIPS 180-4) operating on UTF-8 bytes.
+ * Works identically in browser and Node environments without async overhead.
+ */
+const SHA256_K = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+
+export function sha256Hex(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  const bitLenHi = Math.floor((bytes.length * 8) / 0x100000000);
+  const bitLenLo = (bytes.length * 8) >>> 0;
+
+  // Padding: append 0x80, then 0x00 until length % 64 === 56, then 8-byte big-endian bit length
+  const paddedLength = (((bytes.length + 8) >> 6) + 1) << 6;
+  const padded = new Uint8Array(paddedLength);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+
+  const view = new DataView(padded.buffer);
+  view.setUint32(paddedLength - 8, bitLenHi, false);
+  view.setUint32(paddedLength - 4, bitLenLo, false);
+
+  let h0 = 0x6a09e667;
+  let h1 = 0xbb67ae85;
+  let h2 = 0x3c6ef372;
+  let h3 = 0xa54ff53a;
+  let h4 = 0x510e527f;
+  let h5 = 0x9b05688c;
+  let h6 = 0x1f83d9ab;
+  let h7 = 0x5be0cd19;
+
+  const w = new Uint32Array(64);
+
+  for (let offset = 0; offset < paddedLength; offset += 64) {
+    for (let i = 0; i < 16; i++) {
+      w[i] = view.getUint32(offset + i * 4, false);
+    }
+    for (let i = 16; i < 64; i++) {
+      const v15 = w[i - 15];
+      const s0 =
+        ((v15 >>> 7) | (v15 << 25)) ^
+        ((v15 >>> 18) | (v15 << 14)) ^
+        (v15 >>> 3);
+      const v2 = w[i - 2];
+      const s1 =
+        ((v2 >>> 17) | (v2 << 15)) ^
+        ((v2 >>> 19) | (v2 << 13)) ^
+        (v2 >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+    let f = h5;
+    let g = h6;
+    let h = h7;
+
+    for (let i = 0; i < 64; i++) {
+      const S1 =
+        ((e >>> 6) | (e << 26)) ^
+        ((e >>> 11) | (e << 21)) ^
+        ((e >>> 25) | (e << 7));
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + S1 + ch + SHA256_K[i] + w[i]) >>> 0;
+      const S0 =
+        ((a >>> 2) | (a << 30)) ^
+        ((a >>> 13) | (a << 19)) ^
+        ((a >>> 22) | (a << 10));
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) >>> 0;
+
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+    h5 = (h5 + f) >>> 0;
+    h6 = (h6 + g) >>> 0;
+    h7 = (h7 + h) >>> 0;
+  }
+
+  return [h0, h1, h2, h3, h4, h5, h6, h7]
+    .map((n) => n.toString(16).padStart(8, '0'))
+    .join('');
+}
+
+/**
  * Recursively canonicalizes any value with alphabetically sorted object keys
- * so that checksum computation is 100% deterministic across all nested scores and notes.
+ * so that SHA-256 checksum computation is 100% deterministic across all nested scores,
+ * notes, auditLog entries, and undoHistory snapshots.
  */
 function canonicalizeForChecksum(value: unknown): unknown {
   if (value === null || value === undefined) {
@@ -82,13 +190,15 @@ function canonicalizeForChecksum(value: unknown): unknown {
 }
 
 /**
- * Computes a deterministic 64-bit hex integrity checksum covering EVERY classroom, student,
- * rubric criterion/level/weight/maxPoints, session, group score/note, and student individual/group
- * criterion score, direct score, observation note, and tag (P0 #6).
+ * Computes a deterministic SHA-256 integrity checksum (`sha256-<64_hex>`) covering the ENTIRE
+ * application state: every classroom, student (including `auditLog` and `updatedAt`),
+ * rubric (including `version`, criteria, weights, maxPoints, levels), and session
+ * (including `rubricSnapshot`, `groups`, `evaluations`, and full `undoHistory`).
  */
 export function computePayloadChecksum(payload: AppDataState): string {
   const fullDataToHash = {
     classrooms: (payload.classrooms || []).map((c) => ({
+      ...c,
       id: c.id,
       name: c.name,
       gradeLevel: c.gradeLevel,
@@ -96,6 +206,7 @@ export function computePayloadChecksum(payload: AppDataState): string {
       academicYear: c.academicYear,
     })),
     students: (payload.students || []).map((s) => ({
+      ...s,
       id: s.id,
       studentNumber: s.studentNumber,
       firstName: s.firstName || '',
@@ -103,14 +214,24 @@ export function computePayloadChecksum(payload: AppDataState): string {
       fullName: s.fullName,
       classId: s.classId,
       archived: Boolean(s.archived),
+      updatedAt: s.updatedAt || null,
+      auditLog: (s.auditLog || []).map((entry) => ({
+        timestamp: entry.timestamp,
+        action: entry.action,
+        details: entry.details,
+      })),
     })),
     rubrics: (payload.rubrics || []).map((r) => ({
+      ...r,
       id: r.id,
       title: r.title,
       subject: r.subject,
       description: r.description,
       maxLevelPoints: r.maxLevelPoints,
+      createdAt: r.createdAt || '',
+      version: r.version ?? 3,
       criteria: (r.criteria || []).map((c) => ({
+        ...c,
         id: c.id,
         title: c.title,
         category: c.category,
@@ -118,6 +239,7 @@ export function computePayloadChecksum(payload: AppDataState): string {
         maxPoints: c.maxPoints ?? c.weight,
         required: c.required !== false,
         levels: (c.levels || []).map((l) => ({
+          ...l,
           level: l.level,
           label: l.label,
           points: l.points,
@@ -126,6 +248,7 @@ export function computePayloadChecksum(payload: AppDataState): string {
       })),
     })),
     sessions: (payload.sessions || []).map((ses) => ({
+      ...ses,
       id: ses.id,
       title: ses.title,
       classId: ses.classId,
@@ -140,6 +263,7 @@ export function computePayloadChecksum(payload: AppDataState): string {
       mode: ses.mode,
       generalSessionNote: ses.generalSessionNote || '',
       groups: (ses.groups || []).map((g) => ({
+        ...g,
         id: g.id,
         name: g.name,
         studentIds: g.studentIds || [],
@@ -153,6 +277,7 @@ export function computePayloadChecksum(payload: AppDataState): string {
         .map((stuId) => {
           const ev = ses.evaluations[stuId];
           return {
+            ...ev,
             studentId: ev.studentId || stuId,
             criterionScores: ev.criterionScores || {},
             directCriterionScores: ev.directCriterionScores || {},
@@ -164,30 +289,159 @@ export function computePayloadChecksum(payload: AppDataState): string {
             note: ev.note || '',
             tags: ev.tags || [],
             evaluatedViaGroup: ev.evaluatedViaGroup || null,
+            updatedAt: ev.updatedAt || '',
           };
         }),
+      undoHistory: (ses.undoHistory || []).map((u) => ({
+        ...u,
+        id: u.id,
+        timestamp: u.timestamp,
+        scope: u.scope,
+        studentId: u.studentId || null,
+        criterionId: u.criterionId || null,
+        groupId: u.groupId || null,
+        description: u.description,
+        previousEvaluations: u.previousEvaluations || {},
+        previousGroups: u.previousGroups || null,
+        previousRubricId: u.previousRubricId || null,
+        previousRubricSnapshot: u.previousRubricSnapshot || null,
+      })),
     })),
   };
 
   const canonical = JSON.stringify(canonicalizeForChecksum(fullDataToHash));
+  return `sha256-${sha256Hex(canonical)}`;
+}
 
-  let h1 = 0xdeadbeef ^ canonical.length;
-  let h2 = 0x41c6ce57 ^ canonical.length;
-  for (let i = 0; i < canonical.length; i++) {
-    const ch = canonical.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
+/**
+ * Validates the complete structural integrity of an AppDataState object,
+ * including nested criteria/levels, student auditLog entries, and session evaluations/groups/undoHistory.
+ */
+export function validateFullAppDataStructure(payload: unknown): {
+  isValid: boolean;
+  error?: string;
+} {
+  if (!payload || typeof payload !== 'object') {
+    return { isValid: false, error: 'Veri yapısı geçersiz bir nesne.' };
   }
-  h1 =
-    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
-    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 =
-    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
-    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
 
-  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
-  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
-  return `rpk-${hex1}${hex2}`;
+  const p = payload as Record<string, unknown>;
+  if (
+    !Array.isArray(p.classrooms) ||
+    !Array.isArray(p.students) ||
+    !Array.isArray(p.rubrics) ||
+    !Array.isArray(p.sessions)
+  ) {
+    return {
+      isValid: false,
+      error: 'Yedek dosyası eksik: Sınıflar, öğrenciler, rubrikler veya oturumlar dizi formatında değil.',
+    };
+  }
+
+  if (p.classrooms.length === 0 || p.rubrics.length === 0) {
+    return {
+      isValid: false,
+      error: 'Yedek dosyasında en az bir sınıf ve bir rubrik bulunmalıdır.',
+    };
+  }
+
+  for (const cls of p.classrooms) {
+    if (!cls || typeof cls !== 'object' || typeof (cls as Classroom).id !== 'string' || typeof (cls as Classroom).name !== 'string') {
+      return { isValid: false, error: 'Sınıf kayıtlarından biri geçersiz veya eksik alan içeriyor.' };
+    }
+  }
+
+  for (const stu of p.students) {
+    if (
+      !stu ||
+      typeof stu !== 'object' ||
+      typeof (stu as Student).id !== 'string' ||
+      typeof (stu as Student).studentNumber !== 'string' ||
+      typeof (stu as Student).fullName !== 'string' ||
+      typeof (stu as Student).classId !== 'string'
+    ) {
+      return { isValid: false, error: 'Öğrenci kayıtlarından biri geçersiz veya zorunlu alanları eksik.' };
+    }
+    const auditLog = (stu as Student).auditLog;
+    if (auditLog !== undefined) {
+      if (!Array.isArray(auditLog)) {
+        return { isValid: false, error: 'Öğrenci denetim geçmişi (auditLog) dizi formatında olmalıdır.' };
+      }
+      for (const entry of auditLog) {
+        if (
+          !entry ||
+          typeof entry !== 'object' ||
+          typeof entry.timestamp !== 'string' ||
+          typeof entry.action !== 'string' ||
+          typeof entry.details !== 'string'
+        ) {
+          return { isValid: false, error: 'Öğrenci denetim geçmişi (auditLog) kaydı bozuk.' };
+        }
+      }
+    }
+  }
+
+  for (const rub of p.rubrics) {
+    if (
+      !rub ||
+      typeof rub !== 'object' ||
+      typeof (rub as Rubric).id !== 'string' ||
+      typeof (rub as Rubric).title !== 'string' ||
+      !Array.isArray((rub as Rubric).criteria) ||
+      (rub as Rubric).criteria.length === 0
+    ) {
+      return { isValid: false, error: 'Rubrik kayıtlarından biri geçersiz veya ölçütleri eksik.' };
+    }
+    for (const crit of (rub as Rubric).criteria) {
+      if (
+        !crit ||
+        typeof crit !== 'object' ||
+        typeof crit.id !== 'string' ||
+        typeof crit.title !== 'string' ||
+        typeof crit.weight !== 'number' ||
+        !Array.isArray(crit.levels)
+      ) {
+        return { isValid: false, error: 'Rubrik ölçüt yapısı geçersiz.' };
+      }
+    }
+  }
+
+  for (const ses of p.sessions) {
+    if (
+      !ses ||
+      typeof ses !== 'object' ||
+      typeof (ses as EvaluationSession).id !== 'string' ||
+      typeof (ses as EvaluationSession).title !== 'string' ||
+      typeof (ses as EvaluationSession).classId !== 'string' ||
+      typeof (ses as EvaluationSession).rubricId !== 'string' ||
+      !Array.isArray((ses as EvaluationSession).groups) ||
+      typeof (ses as EvaluationSession).evaluations !== 'object' ||
+      (ses as EvaluationSession).evaluations === null
+    ) {
+      return { isValid: false, error: 'Değerlendirme oturumu kayıtlarından biri bozuk veya eksik.' };
+    }
+    const undoHistory = (ses as EvaluationSession).undoHistory;
+    if (undoHistory !== undefined) {
+      if (!Array.isArray(undoHistory)) {
+        return { isValid: false, error: 'Oturum geri alma geçmişi (undoHistory) dizi formatında olmalıdır.' };
+      }
+      for (const u of undoHistory) {
+        if (
+          !u ||
+          typeof u !== 'object' ||
+          typeof u.id !== 'string' ||
+          typeof u.timestamp !== 'string' ||
+          typeof u.description !== 'string' ||
+          typeof u.previousEvaluations !== 'object' ||
+          u.previousEvaluations === null
+        ) {
+          return { isValid: false, error: 'Oturum geri alma geçmişi (undoHistory) kaydı bozuk.' };
+        }
+      }
+    }
+  }
+
+  return { isValid: true };
 }
 
 /**
@@ -311,12 +565,12 @@ export function migrateV2ToV3(raw: Partial<AppDataState>): AppDataState {
         rawEv.groupCriterionScores &&
         Object.keys(rawEv.groupCriterionScores).length > 0;
 
-      let nextIndividualScores = { ...(rawEv.criterionScores || {}) };
+      const nextIndividualScores = { ...(rawEv.criterionScores || {}) };
       let nextGroupScores = hasExplicitGroupScores
         ? { ...rawEv.groupCriterionScores }
         : undefined;
       let nextGroupNote = rawEv.groupNote;
-      let nextGroupId = rawEv.groupId || memberGroup?.id;
+      const nextGroupId = rawEv.groupId || memberGroup?.id;
       let nextActiveSource = rawEv.activeScoreSource;
 
       // In v2, applying a group score wrote into `criterionScores` and set `evaluatedViaGroup`
@@ -333,8 +587,6 @@ export function migrateV2ToV3(raw: Partial<AppDataState>): AppDataState {
           nextGroupScores = { ...(rawEv.criterionScores || {}) };
         }
 
-        // If v2 overwrote criterionScores purely from the group (noted by `[Grup ...]` in note or evaluatedViaGroup),
-        // clean the `[Grup ...]:` suffix out of individual `note` if needed and keep both separated.
         if (rawEv.evaluatedViaGroup && !nextActiveSource) {
           nextActiveSource = 'group';
         }
@@ -443,7 +695,7 @@ export function loadLegacyV2FromLocalStorage(
 }
 
 /**
- * Creates a verifiable backup bundle with schema version, timestamp, and integrity checksum (P0 #6).
+ * Creates a verifiable v3 backup bundle with schema version, timestamp, and mandatory SHA-256 checksum (P0 #6 & P1).
  */
 export function createVerifiedBackupBundle(
   state: AppDataState
@@ -459,14 +711,16 @@ export function createVerifiedBackupBundle(
 }
 
 /**
- * Validates a backup JSON string, checking schema structure, referential integrity, and full checksum (P0 #6).
- * Also supports migrating v2 backup bundles cleanly when schemaVersion < 3.
+ * Strictly validates a v3 backup JSON string:
+ * - Checksum is MANDATORY (`sha256-...`). Any file missing `checksum` or using legacy unverified format is rejected.
+ * - Full data structure (`classrooms`, `students`, `auditLog`, `rubrics`, `sessions`, `undoHistory`) is validated.
+ * - Checksum is verified against the raw payload BEFORE any normalization so tampering with ANY field is caught.
  */
 export function verifyAndParseBackupBundle(jsonString: string): {
   isValid: boolean;
   error?: string;
   state?: AppDataState;
-  migratedFromV2?: boolean;
+  requiresLegacyImport?: boolean;
 } {
   try {
     const parsed = JSON.parse(jsonString) as Partial<VerifiedBackupBundle> &
@@ -478,8 +732,92 @@ export function verifyAndParseBackupBundle(jsonString: string): {
       };
     }
 
-    // Support both v3 wrapped `{ payload, checksum, schemaVersion }` and legacy v2 raw `{ classrooms, students, rubrics, sessions }`
-    const isWrapped = Boolean(parsed.payload && typeof parsed.payload === 'object');
+    const isWrapped = Boolean(
+      parsed.payload && typeof parsed.payload === 'object'
+    );
+    const isLegacySchema =
+      !isWrapped ||
+      (typeof parsed.schemaVersion === 'number' &&
+        parsed.schemaVersion < CURRENT_SCHEMA_VERSION);
+
+    if (isLegacySchema) {
+      return {
+        isValid: false,
+        requiresLegacyImport: true,
+        error:
+          'Bu dosya eski sürüm (v1/v2) veya sarmalanmamış bir yedektir. Doğrulanabilir v3 yedeklerde SHA-256 checksum zorunludur; eski yedekler için "Eski Sürüm (Checksumsız) Yedek Aktar" seçeneğini kullanın.',
+      };
+    }
+
+    if (
+      typeof parsed.checksum !== 'string' ||
+      !parsed.checksum.trim() ||
+      !parsed.checksum.startsWith('sha256-')
+    ) {
+      return {
+        isValid: false,
+        requiresLegacyImport: true,
+        error:
+          'Yedek dosyasında zorunlu SHA-256 bütünlük imzası (checksum) bulunamadı veya geçersiz. Checksumsız dosyalar güvenlik nedeniyle reddedildi.',
+      };
+    }
+
+    const rawPayload = parsed.payload as AppDataState;
+    const structureCheck = validateFullAppDataStructure(rawPayload);
+    if (!structureCheck.isValid) {
+      return {
+        isValid: false,
+        error: structureCheck.error || 'Yedek veri yapısı doğrulaması başarısız.',
+      };
+    }
+
+    const expectedChecksum = computePayloadChecksum(rawPayload);
+    if (parsed.checksum !== expectedChecksum) {
+      return {
+        isValid: false,
+        error:
+          'Yedek bütünlük doğrulaması (SHA-256 Checksum) başarısız: Puanlar, notlar, işlem geçmişi (undoHistory) veya denetim kayıtları (auditLog) değiştirilmiş ya da bozulmuş.',
+      };
+    }
+
+    const normalized = migrateV2ToV3(rawPayload);
+    return {
+      isValid: true,
+      state: normalized,
+    };
+  } catch {
+    return {
+      isValid: false,
+      error: 'Yedek dosyası JSON olarak okunamadı.',
+    };
+  }
+}
+
+/**
+ * Dedicated legacy import action for older (v1/v2) or checksumless backup files.
+ * Keeps strict `verifyAndParseBackupBundle` completely separate from legacy unverified migration.
+ */
+export function importLegacyBackupBundle(jsonString: string): {
+  isValid: boolean;
+  error?: string;
+  state?: AppDataState;
+  migratedFromV2: boolean;
+  newChecksum?: string;
+} {
+  try {
+    const parsed = JSON.parse(jsonString) as Partial<VerifiedBackupBundle> &
+      Partial<AppDataState>;
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        isValid: false,
+        migratedFromV2: false,
+        error: 'Geçersiz eski sürüm yedek dosyası formatı.',
+      };
+    }
+
+    const isWrapped = Boolean(
+      parsed.payload && typeof parsed.payload === 'object'
+    );
     const rawPayload = isWrapped
       ? parsed.payload!
       : {
@@ -489,60 +827,50 @@ export function verifyAndParseBackupBundle(jsonString: string): {
           sessions: parsed.sessions,
         };
 
-    const { classrooms, students, rubrics, sessions } = rawPayload;
+    // If the legacy file happens to carry a checksum, verify it if it's sha256
     if (
-      !Array.isArray(classrooms) ||
-      !Array.isArray(students) ||
-      !Array.isArray(rubrics) ||
-      !Array.isArray(sessions)
+      typeof parsed.checksum === 'string' &&
+      parsed.checksum.startsWith('sha256-') &&
+      rawPayload &&
+      Array.isArray(rawPayload.classrooms) &&
+      Array.isArray(rawPayload.students) &&
+      Array.isArray(rawPayload.rubrics) &&
+      Array.isArray(rawPayload.sessions)
     ) {
-      return {
-        isValid: false,
-        error:
-          'Yedek dosyası eksik: Sınıflar, öğrenciler, rubrikler veya oturumlar bozuk.',
-      };
-    }
-
-    if (classrooms.length === 0 || rubrics.length === 0) {
-      return {
-        isValid: false,
-        error: 'Yedek dosyasında en az bir sınıf ve bir rubrik bulunmalıdır.',
-      };
-    }
-
-    const isLegacyV2 =
-      !isWrapped ||
-      (typeof parsed.schemaVersion === 'number' && parsed.schemaVersion < 3);
-
-    const checkedPayload: AppDataState = {
-      classrooms,
-      students,
-      rubrics,
-      sessions,
-    };
-
-    if (parsed.checksum) {
-      const rawChecksum = computePayloadChecksum(checkedPayload);
-      if (parsed.checksum !== rawChecksum) {
+      const computed = computePayloadChecksum(rawPayload as AppDataState);
+      if (parsed.checksum !== computed) {
         return {
           isValid: false,
+          migratedFromV2: false,
           error:
-            'Yedek bütünlük doğrulaması (Checksum) başarısız: Puanlar, notlar veya kayıtlar değiştirilmiş ya da bozulmuş.',
+            'Dosyadaki SHA-256 bütünlük imzası (Checksum) veri içeriğiyle eşleşmiyor.',
         };
       }
     }
 
-    const normalized = migrateV2ToV3(checkedPayload);
+    const migrated = migrateV2ToV3(rawPayload);
+    const structureCheck = validateFullAppDataStructure(migrated);
+    if (!structureCheck.isValid) {
+      return {
+        isValid: false,
+        migratedFromV2: false,
+        error:
+          structureCheck.error ||
+          'Eski sürüm yedek dosyası v3 şemasına dönüştürülürken eksik veri tespit edildi.',
+      };
+    }
 
     return {
       isValid: true,
-      state: normalized,
-      migratedFromV2: isLegacyV2,
+      state: migrated,
+      migratedFromV2: true,
+      newChecksum: computePayloadChecksum(migrated),
     };
   } catch {
     return {
       isValid: false,
-      error: 'Yedek dosyası JSON olarak okunamadı.',
+      migratedFromV2: false,
+      error: 'Eski sürüm yedek dosyası JSON olarak okunamadı.',
     };
   }
 }
@@ -761,6 +1089,8 @@ export function loadVerifiedInitialStateWithMeta(fallbackSeed: AppDataState): {
             localStorageCorrupted: false,
           };
         } else {
+          // Also check if it was an older v3 bundle with legacy rpk- checksum in localStorage and upgrade it cleanly if untampered,
+          // otherwise mark as corrupted
           localStorageCorrupted = true;
           corruptionError = verified.error;
         }

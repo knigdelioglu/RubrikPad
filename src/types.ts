@@ -85,6 +85,7 @@ export interface EvaluationActionHistoryEntry {
   scope: 'criterion' | 'student' | 'session' | 'group';
   studentId?: string;
   criterionId?: string;
+  groupId?: string;
   description: string;
   previousEvaluations: Record<string, StudentEvaluation>;
   previousGroups?: StudentGroup[];
