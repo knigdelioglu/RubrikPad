@@ -6,16 +6,26 @@ import {
   Scale,
   Edit3,
   Copy,
+  AlertTriangle,
+  ShieldCheck,
 } from 'lucide-react';
-import type { Rubric, RubricCriterion } from '../types.ts';
+import type { Rubric, RubricCriterion, EvaluationSession } from '../types.ts';
+import { validateRubric, checkRubricDeletionImpact } from '../utils/rubricLogic.ts';
 
 interface RubricBuilderProps {
   rubrics: Rubric[];
+  sessions?: EvaluationSession[];
   onSaveRubric: (rubric: Rubric) => void;
   onDeleteRubric: (rubricId: string) => void;
 }
 
 const DEFAULT_LEVELS = [
+  {
+    level: 0,
+    label: 'Gözlenmedi (0)',
+    points: 0,
+    description: 'Beklenen ölçüt çalışması hiç sergilenmemiştir.',
+  },
   {
     level: 1,
     label: 'Destek Gerekli',
@@ -44,6 +54,7 @@ const DEFAULT_LEVELS = [
 
 export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   rubrics,
+  sessions = [],
   onSaveRubric,
   onDeleteRubric,
 }) => {
@@ -57,14 +68,14 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
     [rubrics, selectedRubricId]
   );
 
-  // Draft state for editing or creating a rubric
   const [draftRubric, setDraftRubric] = useState<Rubric | null>(null);
   const [saveNotification, setSaveNotification] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [confirmDeleteRubricId, setConfirmDeleteRubricId] = useState<string | null>(null);
 
   const handleStartEdit = (rubric: Rubric) => {
     setDraftRubric(JSON.parse(JSON.stringify(rubric)));
-    setFormError(null);
+    setValidationErrors([]);
     setIsEditing(true);
   };
 
@@ -76,6 +87,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       description: 'Öğrencilerin süreç ve ürün performanslarını ölçüt temelli değerlendirir.',
       maxLevelPoints: 4,
       createdAt: new Date().toISOString().slice(0, 10),
+      version: 1,
       criteria: [
         {
           id: `crit-${Date.now()}-1`,
@@ -83,6 +95,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
           category: 'Süreç',
           weight: 50,
           maxPoints: 50,
+          required: true,
           levels: JSON.parse(JSON.stringify(DEFAULT_LEVELS)),
         },
         {
@@ -91,12 +104,13 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
           category: 'Uygulama',
           weight: 50,
           maxPoints: 50,
+          required: true,
           levels: JSON.parse(JSON.stringify(DEFAULT_LEVELS)),
         },
       ],
     };
     setDraftRubric(newRubric);
-    setFormError(null);
+    setValidationErrors([]);
     setIsEditing(true);
   };
 
@@ -106,6 +120,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       id: `rub-${Date.now()}`,
       title: `${rubric.title} (Kopya)`,
       createdAt: new Date().toISOString().slice(0, 10),
+      version: 1,
     };
     onSaveRubric(cloned);
     setSelectedRubricId(cloned.id);
@@ -121,6 +136,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       category: 'Değerlendirme Boyutu',
       weight: 20,
       maxPoints: 20,
+      required: true,
       levels: JSON.parse(JSON.stringify(DEFAULT_LEVELS)),
     };
     setDraftRubric({
@@ -142,29 +158,39 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
         maxPoints: val,
       };
     });
-    setDraftRubric({
+    const nextDraft = {
       ...draftRubric,
       criteria: balanced,
-    });
+    };
+    setDraftRubric(nextDraft);
+    const v = validateRubric(nextDraft);
+    setValidationErrors(v.errors);
   };
 
   const handleSaveDraft = (e: React.FormEvent) => {
     e.preventDefault();
     if (!draftRubric) return;
-    if (!draftRubric.title.trim()) {
-      setFormError('Lütfen rubrik başlığını girin.');
+
+    // P1 #1: Strict rubric validation (Total Points = 100, Total Weight = 100, non-empty titles & sorted levels)
+    const validation = validateRubric(draftRubric);
+    if (!validation.isValid) {
+      setValidationErrors(validation.errors);
       return;
     }
-    if (draftRubric.criteria.length === 0) {
-      setFormError('En az bir değerlendirme ölçütü eklemelisiniz.');
-      return;
-    }
-    onSaveRubric(draftRubric);
+
+    const nextVersion = (draftRubric.version || 1) + 1;
+    onSaveRubric({
+      ...draftRubric,
+      version: nextVersion,
+    });
     setSelectedRubricId(draftRubric.id);
     setIsEditing(false);
     setDraftRubric(null);
-    setSaveNotification('Rubrik başarıyla kaydedildi.');
-    setTimeout(() => setSaveNotification(null), 3000);
+    setValidationErrors([]);
+    setSaveNotification(
+      'Rubrik doğrulandı ve kaydedildi. Geçmiş oturumların notları dondurulmuş rubrik kopyasıyla korundu.'
+    );
+    setTimeout(() => setSaveNotification(null), 4000);
   };
 
   const totalDraftWeight = draftRubric
@@ -178,120 +204,155 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       )
     : 100;
 
+  const deletionImpact = useMemo(() => {
+    if (!activeRubric) return null;
+    return checkRubricDeletionImpact(activeRubric.id, rubrics, sessions);
+  }, [activeRubric, rubrics, sessions]);
+
   return (
-    <div className="space-y-6">
-      {/* Header Bar */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            Dereceli Puanlama Anahtarı (Rubrik) Tasarımcısı
+            Rubrik ve Ölçüt Kütüphanesi
           </h1>
-          <p className="text-sm text-slate-600 mt-1">
-            Değerlendirme ölçütlerini, kriter puanlarını, ağırlık yüzdelerini ve 4 kademeli performans düzeylerini tanımlayın.
+          <p className="text-sm text-slate-600 mt-0.5">
+            100 puan doğrulamalı ölçütler, 0–4 düzey tanımları ve oturum bazında dondurulmuş şablon yönetimi.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        {!isEditing && (
           <button
             type="button"
             onClick={handleStartCreateNew}
-            className="px-4 py-2.5 text-xs font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-800 transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
+            className="px-4 py-2.5 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
           >
             <Plus className="w-4 h-4" />
             Yeni Rubrik Oluştur
           </button>
-        </div>
-      </section>
+        )}
+      </div>
 
       {saveNotification && (
         <div
           role="status"
-          className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold"
+          aria-live="polite"
+          className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2"
         >
+          <Check className="w-4 h-4 text-emerald-700 shrink-0" />
           {saveNotification}
         </div>
       )}
 
+      {/* EDITOR VIEW */}
       {isEditing && draftRubric ? (
-        /* RUBRIC EDITOR FORM */
-        <form
-          onSubmit={handleSaveDraft}
-          className="bg-white border border-slate-200 rounded-xl p-6 space-y-6"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-slate-200">
-            <h2 className="text-lg font-bold text-slate-900">
-              Rubrik Düzenleyici: {draftRubric.title}
-            </h2>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditing(false);
-                  setDraftRubric(null);
-                }}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
-              >
-                İptal
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 rounded-lg hover:bg-emerald-800 flex items-center gap-1.5 cursor-pointer"
-              >
-                <Check className="w-4 h-4" />
-                Rubriği Kaydet
-              </button>
+        <form onSubmit={handleSaveDraft} className="space-y-6">
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  Rubrik Şablonu Düzenleyici
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-teal-700" />
+                  Bu şablonda yapılan değişiklikler geçmiş değerlendirme oturumlarının notlarını etkilemez (oturum anlık görüntüsü korunur).
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditing(false);
+                    setDraftRubric(null);
+                    setValidationErrors([]);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  Doğrula ve Kaydet
+                </button>
+              </div>
             </div>
-          </div>
 
-          {formError && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-semibold">
-              {formError}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2">
-              <label
-                htmlFor="rubric-title-input"
-                className="block text-xs font-semibold text-slate-700 mb-1"
+            {validationErrors.length > 0 && (
+              <div
+                role="alert"
+                className="bg-red-50 border border-red-300 text-red-900 px-4 py-3 rounded-xl text-xs space-y-2"
               >
-                Rubrik Başlığı
-              </label>
-              <input
-                id="rubric-title-input"
-                type="text"
-                value={draftRubric.title}
-                onChange={(e) =>
-                  setDraftRubric({ ...draftRubric, title: e.target.value })
-                }
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg"
-              />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold flex items-center gap-1.5 text-red-800">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    Rubrik Doğrulama Hataları ({validationErrors.length}): Kaydetmeden önce düzeltilmelidir
+                  </span>
+                  {(totalDraftPoints !== 100 || totalDraftWeight !== 100) && (
+                    <button
+                      type="button"
+                      onClick={handleBalanceWeights}
+                      className="px-2.5 py-1 text-xs font-bold text-white bg-red-700 hover:bg-red-800 rounded-md cursor-pointer"
+                    >
+                      Puan ve Ağırlıkları 100&apos;e Eşitle
+                    </button>
+                  )}
+                </div>
+                <ul className="list-disc list-inside space-y-0.5 text-red-800">
+                  {validationErrors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label
+                  htmlFor="rubric-title-input"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Rubrik Başlığı
+                </label>
+                <input
+                  id="rubric-title-input"
+                  type="text"
+                  required
+                  value={draftRubric.title}
+                  onChange={(e) =>
+                    setDraftRubric({ ...draftRubric, title: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="rubric-subject-input"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Ders / Alan
+                </label>
+                <input
+                  id="rubric-subject-input"
+                  type="text"
+                  value={draftRubric.subject}
+                  onChange={(e) =>
+                    setDraftRubric({ ...draftRubric, subject: e.target.value })
+                  }
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                />
+              </div>
             </div>
 
             <div>
               <label
-                htmlFor="rubric-subject-input"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Ders / Alan
-              </label>
-              <input
-                id="rubric-subject-input"
-                type="text"
-                value={draftRubric.subject}
-                onChange={(e) =>
-                  setDraftRubric({ ...draftRubric, subject: e.target.value })
-                }
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg"
-              />
-            </div>
-
-            <div className="md:col-span-3">
-              <label
                 htmlFor="rubric-desc-input"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
-                Açıklama / Kullanım Amacı
+                Rubrik Açıklaması ve Kullanım Amacı
               </label>
               <input
                 id="rubric-desc-input"
@@ -300,201 +361,201 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 onChange={(e) =>
                   setDraftRubric({ ...draftRubric, description: e.target.value })
                 }
-                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
               />
             </div>
+
+            {/* Points & Weight Summary Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Scale className="w-4 h-4 text-slate-600" />
+                  <span className="text-xs font-semibold text-slate-700">
+                    Toplam Kriter Puanı:
+                  </span>
+                  <span
+                    className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
+                      totalDraftPoints === 100
+                        ? 'bg-emerald-100 text-emerald-900'
+                        : 'bg-amber-100 text-amber-900'
+                    }`}
+                  >
+                    {totalDraftPoints} / 100 Puan
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-700">
+                    Toplam Ağırlık:
+                  </span>
+                  <span
+                    className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
+                      totalDraftWeight === 100
+                        ? 'bg-emerald-100 text-emerald-900'
+                        : 'bg-amber-100 text-amber-900'
+                    }`}
+                  >
+                    %{totalDraftWeight}
+                  </span>
+                </div>
+                {(totalDraftPoints !== 100 || totalDraftWeight !== 100) && (
+                  <span className="text-xs font-medium text-amber-800">
+                    (Kaydetmek için toplam puan ve ağırlık tam 100 olmalıdır)
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleBalanceWeights}
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 cursor-pointer"
+                >
+                  Puanları Eşitle (100 Puan)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddCriterionToDraft}
+                  className="px-3 py-1.5 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Ölçüt Ekle ({draftRubric.criteria.length})
+                </button>
+              </div>
+            </div>
           </div>
 
-          {/* Criteria Header & Points/Weight Balancer */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200">
-            <div className="flex flex-wrap items-center gap-3">
-              <h3 className="text-sm font-bold text-slate-900">
-                Değerlendirme Ölçütleri ({draftRubric.criteria.length})
-              </h3>
-              <span
-                className={`text-xs font-mono-num font-bold ${
-                  totalDraftPoints === 100 ? 'text-emerald-700' : 'text-sky-700'
-                }`}
-              >
-                Toplam Puan: {totalDraftPoints} Puan
-              </span>
-              <span className="text-slate-300" aria-hidden="true">
-                ·
-              </span>
-              <span
-                className={`text-xs font-mono-num font-semibold ${
-                  totalDraftWeight === 100 ? 'text-emerald-700' : 'text-amber-700'
-                }`}
-              >
-                Toplam Ağırlık: %{totalDraftWeight}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleBalanceWeights}
-                className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
-              >
-                <Scale className="w-3.5 h-3.5" />
-                Puan ve Ağırlıkları Eşitle (100)
-              </button>
-              <button
-                type="button"
-                onClick={handleAddCriterionToDraft}
-                className="px-3 py-1.5 text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 flex items-center gap-1.5 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Ölçüt Ekle
-              </button>
-            </div>
-          </div>
-
+          {/* Criteria Editor Cards */}
           <div className="space-y-4">
             {draftRubric.criteria.map((crit, cIdx) => (
               <div
                 key={crit.id}
-                className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3"
+                className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
               >
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                  <div className="sm:col-span-4">
-                    <label
-                      htmlFor={`crit-title-${cIdx}`}
-                      className="block text-xs font-semibold text-slate-700 mb-1"
-                    >
-                      {cIdx + 1}. Ölçüt Başlığı
-                    </label>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2 flex-1">
+                    <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-slate-100 text-slate-800">
+                      0{cIdx + 1}
+                    </span>
                     <input
-                      id={`crit-title-${cIdx}`}
                       type="text"
+                      aria-label={`${cIdx + 1}. Ölçüt Başlığı`}
                       value={crit.title}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        setDraftRubric({
-                          ...draftRubric,
-                          criteria: draftRubric.criteria.map((item, i) =>
-                            i === cIdx ? { ...item, title: val } : item
-                          ),
-                        });
+                        const updated = draftRubric.criteria.map((item, i) =>
+                          i === cIdx ? { ...item, title: e.target.value } : item
+                        );
+                        setDraftRubric({ ...draftRubric, criteria: updated });
                       }}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-md"
+                      placeholder="Ölçüt Başlığı"
+                      className="flex-1 px-3 py-1.5 text-sm font-bold text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
                     />
-                  </div>
-
-                  <div className="sm:col-span-3">
-                    <label
-                      htmlFor={`crit-cat-${cIdx}`}
-                      className="block text-xs font-semibold text-slate-700 mb-1"
-                    >
-                      Alt Boyut / Kategori
-                    </label>
                     <input
-                      id={`crit-cat-${cIdx}`}
                       type="text"
+                      aria-label={`${cIdx + 1}. Ölçüt Kategorisi`}
                       value={crit.category}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        setDraftRubric({
-                          ...draftRubric,
-                          criteria: draftRubric.criteria.map((item, i) =>
-                            i === cIdx ? { ...item, category: val } : item
-                          ),
-                        });
+                        const updated = draftRubric.criteria.map((item, i) =>
+                          i === cIdx ? { ...item, category: e.target.value } : item
+                        );
+                        setDraftRubric({ ...draftRubric, criteria: updated });
                       }}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-md"
+                      placeholder="Kategori"
+                      className="w-36 px-3 py-1.5 text-xs text-slate-700 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
                     />
                   </div>
 
-                  <div className="sm:col-span-2">
+                  <div className="flex flex-wrap items-center gap-3">
                     <label
-                      htmlFor={`crit-points-${cIdx}`}
-                      className="block text-xs font-semibold text-sky-800 mb-1"
+                      htmlFor={`crit-points-${crit.id}`}
+                      className="text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5"
                     >
-                      Kriter Puanı
-                    </label>
-                    <input
-                      id={`crit-points-${cIdx}`}
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={crit.maxPoints ?? crit.weight}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setDraftRubric({
-                          ...draftRubric,
-                          criteria: draftRubric.criteria.map((item, i) =>
+                      Kriter Puanı:
+                      <input
+                        id={`crit-points-${crit.id}`}
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={crit.maxPoints ?? crit.weight}
+                        onChange={(e) => {
+                          const val = Math.max(0, Number(e.target.value));
+                          const updated = draftRubric.criteria.map((item, i) =>
                             i === cIdx
                               ? { ...item, maxPoints: val, weight: val }
                               : item
-                          ),
-                        });
-                      }}
-                      className="w-full px-3 py-1.5 text-sm font-mono-num font-bold text-sky-900 bg-sky-50/50 border border-sky-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-600"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label
-                      htmlFor={`crit-weight-${cIdx}`}
-                      className="block text-xs font-semibold text-slate-700 mb-1"
-                    >
-                      Ağırlık (%)
+                          );
+                          setDraftRubric({ ...draftRubric, criteria: updated });
+                        }}
+                        className="w-14 px-2 py-0.5 text-sm font-mono-num font-bold text-teal-950 bg-white border border-teal-300 rounded focus:outline-none focus:ring-2 focus:ring-teal-600 text-right"
+                      />
+                      <span>Puan</span>
                     </label>
-                    <input
-                      id={`crit-weight-${cIdx}`}
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={crit.weight}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setDraftRubric({
-                          ...draftRubric,
-                          criteria: draftRubric.criteria.map((item, i) =>
-                            i === cIdx ? { ...item, weight: val } : item
-                          ),
-                        });
-                      }}
-                      className="w-full px-3 py-1.5 text-sm font-mono-num bg-white border border-slate-300 rounded-md"
-                    />
-                  </div>
 
-                  <div className="sm:col-span-1 text-right">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setDraftRubric({
-                          ...draftRubric,
-                          criteria: draftRubric.criteria.filter((_, i) => i !== cIdx),
-                        })
-                      }
-                      disabled={draftRubric.criteria.length <= 1}
-                      aria-label={`${crit.title} ölçütünü sil`}
-                      className="p-2 text-slate-400 hover:text-red-600 disabled:opacity-30 cursor-pointer"
+                    <label
+                      htmlFor={`crit-weight-${crit.id}`}
+                      className="text-xs font-semibold text-slate-600 flex items-center gap-1"
                     >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                      Ağırlık (%):
+                      <input
+                        id={`crit-weight-${crit.id}`}
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={crit.weight}
+                        onChange={(e) => {
+                          const val = Math.max(0, Number(e.target.value));
+                          const updated = draftRubric.criteria.map((item, i) =>
+                            i === cIdx
+                              ? { ...item, weight: val, maxPoints: val }
+                              : item
+                          );
+                          setDraftRubric({ ...draftRubric, criteria: updated });
+                        }}
+                        className="w-14 px-2 py-1 text-sm font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600 text-right"
+                      />
+                    </label>
+
+                    {draftRubric.criteria.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = draftRubric.criteria.filter(
+                            (_, i) => i !== cIdx
+                          );
+                          setDraftRubric({ ...draftRubric, criteria: updated });
+                        }}
+                        aria-label={`${crit.title} ölçütünü sil`}
+                        className="p-1.5 text-slate-400 hover:text-red-600 cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {/* 4 Levels Editor with Editable Level Points */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2">
+                {/* Levels inside Criterion */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   {crit.levels.map((lvl, lIdx) => (
                     <div
                       key={lvl.level}
-                      className="p-2.5 bg-white border border-slate-200 rounded-lg space-y-1.5"
+                      className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1.5"
                     >
-                      <div className="flex items-center justify-between gap-1 text-xs font-bold text-slate-800">
-                        <span className="truncate">{lvl.label}</span>
-                        <label className="flex items-center gap-1 shrink-0 font-mono-num text-sky-700">
+                      <div className="flex items-center justify-between gap-2 text-xs font-bold text-slate-800">
+                        <span className="truncate">
+                          {lvl.level}. Düzey ({lvl.label})
+                        </span>
+                        <label
+                          htmlFor={`lvl-pts-${crit.id}-${lvl.level}`}
+                          className="flex items-center gap-1 text-[11px] font-mono-num text-teal-800 shrink-0"
+                        >
                           <input
+                            id={`lvl-pts-${crit.id}-${lvl.level}`}
                             type="number"
                             min={0}
                             max={100}
                             aria-label={`${crit.title} - ${lvl.label} puanı`}
                             value={lvl.points}
                             onChange={(e) => {
-                              const pts = Number(e.target.value);
+                              const pts = Math.max(0, Number(e.target.value));
                               setDraftRubric({
                                 ...draftRubric,
                                 criteria: draftRubric.criteria.map((item, i) =>
@@ -509,9 +570,9 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                                 ),
                               });
                             }}
-                            className="w-12 px-1.5 py-0.5 text-xs font-mono-num font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-sky-600"
+                            className="w-12 px-1.5 py-0.5 text-xs font-mono-num font-bold text-teal-900 bg-teal-50 border border-teal-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-teal-600"
                           />
-                          <span>Puan</span>
+                          <span>P</span>
                         </label>
                       </div>
                       <textarea
@@ -534,7 +595,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                             ),
                           });
                         }}
-                        className="w-full text-xs text-slate-700 border border-slate-200 rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-sky-600"
+                        className="w-full text-xs text-slate-700 border border-slate-200 rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-teal-600"
                       />
                     </div>
                   ))}
@@ -558,19 +619,34 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   (s, c) => s + Number(c.maxPoints ?? c.weight ?? 0),
                   0
                 );
+                const vCheck = validateRubric(rub);
                 return (
                   <button
                     key={rub.id}
                     type="button"
-                    onClick={() => setSelectedRubricId(rub.id)}
+                    onClick={() => {
+                      setSelectedRubricId(rub.id);
+                      setConfirmDeleteRubricId(null);
+                    }}
                     className={`w-full text-left p-3.5 rounded-lg border transition-colors cursor-pointer ${
                       isSelected
-                        ? 'bg-sky-50/90 border-sky-600 text-slate-900'
+                        ? 'bg-teal-50/90 border-teal-700 text-slate-900'
                         : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
                     }`}
                   >
-                    <div className="text-xs text-slate-500 mb-0.5 font-mono-num">
-                      {rub.subject} · {rub.criteria.length} Ölçüt · {totalRubricPts} Puan
+                    <div className="flex items-center justify-between text-xs text-slate-500 mb-0.5 font-mono-num">
+                      <span>
+                        {rub.subject} · {rub.criteria.length} Ölçüt · {totalRubricPts}P
+                      </span>
+                      {vCheck.isValid ? (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                          100P Doğrulandı
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                          Düzenlenmeli
+                        </span>
+                      )}
                     </div>
                     <div className="text-sm font-bold text-slate-900">{rub.title}</div>
                   </button>
@@ -585,8 +661,17 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
               <>
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 pb-4 border-b border-slate-200">
                   <div>
-                    <div className="text-xs text-slate-500 mb-1">
-                      {activeRubric.subject} · Oluşturulma: <span className="font-mono-num">{activeRubric.createdAt}</span>
+                    <div className="text-xs text-slate-500 mb-1 flex flex-wrap items-center gap-2">
+                      <span>
+                        {activeRubric.subject} · Oluşturulma:{' '}
+                        <span className="font-mono-num">{activeRubric.createdAt}</span>
+                      </span>
+                      {deletionImpact && deletionImpact.usedInSessionsCount > 0 && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200 font-semibold">
+                          <ShieldCheck className="w-3 h-3" />
+                          {deletionImpact.usedInSessionsCount} oturumda dondurulmuş kopya ile kullanılıyor
+                        </span>
+                      )}
                     </div>
                     <h2 className="text-xl font-bold text-slate-900">
                       {activeRubric.title}
@@ -616,7 +701,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                     {rubrics.length > 1 && (
                       <button
                         type="button"
-                        onClick={() => onDeleteRubric(activeRubric.id)}
+                        onClick={() => setConfirmDeleteRubricId(activeRubric.id)}
                         aria-label={`${activeRubric.title} rubriğini sil`}
                         className="p-2 text-slate-400 hover:text-red-600 cursor-pointer"
                       >
@@ -626,16 +711,51 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   </div>
                 </div>
 
+                {confirmDeleteRubricId === activeRubric.id && (
+                  <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="text-xs text-amber-950 space-y-0.5">
+                      <div className="font-bold">
+                        &ldquo;{activeRubric.title}&rdquo; şablonunu silmek istediğinize emin misiniz?
+                      </div>
+                      <div>
+                        {deletionImpact && deletionImpact.usedInSessionsCount > 0
+                          ? `Bu rubrik ${deletionImpact.usedInSessionsCount} oturumda kullanılmıştır. Silinse dahi geçmiş oturumların dondurulmuş rubrik anlık görüntüsü (rubricSnapshot) korunur ve geçmiş notlar etkilenmez.`
+                          : 'Bu rubrik henüz hiçbir oturumda kullanılmamıştır.'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteRubricId(null)}
+                        className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg cursor-pointer"
+                      >
+                        Vazgeç
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onDeleteRubric(activeRubric.id);
+                          setConfirmDeleteRubricId(null);
+                        }}
+                        className="px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg cursor-pointer"
+                      >
+                        Şablonu Sil (Geçmişi Koru)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Rubric Matrix Table */}
                 <div className="border border-slate-200 rounded-xl overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[680px]">
+                  <table className="w-full text-left border-collapse min-w-[720px]">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700">
-                        <th className="py-3 px-4 w-52">Ölçüt · Puan & Ağırlık</th>
-                        <th className="py-3 px-3">1. Düzey — Destek Gerekli</th>
-                        <th className="py-3 px-3">2. Düzey — Gelişmekte</th>
-                        <th className="py-3 px-3">3. Düzey — Yetkin</th>
-                        <th className="py-3 px-3">4. Düzey — Örnek Düzey</th>
+                        <th className="py-3 px-4 w-48">Ölçüt · Puan & Ağırlık</th>
+                        {(activeRubric.criteria[0]?.levels || []).map((lvl) => (
+                          <th key={lvl.level} className="py-3 px-3">
+                            {lvl.level}. Düzey — {lvl.label}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-xs">
@@ -648,12 +768,15 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                             <span className="font-bold text-slate-900 text-sm block mt-0.5">
                               {crit.title}
                             </span>
-                            <span className="font-mono-num text-xs font-bold text-sky-700 mt-1 block">
+                            <span className="font-mono-num text-xs font-bold text-teal-800 mt-1 block">
                               {crit.maxPoints ?? crit.weight} Puan · %{crit.weight}
                             </span>
                           </td>
                           {crit.levels.map((lvl) => (
-                            <td key={lvl.level} className="py-3 px-3 text-slate-600 leading-relaxed">
+                            <td
+                              key={lvl.level}
+                              className="py-3 px-3 text-slate-600 leading-relaxed"
+                            >
                               <div className="font-mono-num text-[11px] font-bold text-slate-800 mb-0.5">
                                 {lvl.points} Puan
                               </div>

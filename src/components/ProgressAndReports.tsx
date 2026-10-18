@@ -1,12 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import {
-  Download,
-  Printer,
   TrendingUp,
+  Download,
+  FileDown,
+  Printer,
+  Award,
+  Calendar,
   FileSpreadsheet,
-  FileText,
-  BarChart3,
-  X,
+  Users,
+  ShieldCheck,
 } from 'lucide-react';
 import type {
   Classroom,
@@ -15,17 +17,22 @@ import type {
   EvaluationSession,
 } from '../types.ts';
 import {
-  calculateWeightedScore,
+  getEffectiveSessionRubric,
+  getStudentEvaluationBreakdown,
   getStudentProgressHistory,
+  getGroupProgressHistory,
   generateSessionCsv,
+  isScoreAssigned,
 } from '../utils/rubricLogic.ts';
+import { downloadSessionPdfFile } from '../utils/pdfGenerator.ts';
 
 interface ProgressAndReportsProps {
   classrooms: Classroom[];
   students: Student[];
   rubrics: Rubric[];
   sessions: EvaluationSession[];
-  initialSelectedStudentId?: string;
+  activeClassId: string;
+  onSelectClass: (id: string) => void;
 }
 
 export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
@@ -33,37 +40,37 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
   students,
   rubrics,
   sessions,
-  initialSelectedStudentId,
+  activeClassId,
+  onSelectClass,
 }) => {
-  const [selectedClassId, setSelectedClassId] = useState<string>(() => {
-    if (initialSelectedStudentId) {
-      const st = students.find((s) => s.id === initialSelectedStudentId);
-      if (st) return st.classId;
-    }
-    return classrooms[0]?.id || '';
-  });
+  const activeClassroom = useMemo(
+    () => classrooms.find((c) => c.id === activeClassId) || classrooms[0],
+    [classrooms, activeClassId]
+  );
 
   const classStudents = useMemo(
     () =>
-      students.filter((s) => s.classId === selectedClassId),
-    [students, selectedClassId]
-  );
-
-  const [selectedStudentId, setSelectedStudentId] = useState<string>(
-    () => initialSelectedStudentId || classStudents[0]?.id || ''
+      students
+        .filter((s) => s.classId === activeClassroom?.id && !s.archived)
+        .sort((a, b) =>
+          a.studentNumber.localeCompare(b.studentNumber, undefined, {
+            numeric: true,
+          })
+        ),
+    [students, activeClassroom]
   );
 
   const classSessions = useMemo(
-    () => sessions.filter((s) => s.classId === selectedClassId),
-    [sessions, selectedClassId]
+    () =>
+      sessions
+        .filter((s) => {
+          const allowed =
+            s.classIds && s.classIds.length > 0 ? s.classIds : [s.classId];
+          return activeClassroom ? allowed.includes(activeClassroom.id) : false;
+        })
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    [sessions, activeClassroom]
   );
-
-  const [selectedSessionId, setSelectedSessionId] = useState<string>(
-    () => classSessions[classSessions.length - 1]?.id || sessions[0]?.id || ''
-  );
-
-  const [isPdfPreviewOpen, setIsPdfPreviewOpen] = useState(false);
-  const [exportFeedback, setExportFeedback] = useState<string | null>(null);
 
   const rubricsById = useMemo(() => {
     const map: Record<string, Rubric> = {};
@@ -71,607 +78,693 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
     return map;
   }, [rubrics]);
 
+  const [selectedStudentId, setSelectedStudentId] = useState<string>(
+    () => classStudents[0]?.id || ''
+  );
+  const [selectedReportSessionId, setSelectedReportSessionId] =
+    useState<string>(
+      () => classSessions[classSessions.length - 1]?.id || ''
+    );
+  const [viewTab, setViewTab] = useState<
+    'longitudinal' | 'group_history' | 'session_table'
+  >('longitudinal');
+  const [exportError, setExportError] = useState<string | null>(null);
+
   const activeStudent = useMemo(
     () =>
       classStudents.find((s) => s.id === selectedStudentId) ||
-      classStudents[0] ||
-      null,
+      classStudents[0],
     [classStudents, selectedStudentId]
   );
 
-  const activeSession = useMemo(
-    () =>
-      classSessions.find((s) => s.id === selectedSessionId) ||
-      classSessions[classSessions.length - 1] ||
-      sessions[0],
-    [classSessions, selectedSessionId, sessions]
-  );
-
-  const activeRubric = useMemo(
-    () => (activeSession ? rubricsById[activeSession.rubricId] || rubrics[0] : rubrics[0]),
-    [activeSession, rubricsById, rubrics]
-  );
-
-  const activeClassroom = useMemo(
-    () => classrooms.find((c) => c.id === selectedClassId) || classrooms[0],
-    [classrooms, selectedClassId]
-  );
-
-  // Longitudinal history for the selected student
   const studentHistory = useMemo(() => {
     if (!activeStudent) return [];
-    return getStudentProgressHistory(activeStudent.id, classSessions, rubricsById);
+    return getStudentProgressHistory(
+      activeStudent.id,
+      classSessions,
+      rubricsById
+    );
   }, [activeStudent, classSessions, rubricsById]);
 
-  const progressDelta = useMemo(() => {
-    if (studentHistory.length < 2) return 0;
-    const first = studentHistory[0].scoreOutOf100;
-    const last = studentHistory[studentHistory.length - 1].scoreOutOf100;
-    return last - first;
-  }, [studentHistory]);
+  const groupHistory = useMemo(() => {
+    if (!activeClassroom) return [];
+    return getGroupProgressHistory(
+      classSessions,
+      rubricsById,
+      activeClassroom.id
+    );
+  }, [classSessions, rubricsById, activeClassroom]);
 
-  // Criterion mastery averages across all sessions for the active student
-  const criterionMastery = useMemo(() => {
-    if (studentHistory.length === 0) return [];
-    const map: Record<string, { sum: number; count: number }> = {};
-    for (const item of studentHistory) {
-      for (const cb of item.criterionBreakdown) {
-        if (!map[cb.criterionTitle]) {
-          map[cb.criterionTitle] = { sum: 0, count: 0 };
-        }
-        map[cb.criterionTitle].sum += cb.scorePercent;
-        map[cb.criterionTitle].count += 1;
-      }
-    }
-    return Object.entries(map).map(([title, data]) => ({
-      title,
-      avgPercent: Math.round(data.sum / data.count),
-    }));
-  }, [studentHistory]);
+  const activeReportSession = useMemo(
+    () =>
+      classSessions.find((s) => s.id === selectedReportSessionId) ||
+      classSessions[classSessions.length - 1],
+    [classSessions, selectedReportSessionId]
+  );
 
-  // Export CSV Handler
+  const activeReportRubric = useMemo(
+    () => getEffectiveSessionRubric(activeReportSession, rubricsById),
+    [activeReportSession, rubricsById]
+  );
+
   const handleDownloadCsv = () => {
-    if (!activeSession || !activeRubric) return;
-    const csvContent = generateSessionCsv(activeSession, activeRubric, classStudents);
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    const safeTitle = activeSession.title
-      .toLowerCase()
-      .replace(/[^a-z0-9ğüşıöç]/gi, '_');
-    link.setAttribute('download', `degerlendirme_raporu_${safeTitle}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    setExportFeedback(
-      `"${activeSession.title}" sonuçları CSV (Excel uyumlu) biçiminde indirildi.`
-    );
-    setTimeout(() => setExportFeedback(null), 4000);
+    setExportError(null);
+    if (!activeReportSession || !activeReportRubric) {
+      setExportError(
+        'Rapor oluşturulamadı: Seçili oturuma ait geçerli rubrik bulunamadı.'
+      );
+      return;
+    }
+    try {
+      const csv = generateSessionCsv(
+        activeReportSession,
+        activeReportRubric,
+        students
+      );
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const safeName = activeReportSession.title
+        .toLowerCase()
+        .replace(/[^a-z0-9ğüşıöç]/gi, '_');
+      link.setAttribute('download', `rapor_${safeName}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(
+        err instanceof Error ? err.message : 'CSV dışa aktarma hatası.'
+      );
+    }
   };
 
-  // Trigger Print / Save as PDF
-  const handlePrintPdf = () => {
-    setIsPdfPreviewOpen(true);
-    setExportFeedback(
-      'PDF Raporu hazırlandı. Yazdır penceresinden "PDF Olarak Kaydet" seçeneğini kullanabilirsiniz.'
-    );
-    setTimeout(() => {
-      try {
-        window.print();
-      } catch {
-        // Ignore if blocked in headless test
-      }
-    }, 200);
+  const handleDownloadPdf = () => {
+    setExportError(null);
+    if (!activeReportSession || !activeReportRubric || !activeClassroom) {
+      setExportError(
+        'PDF oluşturulamadı: Oturum, sınıf veya rubrik doğrulanamadı.'
+      );
+      return;
+    }
+    try {
+      downloadSessionPdfFile(
+        activeReportSession,
+        activeReportRubric,
+        activeClassroom,
+        students
+      );
+    } catch (err) {
+      setExportError(
+        err instanceof Error ? err.message : 'PDF oluşturma hatası.'
+      );
+    }
   };
 
-  // SVG Chart Geometry Calculation
-  const chartWidth = 640;
-  const chartHeight = 220;
-  const padLeft = 44;
-  const padRight = 32;
-  const padTop = 24;
-  const padBottom = 38;
-  const plotW = chartWidth - padLeft - padRight;
-  const plotH = chartHeight - padTop - padBottom;
-
-  const chartPoints = studentHistory.map((item, idx) => {
-    const count = studentHistory.length;
-    const x =
-      count === 1
-        ? padLeft + plotW / 2
-        : padLeft + (idx / (count - 1)) * plotW;
-    const y = padTop + plotH - (item.scoreOutOf100 / 100) * plotH;
-    return { x, y, ...item };
-  });
-
-  const polylinePoints = chartPoints.map((p) => `${p.x},${p.y}`).join(' ');
-  const areaPoints =
-    chartPoints.length > 1
-      ? `${chartPoints[0].x},${padTop + plotH} ${polylinePoints} ${
-          chartPoints[chartPoints.length - 1].x
-        },${padTop + plotH}`
-      : '';
+  const studentSummaryMetrics = useMemo(() => {
+    if (studentHistory.length === 0) {
+      return { avgScore: 0, delta: 0, latestScore: 0, count: 0 };
+    }
+    const scores = studentHistory.map((h) => h.scoreOutOf100);
+    const sum = scores.reduce((a, b) => a + b, 0);
+    const avgScore = Math.round(sum / scores.length);
+    const first = scores[0];
+    const latest = scores[scores.length - 1];
+    const delta = latest - first;
+    return {
+      avgScore,
+      delta,
+      latestScore: latest,
+      count: studentHistory.length,
+    };
+  }, [studentHistory]);
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
       {/* Header & Class Switcher */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 no-print">
+      <div className="no-print flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            Öğrenci Gelişim Grafikleri ve Raporlama Merkezi
+            Öğrenci &amp; Grup Gelişim Takibi ve Resmi Raporlar
           </h1>
-          <p className="text-sm text-slate-600 mt-1">
-            Öğrencilerin oturumlar arası gelişim eğrilerini inceleyin, değerlendirme sonuçlarını PDF ve CSV olarak dışa aktarın.
+          <p className="text-sm text-slate-600 mt-0.5">
+            Kesinleşmiş bireysel ve grup puanları, dönemsel gelişim analizi,
+            doğrudan indirilebilir PDF ve formül korumalı CSV çıktıları.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
+        <div className="flex flex-wrap items-center gap-3">
+          <label htmlFor="report-class-select" className="sr-only">
+            Sınıf Seçin
+          </label>
+          <select
+            id="report-class-select"
+            value={activeClassroom?.id || ''}
+            onChange={(e) => onSelectClass(e.target.value)}
+            className="px-3.5 py-2 text-sm font-semibold bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-600"
+          >
             {classrooms.map((cls) => (
-              <button
-                key={cls.id}
-                type="button"
-                onClick={() => {
-                  setSelectedClassId(cls.id);
-                  const firstStu = students.find((s) => s.classId === cls.id);
-                  if (firstStu) setSelectedStudentId(firstStu.id);
-                  const firstSes = sessions.find((s) => s.classId === cls.id);
-                  if (firstSes) setSelectedSessionId(firstSes.id);
-                }}
-                className={`px-3.5 py-2 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  cls.id === selectedClassId
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {cls.name}
-              </button>
+              <option key={cls.id} value={cls.id}>
+                {cls.name} — {cls.subject}
+              </option>
             ))}
+          </select>
+
+          <div className="inline-flex rounded-lg bg-slate-200/80 p-1">
+            <button
+              type="button"
+              onClick={() => setViewTab('longitudinal')}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                viewTab === 'longitudinal'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              Bireysel Gelişim
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab('group_history')}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                viewTab === 'group_history'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              Grup Dönemsel Geçmişi
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab('session_table')}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                viewTab === 'session_table'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Resmi Rapor Tablosu (PDF / CSV)
+            </button>
           </div>
         </div>
-      </section>
+      </div>
 
-      {exportFeedback && (
+      {exportError && (
         <div
-          role="status"
-          className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between no-print"
+          role="alert"
+          className="bg-red-50 border border-red-300 text-red-900 px-4 py-3 rounded-xl text-xs font-semibold"
         >
-          <span>{exportFeedback}</span>
-          <button
-            type="button"
-            onClick={() => setExportFeedback(null)}
-            aria-label="Bildirimi kapat"
-            className="text-emerald-800 hover:text-emerald-950 font-bold cursor-pointer p-1"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {exportError}
         </div>
       )}
 
-      {/* SECTION 1: Longitudinal Student Growth Chart & Criterion Mastery */}
-      <section
-        aria-label="Öğrenci Gelişim Grafiği"
-        className="bg-white border border-slate-200 rounded-xl p-6 space-y-6 no-print"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
-          <div className="flex items-center gap-2.5">
-            <TrendingUp className="w-5 h-5 text-sky-700" />
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">
-                Bireysel Öğrenci Gelişim Süreci Takibi
+      {/* TAB 1: LONGITUDINAL STUDENT TRACKING */}
+      {viewTab === 'longitudinal' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <aside className="no-print lg:col-span-4 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+            <div className="p-3.5 border-b border-slate-200 bg-slate-50">
+              <h2 className="text-sm font-bold text-slate-900">
+                {activeClassroom?.name} Öğrencileri
               </h2>
               <p className="text-xs text-slate-500">
-                Farklı değerlendirme oturumlarındaki puan değişimi ve ölçüt bazlı yetkinlik düzeyi
+                Yalnızca tüm ölçütleri tamamlanmış kesin değerlendirmeler
+                ortalamaya katılır
               </p>
             </div>
-          </div>
+            <div className="divide-y divide-slate-100 max-h-[560px] overflow-y-auto">
+              {classStudents.map((stu) => {
+                const hist = getStudentProgressHistory(
+                  stu.id,
+                  classSessions,
+                  rubricsById
+                );
+                const latest =
+                  hist.length > 0 ? hist[hist.length - 1] : null;
+                const isSelected = activeStudent?.id === stu.id;
 
-          <div className="flex items-center gap-3">
-            <label
-              htmlFor="progress-student-select"
-              className="text-xs font-semibold text-slate-600 whitespace-nowrap"
-            >
-              Öğrenci Seçin:
-            </label>
-            <select
-              id="progress-student-select"
-              value={activeStudent?.id || ''}
-              onChange={(e) => setSelectedStudentId(e.target.value)}
-              className="px-3.5 py-2 text-sm font-semibold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-600"
-            >
-              {classStudents.map((stu) => (
-                <option key={stu.id} value={stu.id}>
-                  #{stu.studentNumber} — {stu.fullName}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {activeStudent && studentHistory.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left 7 Cols: SVG Longitudinal Line & Area Chart */}
-            <div className="lg:col-span-7 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <span className="text-xs text-slate-500">Öğrenci</span>
-                  <h3 className="text-base font-bold text-slate-900">
-                    {activeStudent.fullName} (#{activeStudent.studentNumber})
-                  </h3>
-                </div>
-
-                <div className="flex items-center gap-4 text-xs">
-                  <div>
-                    <span className="text-slate-500">Son Puan: </span>
-                    <strong className="font-mono-num text-sm text-slate-900">
-                      {studentHistory[studentHistory.length - 1].scoreOutOf100}/100
-                    </strong>
-                  </div>
-                  <span aria-hidden="true">·</span>
-                  <div>
-                    <span className="text-slate-500">Gelişim Farkı: </span>
-                    <strong
-                      className={`font-mono-num text-sm ${
-                        progressDelta >= 0 ? 'text-emerald-700' : 'text-amber-700'
-                      }`}
-                    >
-                      {progressDelta >= 0 ? `+${progressDelta}` : progressDelta} Puan
-                    </strong>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">
-                <svg
-                  viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-                  className="w-full h-auto overflow-visible"
-                  role="img"
-                  aria-label={`${activeStudent.fullName} gelişim grafiği`}
-                >
-                  <defs>
-                    <linearGradient id="scoreAreaGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#0284C7" stopOpacity="0.22" />
-                      <stop offset="100%" stopColor="#0284C7" stopOpacity="0.0" />
-                    </linearGradient>
-                  </defs>
-
-                  {/* Horizontal reference grid lines (25, 50, 75, 100) */}
-                  {[0, 25, 50, 75, 100].map((val) => {
-                    const y = padTop + plotH - (val / 100) * plotH;
-                    return (
-                      <g key={val}>
-                        <line
-                          x1={padLeft}
-                          y1={y}
-                          x2={chartWidth - padRight}
-                          y2={y}
-                          stroke="#E2E8F0"
-                          strokeDasharray={val === 0 || val === 100 ? 'none' : '4 4'}
-                          strokeWidth="1"
-                        />
-                        <text
-                          x={padLeft - 8}
-                          y={y + 4}
-                          textAnchor="end"
-                          className="text-[11px] fill-slate-400 font-mono"
-                        >
-                          {val}
-                        </text>
-                      </g>
-                    );
-                  })}
-
-                  {/* Area under curve */}
-                  {areaPoints && (
-                    <polygon points={areaPoints} fill="url(#scoreAreaGrad)" />
-                  )}
-
-                  {/* Connecting line */}
-                  {chartPoints.length > 1 && (
-                    <polyline
-                      fill="none"
-                      stroke="#0284C7"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      points={polylinePoints}
-                    />
-                  )}
-
-                  {/* Data nodes & labels */}
-                  {chartPoints.map((pt, idx) => (
-                    <g key={pt.sessionId}>
-                      <circle
-                        cx={pt.x}
-                        cy={pt.y}
-                        r="6"
-                        fill="#FFFFFF"
-                        stroke="#0284C7"
-                        strokeWidth="3"
-                      />
-                      <text
-                        x={pt.x}
-                        y={pt.y - 12}
-                        textAnchor="middle"
-                        className="text-xs font-bold fill-slate-900 font-mono"
-                      >
-                        {pt.scoreOutOf100}
-                      </text>
-                      <text
-                        x={pt.x}
-                        y={padTop + plotH + 18}
-                        textAnchor="middle"
-                        className="text-[11px] fill-slate-600 font-medium"
-                      >
-                        {idx + 1}. Oturum ({pt.date.slice(5)})
-                      </text>
-                    </g>
-                  ))}
-                </svg>
-              </div>
-
-              {/* Chronological Session History Notes */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-slate-700">
-                  Oturum Geçmişi ve Öğretmen Gözlem Notları
-                </h4>
-                <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg">
-                  {studentHistory.map((h) => (
-                    <div key={h.sessionId} className="p-3 text-xs space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-900">
-                          {h.sessionTitle}
+                return (
+                  <button
+                    key={stu.id}
+                    type="button"
+                    onClick={() => setSelectedStudentId(stu.id)}
+                    className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-teal-50/90 border-l-4 border-l-teal-700'
+                        : 'hover:bg-slate-50 border-l-4 border-l-transparent'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono-num text-xs font-bold text-slate-400">
+                          #{stu.studentNumber}
                         </span>
-                        <span className="font-mono-num font-bold text-sky-700">
-                          {h.scoreOutOf100}/100 ({h.performanceLabel})
+                        <span className="text-sm font-semibold text-slate-900">
+                          {stu.fullName}
                         </span>
                       </div>
-                      <div className="text-slate-500">
-                        Tarih: <span className="font-mono-num">{h.date}</span> · Rubrik: {h.rubricTitle}
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {hist.length} tamamlanmış oturum
                       </div>
-                      {h.note && (
-                        <p className="text-slate-700 bg-slate-50 p-2 rounded mt-1">
-                          Gözlem: &ldquo;{h.note}&rdquo;
-                        </p>
-                      )}
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    {latest ? (
+                      <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-slate-100 text-slate-800">
+                        Son: {latest.scoreOutOf100}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
+          </aside>
 
-            {/* Right 5 Cols: Criterion Mastery Bars */}
-            <div className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-sky-700" />
-                <h3 className="text-sm font-bold text-slate-900">
-                  Ölçüt Bazlı Ortalama Yetkinlik Düzeyi
-                </h3>
-              </div>
-              <p className="text-xs text-slate-600">
-                {activeStudent.fullName} adlı öğrencinin tüm değerlendirme oturumlarındaki ölçüt başarı ortalamaları:
-              </p>
-
-              <div className="space-y-3.5">
-                {criterionMastery.map((cm) => (
-                  <div key={cm.title} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-slate-800">{cm.title}</span>
-                      <span className="font-mono-num font-bold text-slate-900">
-                        %{cm.avgPercent}
+          <div className="lg:col-span-8 space-y-5">
+            {activeStudent ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-5 border-b border-slate-200">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                        Okul No: {activeStudent.studentNumber}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {activeClassroom?.name} · {activeClassroom?.subject}
                       </span>
                     </div>
-                    <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${
-                          cm.avgPercent >= 85
-                            ? 'bg-emerald-600'
-                            : cm.avgPercent >= 70
-                            ? 'bg-sky-600'
-                            : 'bg-amber-600'
-                        }`}
-                        style={{ width: `${cm.avgPercent}%` }}
-                      />
+                    <h2 className="text-2xl font-bold text-slate-900 mt-1">
+                      {activeStudent.fullName} — Dönem İçi Gelişim Portfolyosu
+                    </h2>
+                  </div>
+
+                  <div className="flex items-center gap-2 no-print">
+                    <button
+                      type="button"
+                      onClick={handleDownloadPdf}
+                      className="px-3.5 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <FileDown className="w-4 h-4" />
+                      PDF İndir
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="text-xs text-slate-500">
+                      Tamamlanan Oturum
+                    </div>
+                    <div className="font-mono-num text-2xl font-bold text-slate-900 mt-1">
+                      {studentSummaryMetrics.count}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="py-8 text-center text-sm text-slate-500">
-            Seçili öğrenci için henüz tamamlanmış değerlendirme verisi bulunmuyor.
-          </div>
-        )}
-      </section>
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="text-xs text-slate-500">
+                      Dönem Ortalaması
+                    </div>
+                    <div className="font-mono-num text-2xl font-bold text-slate-900 mt-1">
+                      {studentSummaryMetrics.avgScore}{' '}
+                      <span className="text-xs font-normal text-slate-500">
+                        / 100
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="text-xs text-slate-500">
+                      Son Kesin Puan
+                    </div>
+                    <div className="font-mono-num text-2xl font-bold text-teal-800 mt-1">
+                      {studentSummaryMetrics.latestScore}{' '}
+                      <span className="text-xs font-normal text-slate-500">
+                        / 100
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="text-xs text-slate-500">Gelişim Farkı</div>
+                    <div
+                      className={`font-mono-num text-2xl font-bold mt-1 ${
+                        studentSummaryMetrics.delta >= 0
+                          ? 'text-emerald-700'
+                          : 'text-amber-700'
+                      }`}
+                    >
+                      {studentSummaryMetrics.delta > 0
+                        ? `+${studentSummaryMetrics.delta}`
+                        : studentSummaryMetrics.delta}{' '}
+                      Puan
+                    </div>
+                  </div>
+                </div>
 
-      {/* SECTION 2: Session Evaluation Table & Export (PDF / CSV) */}
-      <section
-        aria-label="Oturum Raporlama ve Dışa Aktarma"
-        className="bg-white border border-slate-200 rounded-xl p-6 space-y-5"
-      >
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-200 no-print">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+                {studentHistory.length > 0 ? (
+                  <div className="space-y-4">
+                    {studentHistory.map((item) => (
+                      <div
+                        key={item.sessionId}
+                        className="p-4 rounded-xl border border-slate-200 bg-white space-y-3"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2 border-b border-slate-100">
+                          <div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span className="font-mono-num">{item.date}</span>
+                              <span>·</span>
+                              <span>{item.rubricTitle}</span>
+                            </div>
+                            <h4 className="text-sm font-bold text-slate-900 mt-0.5">
+                              {item.sessionTitle}
+                            </h4>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            {item.individualScoreOutOf100 !== null && (
+                              <span className="text-xs font-mono-num font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                                Bireysel: {item.individualScoreOutOf100}
+                              </span>
+                            )}
+                            {item.groupScoreOutOf100 !== null && (
+                              <span className="text-xs font-mono-num font-semibold px-2 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200">
+                                Grup: {item.groupScoreOutOf100}
+                              </span>
+                            )}
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
+                              <Award className="w-3.5 h-3.5 text-teal-700" />
+                              {item.performanceLabel}
+                            </span>
+                            <span className="font-mono-num text-sm font-bold px-3 py-1 rounded bg-slate-900 text-white">
+                              {item.scoreOutOf100} / 100
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {item.criterionBreakdown.map((cb) => (
+                            <div
+                              key={cb.criterionTitle}
+                              className="p-2.5 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-between gap-2"
+                            >
+                              <span className="text-xs font-medium text-slate-700 truncate">
+                                {cb.criterionTitle}
+                              </span>
+                              <span className="font-mono-num text-xs font-bold text-slate-900 shrink-0">
+                                {cb.selectedPoints}/{cb.maxPoints} (%
+                                {cb.scorePercent})
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {item.note && (
+                          <div className="text-xs text-slate-700 bg-amber-50/70 border border-amber-200/80 rounded-lg p-2.5">
+                            <span className="font-bold text-slate-900">
+                              Bireysel Gözlem Notu:{' '}
+                            </span>
+                            {item.note}
+                          </div>
+                        )}
+                        {item.groupNote && (
+                          <div className="text-xs text-teal-950 bg-teal-50/70 border border-teal-200 rounded-lg p-2.5">
+                            <span className="font-bold">Grup Gözlem Notu: </span>
+                            {item.groupNote}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-sm text-slate-500">
+                    Bu öğrenci için henüz tüm ölçütleri tamamlanmış kesin
+                    değerlendirme kaydı bulunmuyor.
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: GROUP LONGITUDINAL HISTORY (P1 #6) */}
+      {viewTab === 'group_history' && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
+              <h2 className="text-lg font-bold text-slate-900">
+                {activeClassroom?.name} — Dönemsel Grup Değerlendirme Geçmişi
+              </h2>
+              <p className="text-xs text-slate-500">
+                Farklı oturumlarda oluşturulan çalışma gruplarının kronolojik
+                performans kayıtları
+              </p>
+            </div>
+            <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-teal-50 text-teal-900 border border-teal-200">
+              {groupHistory.length} Grup Kaydı
+            </span>
+          </div>
+
+          {groupHistory.length === 0 ? (
+            <div className="py-10 text-center text-sm text-slate-500">
+              Bu sınıfa ait grup değerlendirme geçmişi bulunmuyor.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {groupHistory.map((gh, idx) => {
+                const memberNames = gh.memberIds
+                  .map((id) => students.find((s) => s.id === id)?.fullName)
+                  .filter(Boolean)
+                  .join(', ');
+
+                return (
+                  <div
+                    key={`${gh.sessionId}-${gh.groupId}-${idx}`}
+                    className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2"
+                  >
+                    <div className="flex items-center justify-between text-xs text-slate-500 font-mono-num">
+                      <span>{gh.date}</span>
+                      <span>{gh.memberCount} Öğrenci</span>
+                    </div>
+                    <div className="text-base font-bold text-slate-900">
+                      {gh.groupName}
+                    </div>
+                    <div className="text-xs font-medium text-teal-800">
+                      {gh.sessionTitle}
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      <strong>Üyeler:</strong> {memberNames || '—'}
+                    </div>
+                    {gh.groupNote && (
+                      <div className="text-xs text-slate-700 bg-white p-2 rounded border border-slate-200">
+                        {gh.groupNote}
+                      </div>
+                    )}
+                    <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-slate-700">
+                        {gh.performanceLabel}
+                      </span>
+                      <span className="font-mono-num text-sm font-bold px-2.5 py-0.5 rounded bg-slate-900 text-white">
+                        {gh.isComplete && gh.scoreOutOf100 !== null
+                          ? `${gh.scoreOutOf100} / 100`
+                          : `Taslak (${gh.provisionalScoreOutOf100}P)`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: FULL SESSION REPORT TABLE & DIRECT PDF / SAFE CSV EXPORT */}
+      {viewTab === 'session_table' && activeReportSession && activeReportRubric && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5 shadow-xs">
+          <div className="no-print flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
+            <div className="flex flex-wrap items-center gap-3">
               <label
-                htmlFor="report-session-select"
-                className="block text-xs font-semibold text-slate-500 mb-1"
+                htmlFor="session-report-select"
+                className="text-xs font-semibold text-slate-600"
               >
-                Raporlanacak Değerlendirme Oturumu
+                Raporlanacak Oturum:
               </label>
               <select
-                id="report-session-select"
-                value={activeSession?.id || ''}
-                onChange={(e) => setSelectedSessionId(e.target.value)}
-                className="px-3.5 py-2 text-sm font-semibold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-600"
+                id="session-report-select"
+                value={activeReportSession.id}
+                onChange={(e) => setSelectedReportSessionId(e.target.value)}
+                className="px-3 py-2 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-600"
               >
-                {classSessions.map((ses) => (
-                  <option key={ses.id} value={ses.id}>
-                    {ses.title} ({ses.date})
+                {classSessions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title} ({s.date})
                   </option>
                 ))}
               </select>
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Dondurulmuş Rubrik &amp; CSV Formül Koruması Aktif
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                className="px-4 py-2 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileDown className="w-4 h-4" />
+                Sayfalandırılmış PDF İndir
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadCsv}
+                className="px-4 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                Güvenli CSV (Excel) İndir
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                Yazdır
+              </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={handleDownloadCsv}
-              className="px-4 py-2.5 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
-              CSV İndir (Excel / e-Okul)
-            </button>
+          <div className="pb-2">
+            <div className="text-xs font-semibold text-teal-800 uppercase tracking-wider">
+              Ölçüt Temelli Performans Değerlendirme Çizelgesi
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mt-0.5">
+              {activeClassroom?.name} — {activeReportSession.title}
+            </h2>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Rubrik: <strong>{activeReportRubric.title}</strong> · Tarih:{' '}
+              <span className="font-mono-num">{activeReportSession.date}</span>
+            </p>
+          </div>
 
-            <button
-              type="button"
-              onClick={() => setIsPdfPreviewOpen((prev) => !prev)}
-              className="px-4 py-2.5 text-xs font-semibold text-slate-800 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <FileText className="w-4 h-4 text-sky-700" />
-              {isPdfPreviewOpen ? 'PDF Önizlemeyi Kapat' : 'PDF Raporu Önizle'}
-            </button>
+          <div className="border border-slate-200 rounded-xl overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[860px]">
+              <thead>
+                <tr className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-700">
+                  <th className="py-3 px-3 w-16">No</th>
+                  <th className="py-3 px-3 w-44">Öğrenci Adı Soyadı</th>
+                  {activeReportRubric.criteria.map((c) => (
+                    <th key={c.id} className="py-3 px-2.5 text-center">
+                      <div>{c.title}</div>
+                      <div className="font-mono-num text-[10px] font-normal text-slate-500">
+                        ({c.maxPoints ?? c.weight}P / %{c.weight})
+                      </div>
+                    </th>
+                  ))}
+                  <th className="py-3 px-2.5 text-center w-24">
+                    Bireysel (100)
+                  </th>
+                  <th className="py-3 px-2.5 text-center w-24">Grup (100)</th>
+                  <th className="py-3 px-2.5 text-center w-28">
+                    Kesin Not (100)
+                  </th>
+                  <th className="py-3 px-3 w-32">Düzey</th>
+                  <th className="py-3 px-3">Gözlem Notları</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 text-xs">
+                {classStudents.map((stu) => {
+                  const ev = activeReportSession.evaluations[stu.id];
+                  const {
+                    individualCalc,
+                    groupCalc,
+                    effectiveCalc,
+                    activeSource,
+                  } = getStudentEvaluationBreakdown(activeReportRubric, ev);
 
-            <button
-              type="button"
-              onClick={handlePrintPdf}
-              className="px-4 py-2.5 text-xs font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-800 transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <Printer className="w-4 h-4" />
-              PDF Raporu Yazdır / Kaydet
-            </button>
+                  const activeScores =
+                    activeSource === 'group'
+                      ? ev?.groupCriterionScores || {}
+                      : ev?.criterionScores || {};
+                  const activeDirect =
+                    activeSource === 'group'
+                      ? ev?.groupDirectScores || {}
+                      : ev?.directCriterionScores || {};
+
+                  return (
+                    <tr key={stu.id} className="hover:bg-slate-50/80">
+                      <td className="py-2.5 px-3 font-mono-num font-bold text-slate-600">
+                        {stu.studentNumber}
+                      </td>
+                      <td className="py-2.5 px-3 font-semibold text-slate-900">
+                        {stu.fullName}
+                      </td>
+                      {activeReportRubric.criteria.map((c) => {
+                        const directVal = activeDirect[c.id];
+                        const pts = activeScores[c.id];
+                        return (
+                          <td
+                            key={c.id}
+                            className="py-2.5 px-2.5 text-center font-mono-num font-semibold text-slate-800"
+                          >
+                            {isScoreAssigned(directVal)
+                              ? `${directVal}P`
+                              : isScoreAssigned(pts)
+                              ? pts
+                              : '—'}
+                          </td>
+                        );
+                      })}
+                      <td className="py-2.5 px-2.5 text-center font-mono-num">
+                        {individualCalc.finalScoreOutOf100 !== null
+                          ? individualCalc.finalScoreOutOf100
+                          : individualCalc.completedCriteriaCount > 0
+                          ? `Eksik (${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount})`
+                          : '—'}
+                      </td>
+                      <td className="py-2.5 px-2.5 text-center font-mono-num text-teal-800">
+                        {groupCalc.finalScoreOutOf100 !== null
+                          ? groupCalc.finalScoreOutOf100
+                          : groupCalc.completedCriteriaCount > 0
+                          ? `Eksik (${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount})`
+                          : '—'}
+                      </td>
+                      <td className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900">
+                        {effectiveCalc.isComplete &&
+                        effectiveCalc.finalScoreOutOf100 !== null ? (
+                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-900 border border-emerald-200">
+                            {effectiveCalc.finalScoreOutOf100}
+                          </span>
+                        ) : effectiveCalc.completedCriteriaCount > 0 ? (
+                          <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                            Eksik ({effectiveCalc.completedCriteriaCount}/
+                            {effectiveCalc.totalCriteriaCount})
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 font-medium text-slate-700">
+                        {effectiveCalc.performanceLabel}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate">
+                        {[
+                          ev?.note,
+                          ev?.groupNote ? `[Grup]: ${ev.groupNote}` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' | ') || '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
-
-        {/* Printable Official Report Header (Always visible in print or when PDF preview is active) */}
-        {activeSession && activeRubric && (
-          <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div>
-                <div className="text-xs font-semibold text-slate-500">
-                  ÖLÇÜT TEMELLİ DEĞERLENDİRME SONUÇ ÇİZELGESİ
-                </div>
-                <h3 className="text-base font-bold text-slate-900">
-                  {activeClassroom.name} — {activeSession.title}
-                </h3>
-                <p className="text-xs text-slate-600">
-                  Kullanılan Rubrik: {activeRubric.title} · Tarih:{' '}
-                  <span className="font-mono-num">{activeSession.date}</span>
-                </p>
-              </div>
-              <div className="text-xs text-slate-600 sm:text-right">
-                <div>Ders: {activeClassroom.subject}</div>
-                <div>Akademik Yıl: {activeClassroom.academicYear}</div>
-              </div>
-            </div>
-
-            {/* Full Results Table */}
-            <div className="border border-slate-200 rounded-lg overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[760px]">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700">
-                    <th className="py-3 px-3 w-20">No</th>
-                    <th className="py-3 px-3">Öğrenci Adı Soyadı</th>
-                    {activeRubric.criteria.map((c) => (
-                      <th key={c.id} className="py-3 px-2.5 text-right">
-                        <span className="block truncate max-w-[130px]" title={c.title}>
-                          {c.title}
-                        </span>
-                        <span className="font-mono-num text-[11px] font-normal text-slate-500">
-                          (%{c.weight})
-                        </span>
-                      </th>
-                    ))}
-                    <th className="py-3 px-3 text-right">Toplam (100)</th>
-                    <th className="py-3 px-3">Düzey & Yöntem</th>
-                    <th className="py-3 px-3">Gözlem Notu</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {classStudents.map((stu) => {
-                    const ev = activeSession.evaluations[stu.id];
-                    const scores = ev?.criterionScores || {};
-                    const calc = calculateWeightedScore(activeRubric, scores);
-
-                    return (
-                      <tr key={stu.id} className="hover:bg-slate-50/70">
-                        <td className="py-3 px-3 font-mono-num font-semibold text-slate-700">
-                          {stu.studentNumber}
-                        </td>
-                        <td className="py-3 px-3 font-semibold text-slate-900">
-                          {stu.fullName}
-                        </td>
-                        {activeRubric.criteria.map((c) => {
-                          const pts = scores[c.id];
-                          return (
-                            <td
-                              key={c.id}
-                              className="py-3 px-2.5 text-right font-mono-num text-slate-700"
-                            >
-                              {typeof pts === 'number' ? `${pts}/${activeRubric.maxLevelPoints}` : '—'}
-                            </td>
-                          );
-                        })}
-                        <td className="py-3 px-3 text-right font-mono-num font-bold text-slate-900">
-                          {calc.completedCriteriaCount > 0 ? calc.scoreOutOf100 : '—'}
-                        </td>
-                        <td className="py-3 px-3 text-slate-700">
-                          <span className="font-semibold">{calc.performanceLabel}</span>
-                          {ev?.evaluatedViaGroup && (
-                            <span className="block text-[11px] text-sky-700">
-                              Grup: {ev.evaluatedViaGroup}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-slate-600 max-w-xs">
-                          {ev?.note || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {isPdfPreviewOpen && (
-              <div className="p-5 rounded-xl border border-slate-300 bg-slate-50 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-slate-900">
-                    Resmî Belgelendirme & İmza Bloğu (PDF Çıktısı İçin Hazır)
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={handleDownloadCsv}
-                    className="text-xs font-semibold text-sky-700 hover:underline flex items-center gap-1 cursor-pointer no-print"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    CSV Yedeğini İndir
-                  </button>
-                </div>
-                <p className="text-xs text-slate-600">
-                  Oturum Genel Gözlem Notu:{' '}
-                  {activeSession.generalSessionNote ||
-                    'Sınıf içi ölçüt temelli değerlendirme rubrik yönergesine uygun olarak tamamlanmıştır.'}
-                </p>
-                <div className="grid grid-cols-2 gap-8 pt-6 border-t border-slate-200 text-xs text-slate-700">
-                  <div>
-                    <div className="font-bold">Ders Öğretmeni</div>
-                    <div className="mt-6 text-slate-400">İmza / Tarih: {activeSession.date}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-bold">Okul Müdürlüğü / Zümre Başkanı</div>
-                    <div className="mt-6 text-slate-400">Onay / Mühür</div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </section>
+      )}
     </div>
   );
 };

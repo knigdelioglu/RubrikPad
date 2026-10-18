@@ -26,27 +26,27 @@ export const INITIAL_CLASSROOMS: Classroom[] = [
 
 export const INITIAL_STUDENTS: Student[] = [
   // 7-A Sınıfı (8 Öğrenci)
-  { id: 'stu-101', studentNumber: '101', fullName: 'Elif Yılmaz', classId: 'cls-7a' },
-  { id: 'stu-102', studentNumber: '102', fullName: 'Kerem Demir', classId: 'cls-7a' },
-  { id: 'stu-103', studentNumber: '103', fullName: 'Zeynep Kaya', classId: 'cls-7a' },
-  { id: 'stu-104', studentNumber: '104', fullName: 'Mert Çelik', classId: 'cls-7a' },
-  { id: 'stu-105', studentNumber: '105', fullName: 'Defne Şahin', classId: 'cls-7a' },
-  { id: 'stu-106', studentNumber: '106', fullName: 'Caner Aydın', classId: 'cls-7a' },
-  { id: 'stu-107', studentNumber: '107', fullName: 'Nilüfer Yıldız', classId: 'cls-7a' },
-  { id: 'stu-108', studentNumber: '108', fullName: 'Emirhan Öztürk', classId: 'cls-7a' },
+  { id: 'stu-101', studentNumber: '101', firstName: 'Elif', lastName: 'Yılmaz', fullName: 'Elif Yılmaz', classId: 'cls-7a' },
+  { id: 'stu-102', studentNumber: '102', firstName: 'Kerem', lastName: 'Demir', fullName: 'Kerem Demir', classId: 'cls-7a' },
+  { id: 'stu-103', studentNumber: '103', firstName: 'Zeynep', lastName: 'Kaya', fullName: 'Zeynep Kaya', classId: 'cls-7a' },
+  { id: 'stu-104', studentNumber: '104', firstName: 'Mert', lastName: 'Çelik', fullName: 'Mert Çelik', classId: 'cls-7a' },
+  { id: 'stu-105', studentNumber: '105', firstName: 'Defne', lastName: 'Şahin', fullName: 'Defne Şahin', classId: 'cls-7a' },
+  { id: 'stu-106', studentNumber: '106', firstName: 'Caner', lastName: 'Aydın', fullName: 'Caner Aydın', classId: 'cls-7a' },
+  { id: 'stu-107', studentNumber: '107', firstName: 'Nilüfer', lastName: 'Yıldız', fullName: 'Nilüfer Yıldız', classId: 'cls-7a' },
+  { id: 'stu-108', studentNumber: '108', firstName: 'Emirhan', lastName: 'Öztürk', fullName: 'Emirhan Öztürk', classId: 'cls-7a' },
 
   // 8-B Sınıfı (5 Öğrenci)
-  { id: 'stu-201', studentNumber: '201', fullName: 'Arda Arslan', classId: 'cls-8b' },
-  { id: 'stu-202', studentNumber: '202', fullName: 'Selin Kılıç', classId: 'cls-8b' },
-  { id: 'stu-203', studentNumber: '203', fullName: 'Bora Koç', classId: 'cls-8b' },
-  { id: 'stu-204', studentNumber: '204', fullName: 'Ece Kurt', classId: 'cls-8b' },
-  { id: 'stu-205', studentNumber: '205', fullName: 'Kaan Özkan', classId: 'cls-8b' },
+  { id: 'stu-201', studentNumber: '201', firstName: 'Arda', lastName: 'Arslan', fullName: 'Arda Arslan', classId: 'cls-8b' },
+  { id: 'stu-202', studentNumber: '202', firstName: 'Selin', lastName: 'Kılıç', fullName: 'Selin Kılıç', classId: 'cls-8b' },
+  { id: 'stu-203', studentNumber: '203', firstName: 'Bora', lastName: 'Koç', fullName: 'Bora Koç', classId: 'cls-8b' },
+  { id: 'stu-204', studentNumber: '204', firstName: 'Ece', lastName: 'Kurt', fullName: 'Ece Kurt', classId: 'cls-8b' },
+  { id: 'stu-205', studentNumber: '205', firstName: 'Kaan', lastName: 'Özkan', fullName: 'Kaan Özkan', classId: 'cls-8b' },
 
   // 6-C Sınıfı (4 Öğrenci)
-  { id: 'stu-301', studentNumber: '301', fullName: 'Yağmur Şen', classId: 'cls-6c' },
-  { id: 'stu-302', studentNumber: '302', fullName: 'Doruk Aksoy', classId: 'cls-6c' },
-  { id: 'stu-303', studentNumber: '303', fullName: 'Azra Polat', classId: 'cls-6c' },
-  { id: 'stu-304', studentNumber: '304', fullName: 'Tuna Çetin', classId: 'cls-6c' },
+  { id: 'stu-301', studentNumber: '301', firstName: 'Yağmur', lastName: 'Şen', fullName: 'Yağmur Şen', classId: 'cls-6c' },
+  { id: 'stu-302', studentNumber: '302', firstName: 'Doruk', lastName: 'Aksoy', fullName: 'Doruk Aksoy', classId: 'cls-6c' },
+  { id: 'stu-303', studentNumber: '303', firstName: 'Azra', lastName: 'Polat', fullName: 'Azra Polat', classId: 'cls-6c' },
+  { id: 'stu-304', studentNumber: '304', firstName: 'Tuna', lastName: 'Çetin', fullName: 'Tuna Çetin', classId: 'cls-6c' },
 ];
 
 export const INITIAL_RUBRICS: Rubric[] = [
@@ -57,13 +57,22 @@ export const INITIAL_RUBRICS: Rubric[] = [
     description: 'Öğrencilerin bilimsel süreç becerilerini, deney kurulumunu, veri kaydını ve sonuç çıkarımını değerlendirir.',
     maxLevelPoints: 4,
     createdAt: '2026-09-15',
+    version: 1,
     criteria: [
       {
         id: 'crit-hyp',
         title: 'Hipotez ve Değişken Tanımlama',
         category: 'Bilimsel Hazırlık',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          {
+            level: 0,
+            label: 'Gözlenmedi (0)',
+            points: 0,
+            description: 'Hipotez veya değişken çalışması hiç yapılmamıştır.',
+          },
           {
             level: 1,
             label: 'Destek Gerekli',
@@ -95,7 +104,15 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Deney Düzeneği ve Güvenlik Kuralları',
         category: 'Uygulama',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          {
+            level: 0,
+            label: 'Gözlenmedi (0)',
+            points: 0,
+            description: 'Deney düzeneği kurulmamış veya güvenlik kuralları tamamen ihlal edilmiştir.',
+          },
           {
             level: 1,
             label: 'Destek Gerekli',
@@ -127,7 +144,15 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Veri Kaydı ve Tablolaştırma',
         category: 'Veri Okuryazarlığı',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          {
+            level: 0,
+            label: 'Gözlenmedi (0)',
+            points: 0,
+            description: 'Veri kaydı veya tablo çalışması bulunmamaktadır.',
+          },
           {
             level: 1,
             label: 'Destek Gerekli',
@@ -159,7 +184,15 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Sonuç Çıkarımı ve Raporlama',
         category: 'Analiz & Sentez',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          {
+            level: 0,
+            label: 'Gözlenmedi (0)',
+            points: 0,
+            description: 'Sonuç veya değerlendirme raporu sunulmamıştır.',
+          },
           {
             level: 1,
             label: 'Destek Gerekli',
@@ -195,13 +228,17 @@ export const INITIAL_RUBRICS: Rubric[] = [
     description: 'Proje ve araştırma sunumlarında içerik hakimiyeti, ifade gücü, görsel kullanımı ve soru-cevap performansını ölçer.',
     maxLevelPoints: 4,
     createdAt: '2026-09-20',
+    version: 1,
     criteria: [
       {
         id: 'crit-content',
         title: 'İçerik Hakimiyeti ve Kavramsal Doğruluk',
         category: 'İçerik',
         weight: 30,
+        maxPoints: 30,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Sunum içeriği hazırlanmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Konuyu metinden okur, temel kavramlarda bilgi hataları bulunur.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Temel bilgileri aktarır ancak örneklemelerde desteğe ihtiyaç duyar.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Konuya hakimdir, kavramları doğru ve anlaşılır örneklerle açıklar.' },
@@ -213,7 +250,10 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Akıcı İfade ve Beden Dili',
         category: 'İletişim',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Sözlü sunum gerçekleştirilmemiştir.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Göz teması kurmaz, ses tonu duyulmayacak kadar düşüktür.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Kısmen göz teması kurar, zaman zaman heyecan kaynaklı kopukluklar yaşar.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Sınıfla göz teması kurar, anlaşılır ve canlı bir ses tonuyla konuşur.' },
@@ -225,8 +265,11 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Görsel Materyal ve Grafik Kullanımı',
         category: 'Tasarım',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
-          { level: 1, label: 'Destek Gerekli', points: 1, description: 'Görsel materyal kullanmaz veya slaytlar yalnızca uzun metinlerden oluşur.' },
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Görsel materyal hiç sunulmamıştır.' },
+          { level: 1, label: 'Destek Gerekli', points: 1, description: 'Görsel materyal yetersizdir veya slaytlar yalnızca uzun metinlerden oluşur.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Görseller konuyla kısmen ilişkilidir ancak düzeni karmaşıktır.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Konuyu destekleyen net şema, grafik ve görselleri yerinde kullanır.' },
           { level: 4, label: 'Örnek Düzey', points: 4, description: 'Görsel materyaller anlatımı güçlendirir, özgün diyagram ve veri görselleştirmeleri içerir.' },
@@ -237,7 +280,10 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Zaman Yönetimi ve Soruları Yanıtlama',
         category: 'Etkileşim',
         weight: 20,
+        maxPoints: 20,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Soru-cevap bölümüne katılmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Süreyi çok aşar veya çok kısa tutar; soruları yanıtlayamaz.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Süreyi kısmen dengeler, sorulara kısa yanıtlar verir.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Verilen sürede sunumu tamamlar ve yöneltilen soruları doğru yanıtlar.' },
@@ -253,13 +299,17 @@ export const INITIAL_RUBRICS: Rubric[] = [
     description: 'Takım çalışması, görev paylaşımı, ortak problem çözme ve ortaya çıkan proje ürününü değerlendirir.',
     maxLevelPoints: 4,
     createdAt: '2026-09-28',
+    version: 1,
     criteria: [
       {
         id: 'crit-role',
         title: 'Görev Paylaşımı ve Sorumluluk',
         category: 'İşbirliği',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Grup görevlerine katılım göstermemiştir.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Görev dağılımı belirsizdir, yük tek bir öğrencide toplanmıştır.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Görevler paylaşılmıştır ancak bazı üyeler hatırlatmayla çalışır.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Her üye kendi görevini zamanında ve eksiksiz yerine getirir.' },
@@ -271,7 +321,10 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Grup İçi İletişim ve Karar Alma',
         category: 'Sosyal Beceri',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Grup içi iletişim kurmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Üyeler birbirini dinlemez, sık sık uzlaşmazlık yaşanır.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'İletişim kurulur ancak kararlar çoğunlukla tek taraflı alınır.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Fikirler saygıyla dinlenir ve ortak uzlaşıyla karar alınır.' },
@@ -283,7 +336,10 @@ export const INITIAL_RUBRICS: Rubric[] = [
         title: 'Problem Çözme ve Yaratıcılık',
         category: 'Düşünme Becerisi',
         weight: 25,
+        maxPoints: 25,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Problem çözme sürecine katkı sunmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Karşılaşılan ilk engelde süreç durur, hazır çözüm beklenir.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Bilinen yöntemlerle sorunu çözmeye çalışır.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Alternatif çözüm yolları geliştirir ve etkili olanı uygular.' },
@@ -296,7 +352,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Çıktı Kalitesi',
         weight: 25,
         maxPoints: 25,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Ürün veya dokümantasyon teslim edilmemiştir.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Ürün tamamlanmamıştır ve çalışma raporu eksiktir.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Ürün temel gereksinimleri karşılar ancak detayları eksiktir.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Ürün hedef kazanımlara tam uygundur ve düzenli raporlanmıştır.' },
@@ -312,6 +370,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
     description: '8 boyutlu detaylı performans değerlendirmesi: problem tanımı, değişkenler, güvenlik, düzenek, ölçüm, grafik, analiz ve sunum.',
     maxLevelPoints: 4,
     createdAt: '2026-10-10',
+    version: 1,
     criteria: [
       {
         id: 'c8-1',
@@ -319,7 +378,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Hazırlık',
         weight: 15,
         maxPoints: 15,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Hipotez yazılmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Hipotez kurmakta zorlanır.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Rehberlikle hipotez yazar.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Test edilebilir hipotez kurar.' },
@@ -332,7 +393,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Tasarım',
         weight: 10,
         maxPoints: 10,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Değişkenler belirtilmemiştir.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Değişkenleri ayırt edemez.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Temel değişkenleri kısmen belirler.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Bağımlı ve bağımsız değişkenleri doğru yazar.' },
@@ -345,7 +408,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Güvenlik',
         weight: 10,
         maxPoints: 10,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Güvenlik kurallarına uyulmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Güvenlik kurallarına dikkat etmez.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Hatırlatmalarla güvenlik kurallarına uyar.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Uygun malzemeyi seçer ve güvenli çalışır.' },
@@ -358,7 +423,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Uygulama',
         weight: 15,
         maxPoints: 15,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Düzenek kurulmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Düzeneği kuramaz.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Yardımla düzeneği kurar.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Düzeneği bağımsız ve doğru kurar.' },
@@ -371,7 +438,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Veri Toplama',
         weight: 15,
         maxPoints: 15,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Veri kaydedilmemiştir.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Ölçümler eksik veya hatalıdır.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Temel ölçümleri kaydeder.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Birimleriyle doğru ölçüm kaydeder.' },
@@ -384,7 +453,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Görselleştirme',
         weight: 10,
         maxPoints: 10,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Tablo veya grafik yoktur.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Tablo veya grafik oluşturamaz.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Basit tablo oluşturur.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Verileri uygun tablo ve grafiğe aktarır.' },
@@ -397,7 +468,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'Analiz',
         weight: 15,
         maxPoints: 15,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Sonuç analizi yapılmamıştır.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Sonuç çıkarımı yapamaz.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Yüzeysel sonuç yazar.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Bulguları hipotezle doğru ilişkilendirir.' },
@@ -410,7 +483,9 @@ export const INITIAL_RUBRICS: Rubric[] = [
         category: 'İletişim',
         weight: 10,
         maxPoints: 10,
+        required: true,
         levels: [
+          { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Rapor teslim edilmemiştir.' },
           { level: 1, label: 'Destek Gerekli', points: 1, description: 'Rapor düzensiz ve eksiktir.' },
           { level: 2, label: 'Gelişmekte', points: 2, description: 'Temel bölümleri içeren rapor sunar.' },
           { level: 3, label: 'Yetkin', points: 3, description: 'Bilimsel terminolojiyle düzenli rapor sunar.' },
@@ -427,33 +502,59 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
     id: 'ses-hist-1',
     title: '1. Ünite: Hücre ve Bölünmeler Mikroskop Gözlemi',
     classId: 'cls-7a',
+    classIds: ['cls-7a'],
     rubricId: 'rub-lab',
+    rubricSnapshot: JSON.parse(JSON.stringify(INITIAL_RUBRICS[0])),
     date: '2026-09-22',
     status: 'completed',
     mode: 'individual',
     generalSessionNote: 'Soğan zarı preparatı hazırlama ve mikroskop odaklama becerileri değerlendirildi.',
-    groups: [],
+    groups: [
+      {
+        id: 'grp-hist-1',
+        name: 'Grup 1:Ayırma Hunisi Ekibi',
+        studentIds: ['stu-101', 'stu-102', 'stu-103'],
+        criterionScores: { 'crit-hyp': 3, 'crit-setup': 3, 'crit-data': 3, 'crit-conc': 3 },
+        groupNote: 'İlk mikroskop çalışmasında uyumlu görev paylaşımı yaptılar.',
+        lastAppliedAt: '2026-09-22T11:15:00Z',
+      },
+    ],
     evaluations: {
       'stu-101': {
         studentId: 'stu-101',
         criterionScores: { 'crit-hyp': 3, 'crit-setup': 3, 'crit-data': 3, 'crit-conc': 2 },
+        groupCriterionScores: { 'crit-hyp': 3, 'crit-setup': 3, 'crit-data': 3, 'crit-conc': 3 },
+        groupNote: 'İlk mikroskop çalışmasında uyumlu görev paylaşımı yaptılar.',
+        groupId: 'grp-hist-1',
+        activeScoreSource: 'individual',
         note: 'Mikroskop odaklamasını hızlı yaptı, çizimlerde ölçek bilgisini eklemeli.',
         tags: ['Aktif Katılım', 'Dikkatli Gözlem'],
         updatedAt: '2026-09-22T11:20:00Z',
+        evaluatedViaGroup: 'Grup 1: Ayırma Hunisi Ekibi',
       },
       'stu-102': {
         studentId: 'stu-102',
         criterionScores: { 'crit-hyp': 2, 'crit-setup': 3, 'crit-data': 2, 'crit-conc': 2 },
+        groupCriterionScores: { 'crit-hyp': 3, 'crit-setup': 3, 'crit-data': 3, 'crit-conc': 3 },
+        groupNote: 'İlk mikroskop çalışmasında uyumlu görev paylaşımı yaptılar.',
+        groupId: 'grp-hist-1',
+        activeScoreSource: 'individual',
         note: 'Preparat hazırlamada başarılı, gözlem defteri notlarını detaylandırmalı.',
         tags: ['Gelişime Açık'],
         updatedAt: '2026-09-22T11:25:00Z',
+        evaluatedViaGroup: 'Grup 1: Ayırma Hunisi Ekibi',
       },
       'stu-103': {
         studentId: 'stu-103',
         criterionScores: { 'crit-hyp': 3, 'crit-setup': 4, 'crit-data': 3, 'crit-conc': 3 },
+        groupCriterionScores: { 'crit-hyp': 3, 'crit-setup': 3, 'crit-data': 3, 'crit-conc': 3 },
+        groupNote: 'İlk mikroskop çalışmasında uyumlu görev paylaşımı yaptılar.',
+        groupId: 'grp-hist-1',
+        activeScoreSource: 'individual',
         note: 'Hücre duvarı ve çekirdeği net ayırt etti, arkadaşlarına yardımcı oldu.',
         tags: ['Örnek Davranış', 'Tam Hazırlık'],
         updatedAt: '2026-09-22T11:30:00Z',
+        evaluatedViaGroup: 'Grup 1: Ayırma Hunisi Ekibi',
       },
       'stu-104': {
         studentId: 'stu-104',
@@ -483,33 +584,59 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
     id: 'ses-hist-2',
     title: '2. Ünite: Kuvvet ve Enerji Dönüşümleri Deneyi',
     classId: 'cls-7a',
+    classIds: ['cls-7a'],
     rubricId: 'rub-lab',
+    rubricSnapshot: JSON.parse(JSON.stringify(INITIAL_RUBRICS[0])),
     date: '2026-10-05',
     status: 'completed',
     mode: 'individual',
     generalSessionNote: 'Eğik düzlemde potansiyel-kinetik enerji dönüşümü ölçümleri yapıldı.',
-    groups: [],
+    groups: [
+      {
+        id: 'grp-hist-2',
+        name: 'Grup 1: Ayırma Hunisi Ekibi',
+        studentIds: ['stu-101', 'stu-102', 'stu-103'],
+        criterionScores: { 'crit-hyp': 3, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 3 },
+        groupNote: 'Eğik düzlem açılarını sistematik değiştirdiler.',
+        lastAppliedAt: '2026-10-05T10:12:00Z',
+      },
+    ],
     evaluations: {
       'stu-101': {
         studentId: 'stu-101',
         criterionScores: { 'crit-hyp': 3, 'crit-setup': 4, 'crit-data': 3, 'crit-conc': 4 },
+        groupCriterionScores: { 'crit-hyp': 3, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 3 },
+        groupNote: 'Eğik düzlem açılarını sistematik değiştirdiler.',
+        groupId: 'grp-hist-2',
+        activeScoreSource: 'individual',
         note: 'Önceki deneye göre veri analizi ve grafik çiziminde belirgin ilerleme var.',
         tags: ['Yüksek Gelişim', 'Analitik'],
         updatedAt: '2026-10-05T10:15:00Z',
+        evaluatedViaGroup: 'Grup 1: Ayırma Hunisi Ekibi',
       },
       'stu-102': {
         studentId: 'stu-102',
         criterionScores: { 'crit-hyp': 3, 'crit-setup': 3, 'crit-data': 3, 'crit-conc': 3 },
+        groupCriterionScores: { 'crit-hyp': 3, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 3 },
+        groupNote: 'Eğik düzlem açılarını sistematik değiştirdiler.',
+        groupId: 'grp-hist-2',
+        activeScoreSource: 'individual',
         note: 'Tablo düzeni çok gelişti, kronometre ölçümlerini hatasız kaydetti.',
         tags: ['Aktif Katılım'],
         updatedAt: '2026-10-05T10:20:00Z',
+        evaluatedViaGroup: 'Grup 1: Ayırma Hunisi Ekibi',
       },
       'stu-103': {
         studentId: 'stu-103',
         criterionScores: { 'crit-hyp': 4, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 3 },
+        groupCriterionScores: { 'crit-hyp': 3, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 3 },
+        groupNote: 'Eğik düzlem açılarını sistematik değiştirdiler.',
+        groupId: 'grp-hist-2',
+        activeScoreSource: 'individual',
         note: 'Sürtünme kaybını hesaba katarak harika bir yorum getirdi.',
         tags: ['Özgün Çıkarım'],
         updatedAt: '2026-10-05T10:25:00Z',
+        evaluatedViaGroup: 'Grup 1: Ayırma Hunisi Ekibi',
       },
       'stu-104': {
         studentId: 'stu-104',
@@ -539,7 +666,9 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
     id: 'ses-active-3',
     title: '3. Ünite: Karışımların Ayrıştırılması ve Yoğunluk',
     classId: 'cls-7a',
+    classIds: ['cls-7a'],
     rubricId: 'rub-lab',
+    rubricSnapshot: JSON.parse(JSON.stringify(INITIAL_RUBRICS[0])),
     date: '2026-10-16',
     status: 'in_progress',
     mode: 'individual',
@@ -572,7 +701,11 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
       'stu-101': {
         studentId: 'stu-101',
         criterionScores: { 'crit-hyp': 4, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 4 },
-        note: 'Hipotez ve değişken kontrolünü eksiksiz kurguladı. [Grup 1: Ayırma Hunisi Ekibi]: Zeytinyağı-su karışımını faz sınırını kaçırmadan hassas biçimde ayırdılar.',
+        groupCriterionScores: { 'crit-hyp': 4, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 4 },
+        groupNote: 'Zeytinyağı-su karışımını faz sınırını kaçırmadan hassas biçimde ayırdılar.',
+        groupId: 'grp-1',
+        activeScoreSource: 'individual',
+        note: 'Hipotez ve değişken kontrolünü eksiksiz kurguladı.',
         tags: ['Örnek Düzey', 'Grup Çalışması', 'Liderlik'],
         updatedAt: '2026-10-16T09:30:00Z',
         evaluatedViaGroup: 'Grup 1: Ayırma Hunisi Ekibi',
@@ -580,6 +713,10 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
       'stu-102': {
         studentId: 'stu-102',
         criterionScores: { 'crit-hyp': 4, 'crit-setup': 3, 'crit-data': 4, 'crit-conc': 3 },
+        groupCriterionScores: { 'crit-hyp': 4, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 4 },
+        groupNote: 'Zeytinyağı-su karışımını faz sınırını kaçırmadan hassas biçimde ayırdılar.',
+        groupId: 'grp-1',
+        activeScoreSource: 'individual',
         note: 'Veri tablosunda yoğunluk hesaplamalarını hatasız yaptı.',
         tags: ['Aktif Katılım', 'Grup Çalışması'],
         updatedAt: '2026-10-16T09:35:00Z',
@@ -588,6 +725,10 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
       'stu-103': {
         studentId: 'stu-103',
         criterionScores: { 'crit-hyp': 4, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 4 },
+        groupCriterionScores: { 'crit-hyp': 4, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 4 },
+        groupNote: 'Zeytinyağı-su karışımını faz sınırını kaçırmadan hassas biçimde ayırdılar.',
+        groupId: 'grp-1',
+        activeScoreSource: 'individual',
         note: 'Sınıf içi sunumda grup bulgularını çok akıcı özetledi.',
         tags: ['Örnek Düzey', 'Grup Çalışması'],
         updatedAt: '2026-10-16T09:40:00Z',
@@ -596,6 +737,7 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
       'stu-104': {
         studentId: 'stu-104',
         criterionScores: { 'crit-hyp': 3, 'crit-setup': 3, 'crit-data': 3, 'crit-conc': 3 },
+        activeScoreSource: 'individual',
         note: 'Dönem başına kıyasla deney düzeneği kurulumunda çok daha bağımsız.',
         tags: ['Kararlı Gelişim'],
         updatedAt: '2026-10-16T09:45:00Z',
@@ -603,6 +745,7 @@ export const INITIAL_SESSIONS: EvaluationSession[] = [
       'stu-105': {
         studentId: 'stu-105',
         criterionScores: { 'crit-hyp': 4, 'crit-setup': 4, 'crit-data': 4, 'crit-conc': 4 },
+        activeScoreSource: 'individual',
         note: 'Kütle/hacim grafiğini milimetrik doğrulukla çizdi.',
         tags: ['Analitik', 'Örnek Rapor'],
         updatedAt: '2026-10-16T09:50:00Z',
@@ -620,11 +763,4 @@ export const QUICK_OBSERVATION_TAGS: string[] = [
   'Düzenli Veri Kaydı',
   'Ek Rehberlik Gerekli',
   'Sorgulayıcı Yaklaşım',
-];
-
-export const SAMPLE_OCR_ROSTER_ITEMS = [
-  { studentNumber: '109', fullName: 'Beren Su Karahan' },
-  { studentNumber: '110', fullName: 'Kuzey Alp Tekin' },
-  { studentNumber: '111', fullName: 'Duru Erdem' },
-  { studentNumber: '112', fullName: 'Çınar Yavuz' },
 ];

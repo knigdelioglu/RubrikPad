@@ -1,798 +1,1235 @@
 import React, { useState, useMemo } from 'react';
 import {
-  Camera,
-  UserPlus,
-  Upload,
-  Trash2,
+  Users,
   Plus,
-  FileSpreadsheet,
+  Trash2,
+  Camera,
+  FileText,
   Check,
-  ScanLine,
-  X,
+  AlertCircle,
+  Loader2,
+  School,
+  Edit3,
+  History,
+  Archive,
+  RotateCcw,
+  ShieldCheck,
+  WifiOff,
 } from 'lucide-react';
-import type { Classroom, Student, EvaluationSession, Rubric } from '../types.ts';
+import type {
+  Classroom,
+  Student,
+  EvaluationSession,
+  ParsedRosterRow,
+} from '../types.ts';
 import {
   parseStudentRosterText,
-  calculateWeightedScore,
+  validateStudentRecord,
+  checkStudentDeletionImpact,
+  splitTurkishFullName,
 } from '../utils/rubricLogic.ts';
-import { SAMPLE_OCR_ROSTER_ITEMS } from '../data/seedData.ts';
 
 interface ClassroomManagerProps {
   classrooms: Classroom[];
   students: Student[];
-  sessions: EvaluationSession[];
-  rubrics: Rubric[];
+  sessions?: EvaluationSession[];
+  activeClassId: string;
+  onSelectClass: (id: string) => void;
   onAddClassroom: (cls: Classroom) => void;
   onAddStudents: (newStudents: Student[]) => void;
-  onRemoveStudent: (studentId: string) => void;
-  onSelectStudentForProgress: (studentId: string) => void;
+  onUpdateStudent?: (updated: Student) => void;
+  onDeleteStudent: (studentId: string) => void;
 }
 
 export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
   classrooms,
   students,
-  sessions,
-  rubrics,
+  sessions = [],
+  activeClassId,
+  onSelectClass,
   onAddClassroom,
   onAddStudents,
-  onRemoveStudent,
-  onSelectStudentForProgress,
+  onUpdateStudent,
+  onDeleteStudent,
 }) => {
-  const [selectedClassId, setSelectedClassId] = useState<string>(
-    () => classrooms[0]?.id || ''
-  );
-
-  // Manual single student form
-  const [manualNumber, setManualNumber] = useState('');
-  const [manualName, setManualName] = useState('');
-  const [manualError, setManualError] = useState('');
-
-  // New class form
-  const [isAddingClass, setIsAddingClass] = useState(false);
-  const [newClassName, setNewClassName] = useState('');
-  const [newClassSubject, setNewClassSubject] = useState('');
-  const [newClassError, setNewClassError] = useState('');
-
-  // OCR & Bulk Import Modal state
-  const [importMode, setImportMode] = useState<'none' | 'ocr' | 'bulk'>('none');
-  const [ocrLoading, setOcrLoading] = useState(false);
-  const [ocrStatusMessage, setOcrStatusMessage] = useState('');
-  const [ocrPreviewItems, setOcrPreviewItems] = useState<
-    Array<{ studentNumber: string; fullName: string }>
-  >([]);
-  const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null);
-  const [bulkText, setBulkText] = useState('');
-
   const activeClassroom = useMemo(
-    () => classrooms.find((c) => c.id === selectedClassId) || classrooms[0],
-    [classrooms, selectedClassId]
+    () => classrooms.find((c) => c.id === activeClassId) || classrooms[0],
+    [classrooms, activeClassId]
   );
+
+  const [showArchived, setShowArchived] = useState(false);
 
   const classStudents = useMemo(
     () =>
       students
-        .filter((s) => s.classId === activeClassroom?.id)
-        .sort((a, b) => a.studentNumber.localeCompare(b.studentNumber, undefined, { numeric: true })),
+        .filter(
+          (s) =>
+            s.classId === activeClassroom?.id &&
+            (showArchived ? true : !s.archived)
+        )
+        .sort((a, b) =>
+          a.studentNumber.localeCompare(b.studentNumber, undefined, {
+            numeric: true,
+          })
+        ),
+    [students, activeClassroom, showArchived]
+  );
+
+  const archivedCount = useMemo(
+    () =>
+      students.filter((s) => s.classId === activeClassroom?.id && s.archived)
+        .length,
     [students, activeClassroom]
   );
 
-  const rubricsById = useMemo(() => {
-    const map: Record<string, Rubric> = {};
-    for (const r of rubrics) map[r.id] = r;
-    return map;
-  }, [rubrics]);
+  // New Classroom Form State
+  const [showNewClassForm, setShowNewClassForm] = useState(false);
+  const [newClassName, setNewClassName] = useState('');
+  const [newClassGrade, setNewClassGrade] = useState('7. Sınıf');
+  const [newClassSubject, setNewClassSubject] = useState('Fen Bilimleri');
 
-  // Calculate each student's session count and average score
-  const studentMetrics = useMemo(() => {
-    const map: Record<string, { evalCount: number; avgScore: number | null }> = {};
-    for (const stu of classStudents) {
-      let count = 0;
-      let sum = 0;
-      for (const ses of sessions) {
-        const ev = ses.evaluations[stu.id];
-        const rub = rubricsById[ses.rubricId];
-        if (ev && rub) {
-          const calc = calculateWeightedScore(rub, ev.criterionScores);
-          if (calc.completedCriteriaCount > 0) {
-            count += 1;
-            sum += calc.scoreOutOf100;
-          }
-        }
+  // Single Student Add Form (Separate Ad & Soyad, P1 #3 & #4)
+  const [singleStudentNum, setSingleStudentNum] = useState('');
+  const [singleFirstName, setSingleFirstName] = useState('');
+  const [singleLastName, setSingleLastName] = useState('');
+  const [singleStudentError, setSingleStudentError] = useState<string | null>(
+    null
+  );
+
+  // Editing existing student state (P1 #4)
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editNum, setEditNum] = useState('');
+  const [editFirst, setEditFirst] = useState('');
+  const [editLast, setEditLast] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Audit history modal state (P1 #4)
+  const [historyStudent, setHistoryStudent] = useState<Student | null>(null);
+
+  // Import Mode: 'local_text' (Offline safe) | 'cloud_ocr' (Controlled API with privacy consent)
+  const [importTab, setImportTab] = useState<'local_text' | 'cloud_ocr'>(
+    'local_text'
+  );
+  const [bulkText, setBulkText] = useState('');
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [privacyConsent, setPrivacyConsent] = useState(false);
+  const [remainingOcrQuota, setRemainingOcrQuota] = useState<number | null>(
+    null
+  );
+
+  // Editable Verification Table for OCR / Bulk Import (P1 #3 & P0 #5)
+  const [verificationRows, setVerificationRows] = useState<ParsedRosterRow[]>(
+    []
+  );
+  const [importSuccessBanner, setImportSuccessBanner] = useState<string | null>(
+    null
+  );
+
+  const existingNumbersSet = useMemo(
+    () =>
+      new Set(
+        students
+          .filter((s) => s.classId === activeClassroom?.id && !s.archived)
+          .map((s) => s.studentNumber)
+      ),
+    [students, activeClassroom]
+  );
+
+  const revalidateRows = (rows: ParsedRosterRow[]): ParsedRosterRow[] => {
+    const seen = new Set<string>();
+    return rows.map((r) => {
+      const num = r.studentNumber.trim();
+      const first = r.firstName.trim();
+      const last = r.lastName.trim();
+      const errs: string[] = [];
+
+      if (!num) {
+        errs.push('Okul numarası eksik');
+      } else if (!/^\d+$/.test(num)) {
+        errs.push('Okul numarası rakam olmalı');
+      } else if (existingNumbersSet.has(num) || seen.has(num)) {
+        errs.push('Mükerrer okul numarası');
       }
-      map[stu.id] = {
-        evalCount: count,
-        avgScore: count > 0 ? Math.round(sum / count) : null,
-      };
-    }
-    return map;
-  }, [classStudents, sessions, rubricsById]);
 
-  const handleManualAddStudent = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualNumber.trim() || !manualName.trim()) {
-      setManualError('Lütfen öğrenci numarası ve ad soyad alanlarını doldurun.');
-      return;
-    }
-    const newStu: Student = {
-      id: `stu-${Date.now()}`,
-      studentNumber: manualNumber.trim(),
-      fullName: manualName.trim(),
-      classId: activeClassroom.id,
-    };
-    onAddStudents([newStu]);
-    setManualNumber('');
-    setManualName('');
-    setManualError('');
+      if (first.length < 2) {
+        errs.push('Ad en az 2 harf olmalı');
+      }
+      if (last.length < 2) {
+        errs.push('Soyad en az 2 harf olmalı');
+      }
+
+      if (num) seen.add(num);
+
+      return {
+        studentNumber: num,
+        firstName: first,
+        lastName: last,
+        fullName: `${first} ${last}`.trim(),
+        isValid: errs.length === 0,
+        validationErrors: errs,
+      };
+    });
   };
 
   const handleCreateClassroom = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newClassName.trim() || !newClassSubject.trim()) {
-      setNewClassError('Sınıf adı ve ders alanları zorunludur.');
-      return;
-    }
-    const cls: Classroom = {
+    if (!newClassName.trim()) return;
+    const newCls: Classroom = {
       id: `cls-${Date.now()}`,
       name: newClassName.trim(),
-      gradeLevel: newClassName.trim().split('-')[0] + '. Sınıf',
-      subject: newClassSubject.trim(),
+      gradeLevel: newClassGrade.trim() || 'Genel',
+      subject: newClassSubject.trim() || 'Genel Ders',
       academicYear: '2026-2027',
     };
-    onAddClassroom(cls);
-    setSelectedClassId(cls.id);
+    onAddClassroom(newCls);
+    onSelectClass(newCls.id);
     setNewClassName('');
-    setNewClassSubject('');
-    setNewClassError('');
-    setIsAddingClass(false);
+    setShowNewClassForm(false);
   };
 
-  // Handle photo file selection for Gemini OCR
-  const handleFileUploadOcr = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAddSingleStudent = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeClassroom) return;
+    setSingleStudentError(null);
+
+    const validation = validateStudentRecord(
+      {
+        studentNumber: singleStudentNum,
+        firstName: singleFirstName,
+        lastName: singleLastName,
+      },
+      students.filter((s) => s.classId === activeClassroom.id)
+    );
+
+    if (!validation.isValid) {
+      setSingleStudentError(validation.error || 'Geçersiz öğrenci bilgisi.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const first = singleFirstName.trim();
+    const last = singleLastName.trim();
+    const newStu: Student = {
+      id: `stu-${Date.now()}`,
+      studentNumber: singleStudentNum.trim(),
+      firstName: first,
+      lastName: last,
+      fullName: `${first} ${last}`,
+      classId: activeClassroom.id,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      auditLog: [
+        {
+          timestamp: nowIso,
+          action: 'created',
+          details: `Öğrenci kaydı oluşturuldu (#${singleStudentNum.trim()} ${first} ${last}).`,
+        },
+      ],
+    };
+    onAddStudents([newStu]);
+    setSingleStudentNum('');
+    setSingleFirstName('');
+    setSingleLastName('');
+  };
+
+  const handleStartEditStudent = (stu: Student) => {
+    const split = splitTurkishFullName(stu.fullName);
+    setEditingStudentId(stu.id);
+    setEditNum(stu.studentNumber);
+    setEditFirst(stu.firstName || split.firstName);
+    setEditLast(stu.lastName || split.lastName);
+    setEditError(null);
+  };
+
+  const handleSaveEditStudent = (stu: Student) => {
+    if (!activeClassroom || !onUpdateStudent) return;
+    const validation = validateStudentRecord(
+      {
+        studentNumber: editNum,
+        firstName: editFirst,
+        lastName: editLast,
+      },
+      students.filter((s) => s.classId === activeClassroom.id),
+      stu.id
+    );
+
+    if (!validation.isValid) {
+      setEditError(validation.error || 'Geçersiz bilgi.');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const first = editFirst.trim();
+    const last = editLast.trim();
+    const full = `${first} ${last}`;
+    const updated: Student = {
+      ...stu,
+      studentNumber: editNum.trim(),
+      firstName: first,
+      lastName: last,
+      fullName: full,
+      updatedAt: nowIso,
+      auditLog: [
+        {
+          timestamp: nowIso,
+          action: 'updated',
+          details: `Kayıt güncellendi: #${stu.studentNumber} ${stu.fullName} -> #${editNum.trim()} ${full}`,
+        },
+        ...(stu.auditLog || []),
+      ],
+    };
+    onUpdateStudent(updated);
+    setEditingStudentId(null);
+    setEditError(null);
+  };
+
+  const handleParseLocalRoster = () => {
+    setOcrError(null);
+    const parsed = parseStudentRosterText(bulkText, existingNumbersSet);
+    if (parsed.length === 0) {
+      setOcrError(
+        'Ayrıştırılacak öğrenci satırı bulunamadı. Lütfen her satıra "OkulNo Ad Soyad" formatında giriş yapın.'
+      );
+      return;
+    }
+    setVerificationRows(parsed);
+  };
+
+  const handleOcrFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setOcrError(null);
 
-    setOcrLoading(true);
-    setOcrStatusMessage('Görsel Gemini OCR motoruna gönderiliyor...');
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64Data = reader.result as string;
-      setUploadedImagePreview(base64Data);
-
-      try {
-        const res = await fetch('/api/ocr-students', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: base64Data,
-            mimeType: file.type || 'image/jpeg',
-          }),
-        });
-        const data = await res.json();
-        if (res.ok && Array.isArray(data.students) && data.students.length > 0) {
-          setOcrPreviewItems(data.students);
-          setOcrStatusMessage(
-            `Fotoğraftan ${data.students.length} öğrenci başarıyla okundu.`
-          );
-        } else {
-          // Use deterministic fallback extraction so teacher can still complete workflow
-          setOcrPreviewItems(SAMPLE_OCR_ROSTER_ITEMS);
-          setOcrStatusMessage(
-            data.error
-              ? `${data.error} — Örnek OCR tablosu yüklendi, düzenleyerek aktarabilirsiniz.`
-              : 'Görsel analiz edildi ve öğrenci listesi çıkartıldı.'
-          );
-        }
-      } catch {
-        setOcrPreviewItems(SAMPLE_OCR_ROSTER_ITEMS);
-        setOcrStatusMessage(
-          'Bağlantı çevrimdışı modda: Örnek OCR tarama sonuçları listelendi.'
-        );
-      } finally {
-        setOcrLoading(false);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleRunSampleOcrScan = () => {
-    setOcrLoading(true);
-    setOcrStatusMessage('Örnek e-Okul sınıf listesi fotoğrafı OCR ile taranıyor...');
-    setTimeout(() => {
-      setOcrLoading(false);
-      setOcrPreviewItems(SAMPLE_OCR_ROSTER_ITEMS);
-      setOcrStatusMessage(
-        '4 öğrenci (No: 109–112) fotoğraftan OCR ile başarıyla ayrıştırıldı.'
+    // P0 #8: Require explicit privacy consent before external upload
+    if (!privacyConsent) {
+      setOcrError(
+        'Görseli harici OCR servisine göndermeden önce lütfen KVKK / Veri Gizliliği onay kutusunu işaretleyin veya Yerel (Çevrimdışı) Metin Aktarımını kullanın.'
       );
-    }, 350);
+      e.target.value = '';
+      return;
+    }
+
+    setOcrLoading(true);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64Data = result.split(',')[1] || '';
+          resolve(base64Data);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const response = await fetch('/api/ocr-roster', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base64Image: base64,
+          mimeType: file.type || 'image/jpeg',
+          privacyConsentConfirmed: true,
+        }),
+      });
+
+      const data = await response.json();
+      if (typeof data.remainingQuota === 'number') {
+        setRemainingOcrQuota(data.remainingQuota);
+      }
+
+      if (!response.ok) {
+        // P0 #5: NEVER populate fake/sample students when OCR fails!
+        setVerificationRows([]);
+        setOcrError(
+          data.error ||
+            'OCR taraması başarısız oldu. Sahte veya örnek kayıt eklenmedi; lütfen görseli kontrol edin veya Yerel Metin Aktarımını kullanın.'
+        );
+        return;
+      }
+
+      if (Array.isArray(data.students) && data.students.length > 0) {
+        const rawRows: ParsedRosterRow[] = data.students.map(
+          (item: {
+            studentNumber?: string;
+            firstName?: string;
+            lastName?: string;
+            fullName?: string;
+          }) => {
+            const split = splitTurkishFullName(item.fullName || '');
+            const first = (item.firstName || split.firstName || '').trim();
+            const last = (item.lastName || split.lastName || '').trim();
+            return {
+              studentNumber: String(item.studentNumber || '').trim(),
+              firstName: first,
+              lastName: last,
+              fullName: `${first} ${last}`.trim(),
+              isValid: true,
+              validationErrors: [],
+            };
+          }
+        );
+        setVerificationRows(revalidateRows(rawRows));
+      } else {
+        setVerificationRows([]);
+        setOcrError(
+          'Görselde geçerli öğrenci satırı tespit edilemedi. Sahte kayıt üretilmedi.'
+        );
+      }
+    } catch {
+      // P0 #5: Never fall back to fake sample students
+      setVerificationRows([]);
+      setOcrError(
+        'Sunucu bağlantısı kurulamadı. Çevrimdışı (Yerel) Metin/Tablo Aktarım modunu kullanarak internet olmadan öğrenci ekleyebilirsiniz.'
+      );
+    } finally {
+      setOcrLoading(false);
+      e.target.value = '';
+    }
   };
 
-  const handleConfirmOcrImport = () => {
-    if (ocrPreviewItems.length === 0 || !activeClassroom) return;
-    const created: Student[] = ocrPreviewItems
-      .filter((item) => item.fullName.trim().length > 0)
-      .map((item, idx) => ({
-        id: `stu-ocr-${Date.now()}-${idx}`,
-        studentNumber: item.studentNumber.trim() || String(200 + idx),
-        fullName: item.fullName.trim(),
-        classId: activeClassroom.id,
-      }));
-    onAddStudents(created);
-    setOcrPreviewItems([]);
-    setUploadedImagePreview(null);
-    setOcrStatusMessage('');
-    setImportMode('none');
-  };
+  const handleCommitVerifiedRoster = () => {
+    if (!activeClassroom || verificationRows.length === 0) return;
+    const validRows = verificationRows.filter((r) => r.isValid);
+    if (validRows.length === 0) {
+      setOcrError(
+        'Aktarılacak geçerli öğrenci satırı bulunmuyor. Lütfen eksik okul numarası veya soyadı hatalarını tabloda düzeltin.'
+      );
+      return;
+    }
 
-  const handleConfirmBulkTextImport = (e: React.FormEvent) => {
-    e.preventDefault();
-    const parsed = parseStudentRosterText(bulkText, 120);
-    if (parsed.length === 0 || !activeClassroom) return;
-    const created: Student[] = parsed.map((item, idx) => ({
-      id: `stu-bulk-${Date.now()}-${idx}`,
-      studentNumber: item.studentNumber,
-      fullName: item.fullName,
+    const nowIso = new Date().toISOString();
+    const created: Student[] = validRows.map((item, idx) => ({
+      id: `stu-${Date.now()}-${idx}`,
+      studentNumber: item.studentNumber.trim(),
+      firstName: item.firstName.trim(),
+      lastName: item.lastName.trim(),
+      fullName: `${item.firstName.trim()} ${item.lastName.trim()}`,
       classId: activeClassroom.id,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      auditLog: [
+        {
+          timestamp: nowIso,
+          action: 'created',
+          details: `Doğrulanmış tablo/OCR aktarımı ile eklendi (#${item.studentNumber.trim()}).`,
+        },
+      ],
     }));
+
     onAddStudents(created);
+    setVerificationRows([]);
     setBulkText('');
-    setImportMode('none');
+    setImportSuccessBanner(
+      `${created.length} öğrenci doğrulamadan geçerek ${activeClassroom.name} listesine eklendi.`
+    );
+    setTimeout(() => setImportSuccessBanner(null), 4000);
   };
 
-  if (!activeClassroom) return null;
+  const invalidRowCount = verificationRows.filter((r) => !r.isValid).length;
+  const validRowCount = verificationRows.filter((r) => r.isValid).length;
 
   return (
-    <div className="space-y-6">
-      {/* Classroom Selector Header */}
-      <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">
-              Sınıf ve Öğrenci Yönetimi
-            </h1>
-            <p className="text-sm text-slate-600 mt-1">
-              Öğrenci listelerini elle ekleyin, toplu yapıştırın veya basılı sınıf listesi fotoğrafından OCR teknolojisiyle aktarın.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setImportMode('ocr');
-                if (ocrPreviewItems.length === 0) {
-                  setOcrPreviewItems(SAMPLE_OCR_ROSTER_ITEMS);
-                  setOcrStatusMessage(
-                    'Hazır: Kendi fotoğrafınızı yükleyebilir veya taranmış listeyi onaylayabilirsiniz.'
-                  );
-                }
-              }}
-              className="px-4 py-2.5 text-xs font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-800 transition-colors flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <Camera className="w-4 h-4" />
-              Fotoğraftan OCR ile Liste Aktar
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setImportMode('bulk')}
-              className="px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              Metin / Liste Yapıştır
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsAddingClass((prev) => !prev)}
-              className="px-3.5 py-2.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-              Yeni Sınıf Ekle
-            </button>
-          </div>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">
+            Sınıflar ve Öğrenci Listesi Yönetimi
+          </h1>
+          <p className="text-sm text-slate-600 mt-0.5">
+            Ad-Soyad-Okul No doğrulamalı öğrenci yönetimi, kayıt geçmişi, ilişkili kayıt koruma ve çevrimdışı/kontrollü OCR aktarımı.
+          </p>
         </div>
 
-        {/* Class Filter Tabs */}
-        <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-lg w-fit">
-          {classrooms.map((cls) => {
-            const count = students.filter((s) => s.classId === cls.id).length;
-            const active = cls.id === activeClassroom.id;
-            return (
-              <button
-                key={cls.id}
-                type="button"
-                onClick={() => setSelectedClassId(cls.id)}
-                className={`px-4 py-2 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  active
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {cls.name} · {cls.subject} ({count})
-              </button>
-            );
-          })}
-        </div>
-
-        {isAddingClass && (
-          <form
-            onSubmit={handleCreateClassroom}
-            className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3"
-          >
-            <h3 className="text-sm font-bold text-slate-900">Yeni Sınıf Oluştur</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="new-class-name"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Sınıf / Şube Adı
-                </label>
-                <input
-                  id="new-class-name"
-                  type="text"
-                  value={newClassName}
-                  onChange={(e) => {
-                    setNewClassName(e.target.value);
-                    setNewClassError('');
-                  }}
-                  placeholder="Örn: 7-B Sınıfı"
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="new-class-subject"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Ders / Branş Adı
-                </label>
-                <input
-                  id="new-class-subject"
-                  type="text"
-                  value={newClassSubject}
-                  onChange={(e) => {
-                    setNewClassSubject(e.target.value);
-                    setNewClassError('');
-                  }}
-                  placeholder="Örn: Fen Bilimleri"
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg"
-                />
-              </div>
-            </div>
-            {newClassError && <p className="text-xs text-red-600">{newClassError}</p>}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsAddingClass(false)}
-                className="px-3 py-1.5 text-xs font-medium text-slate-600 cursor-pointer"
-              >
-                İptal
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 text-xs font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-800 cursor-pointer"
-              >
-                Sınıfı Kaydet
-              </button>
-            </div>
-          </form>
-        )}
-      </section>
-
-      {/* OCR Photo Import Panel */}
-      {importMode === 'ocr' && (
-        <section
-          aria-label="OCR ile Öğrenci Listesi Aktarımı"
-          className="bg-white border border-sky-200 rounded-xl p-6 space-y-5"
+        <button
+          type="button"
+          onClick={() => setShowNewClassForm(!showNewClassForm)}
+          className="px-4 py-2.5 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-4 border-b border-slate-200">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <ScanLine className="w-5 h-5 text-sky-700" />
-                Fotoğraftan OCR ile Sınıf Listesi Aktarımı ({activeClassroom.name})
-              </h2>
-              <p className="text-xs text-slate-600 mt-0.5">
-                Basılı yoklama fişi veya e-Okul öğrenci listesi fotoğrafını yükleyin; Gemini OCR öğrenci numarası ve isimleri otomatik ayrıştırır.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setImportMode('none')}
-              className="text-xs font-semibold text-slate-500 hover:text-slate-900 self-start sm:self-center flex items-center gap-1 cursor-pointer"
-            >
-              <span>Paneli Kapat</span>
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <Plus className="w-4 h-4" />
+          Yeni Sınıf Ekle
+        </button>
+      </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left: Upload / Camera Trigger & Visual Roster Preview */}
-            <div className="lg:col-span-5 space-y-4">
-              <div className="p-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 space-y-3">
-                <label
-                  htmlFor="ocr-file-input"
-                  className="block text-xs font-bold text-slate-800"
-                >
-                  1. Sınıf Listesi Fotoğrafı Seçin veya Kamerayla Çekin
-                </label>
-                <input
-                  id="ocr-file-input"
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handleFileUploadOcr}
-                  className="block w-full text-xs text-slate-600 file:mr-3 file:py-2 file:px-3.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-sky-700 file:text-white hover:file:bg-sky-800 cursor-pointer"
-                />
-
-                <div className="pt-2 border-t border-slate-200 flex items-center justify-between gap-2">
-                  <span className="text-xs text-slate-500">
-                    Cihazınızda liste fotoğrafı yoksa:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleRunSampleOcrScan}
-                    className="px-3 py-1.5 text-xs font-semibold text-sky-800 bg-sky-100 rounded-md hover:bg-sky-200 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    Örnek Liste Fotoğrafını Tara
-                  </button>
-                </div>
-              </div>
-
-              {/* Simulated or Uploaded Document Preview */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-100/70 space-y-2">
-                <div className="flex items-center justify-between text-xs text-slate-500">
-                  <span className="font-semibold text-slate-700">
-                    Taranan Belge Önizlemesi
-                  </span>
-                  <span>OCR Algılama Aktif</span>
-                </div>
-                {uploadedImagePreview ? (
-                  <img
-                    src={uploadedImagePreview}
-                    alt="Yüklenen sınıf listesi"
-                    referrerPolicy="no-referrer"
-                    className="w-full max-h-48 object-contain rounded-lg border border-slate-300 bg-white"
-                  />
-                ) : (
-                  <div className="bg-white p-3.5 rounded-lg border border-slate-300 font-mono-num text-xs text-slate-800 space-y-1.5 shadow-2xs">
-                    <div className="text-[11px] font-bold text-slate-500 border-b border-slate-200 pb-1">
-                      T.C. MEB E-OKUL SINIF YOKLAMA LİSTESİ — {activeClassroom.name}
-                    </div>
-                    <div className="flex justify-between bg-sky-50/80 px-2 py-1 rounded border border-sky-200">
-                      <span>109</span>
-                      <span className="font-semibold">BEREN SU KARAHAN</span>
-                    </div>
-                    <div className="flex justify-between bg-sky-50/80 px-2 py-1 rounded border border-sky-200">
-                      <span>110</span>
-                      <span className="font-semibold">KUZEY ALP TEKİN</span>
-                    </div>
-                    <div className="flex justify-between bg-sky-50/80 px-2 py-1 rounded border border-sky-200">
-                      <span>111</span>
-                      <span className="font-semibold">DURU ERDEM</span>
-                    </div>
-                    <div className="flex justify-between bg-sky-50/80 px-2 py-1 rounded border border-sky-200">
-                      <span>112</span>
-                      <span className="font-semibold">ÇINAR YAVUZ</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right: Extracted OCR Student List Table */}
-            <div className="lg:col-span-7 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900">
-                  2. OCR ile Ayrıştırılan Öğrenciler ({ocrPreviewItems.length})
-                </h3>
-                {ocrLoading && (
-                  <span className="text-xs font-medium text-sky-700">
-                    Taranıyor...
-                  </span>
-                )}
-              </div>
-
-              {ocrStatusMessage && (
-                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">
-                  {ocrStatusMessage}
-                </div>
-              )}
-
-              <div className="border border-slate-200 rounded-lg overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
-                      <th className="py-2.5 px-3 w-28">Öğrenci No</th>
-                      <th className="py-2.5 px-3">Ad Soyad</th>
-                      <th className="py-2.5 px-3 w-16 text-right">Sil</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-sm">
-                    {ocrPreviewItems.map((item, idx) => (
-                      <tr key={idx}>
-                        <td className="py-2 px-3">
-                          <input
-                            type="text"
-                            aria-label={`OCR Öğrenci No ${idx + 1}`}
-                            value={item.studentNumber}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setOcrPreviewItems((prev) =>
-                                prev.map((row, i) =>
-                                  i === idx ? { ...row, studentNumber: val } : row
-                                )
-                              );
-                            }}
-                            className="w-full px-2 py-1 text-xs font-mono-num border border-slate-300 rounded"
-                          />
-                        </td>
-                        <td className="py-2 px-3">
-                          <input
-                            type="text"
-                            aria-label={`OCR Öğrenci Ad Soyad ${idx + 1}`}
-                            value={item.fullName}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setOcrPreviewItems((prev) =>
-                                prev.map((row, i) =>
-                                  i === idx ? { ...row, fullName: val } : row
-                                )
-                              );
-                            }}
-                            className="w-full px-2 py-1 text-xs font-medium border border-slate-300 rounded"
-                          />
-                        </td>
-                        <td className="py-2 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setOcrPreviewItems((prev) =>
-                                prev.filter((_, i) => i !== idx)
-                              )
-                            }
-                            aria-label={`${item.fullName} satırını kaldır`}
-                            className="text-slate-400 hover:text-red-600 p-1 cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setImportMode('none')}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
-                >
-                  Vazgeç
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmOcrImport}
-                  disabled={ocrPreviewItems.length === 0}
-                  className="px-4 py-2.5 text-xs font-semibold text-white bg-emerald-700 rounded-lg hover:bg-emerald-800 disabled:opacity-50 transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Check className="w-4 h-4" />
-                  {ocrPreviewItems.length} Öğrenciyi {activeClassroom.name} Listesine Aktar
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Bulk Text Import Panel */}
-      {importMode === 'bulk' && (
-        <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-slate-900">
-              Toplu Öğrenci Listesi Yapıştır ({activeClassroom.name})
-            </h2>
-            <button
-              type="button"
-              onClick={() => setImportMode('none')}
-              className="text-xs font-semibold text-slate-500 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
-            >
-              <span>Kapat</span>
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <form onSubmit={handleConfirmBulkTextImport} className="space-y-3">
+      {/* New Classroom Drawer */}
+      {showNewClassForm && (
+        <form
+          onSubmit={handleCreateClassroom}
+          className="bg-white border border-slate-200 rounded-xl p-5 grid grid-cols-1 sm:grid-cols-4 gap-4 items-end"
+        >
+          <div>
             <label
-              htmlFor="bulk-roster-textarea"
-              className="block text-xs text-slate-600"
+              htmlFor="new-cls-name"
+              className="block text-xs font-semibold text-slate-700 mb-1"
             >
-              Her satıra bir öğrenci gelecek şekilde (Örn: <code>109 - Beren Su Karahan</code>) yapıştırın:
+              Sınıf / Şube Adı
             </label>
-            <textarea
-              id="bulk-roster-textarea"
-              rows={5}
-              value={bulkText}
-              onChange={(e) => setBulkText(e.target.value)}
-              placeholder={"109 - Beren Su Karahan\n110 - Kuzey Alp Tekin\n111 - Duru Erdem"}
-              className="w-full px-3.5 py-2.5 text-sm font-mono-num border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-600"
+            <input
+              id="new-cls-name"
+              type="text"
+              required
+              value={newClassName}
+              onChange={(e) => setNewClassName(e.target.value)}
+              placeholder="Örn: 7-B Sınıfı"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
             />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setImportMode('none')}
-                className="px-4 py-2 text-xs font-medium text-slate-600 cursor-pointer"
-              >
-                İptal
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 text-xs font-semibold text-white bg-sky-700 rounded-lg hover:bg-sky-800 cursor-pointer"
-              >
-                Listeyi Ayrıştır ve Ekle
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
-
-      {/* Main Grid: Manual Add Student + Roster Table */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left: Manual Add Student Form */}
-        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <UserPlus className="w-4 h-4 text-sky-700" />
-            Elle Öğrenci Ekle ({activeClassroom.name})
-          </h2>
-          <form onSubmit={handleManualAddStudent} className="space-y-3.5">
-            <div>
-              <label
-                htmlFor="student-number-input"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Okul Numarası
-              </label>
-              <input
-                id="student-number-input"
-                type="text"
-                value={manualNumber}
-                onChange={(e) => {
-                  setManualNumber(e.target.value);
-                  setManualError('');
-                }}
-                placeholder="Örn: 115"
-                className="w-full px-3.5 py-2 text-sm font-mono-num bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-600"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="student-name-input"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Öğrenci Adı ve Soyadı
-              </label>
-              <input
-                id="student-name-input"
-                type="text"
-                value={manualName}
-                onChange={(e) => {
-                  setManualName(e.target.value);
-                  setManualError('');
-                }}
-                placeholder="Örn: Çağan Demirci"
-                className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-600"
-              />
-            </div>
-
-            {manualError && (
-              <p className="text-xs text-red-600 font-medium">{manualError}</p>
-            )}
-
+          </div>
+          <div>
+            <label
+              htmlFor="new-cls-grade"
+              className="block text-xs font-semibold text-slate-700 mb-1"
+            >
+              Kademe / Seviye
+            </label>
+            <input
+              id="new-cls-grade"
+              type="text"
+              value={newClassGrade}
+              onChange={(e) => setNewClassGrade(e.target.value)}
+              placeholder="Örn: 7. Sınıf"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="new-cls-subject"
+              className="block text-xs font-semibold text-slate-700 mb-1"
+            >
+              Ders / Branş
+            </label>
+            <input
+              id="new-cls-subject"
+              type="text"
+              value={newClassSubject}
+              onChange={(e) => setNewClassSubject(e.target.value)}
+              placeholder="Örn: Fen Bilimleri"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+            />
+          </div>
+          <div className="flex items-center gap-2">
             <button
               type="submit"
-              className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 cursor-pointer"
             >
-              Öğrenciyi Sınıfa Ekle
+              Kaydet
             </button>
-          </form>
-        </div>
+            <button
+              type="button"
+              onClick={() => setShowNewClassForm(false)}
+              className="px-3 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer"
+            >
+              İptal
+            </button>
+          </div>
+        </form>
+      )}
 
-        {/* Right: Classroom Student Table */}
-        <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
+      {/* Classroom Selector Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {classrooms.map((cls) => {
+          const isSelected = activeClassroom?.id === cls.id;
+          const count = students.filter(
+            (s) => s.classId === cls.id && !s.archived
+          ).length;
+          return (
+            <button
+              key={cls.id}
+              type="button"
+              onClick={() => onSelectClass(cls.id)}
+              className={`text-left p-4 rounded-xl border transition-all cursor-pointer ${
+                isSelected
+                  ? 'bg-teal-50/90 border-teal-700 ring-1 ring-teal-700'
+                  : 'bg-white border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800">
+                  <School className="w-3.5 h-3.5" />
+                  {cls.gradeLevel}
+                </span>
+                <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                  {count} Öğrenci
+                </span>
+              </div>
+              <div className="text-lg font-bold text-slate-900">{cls.name}</div>
+              <div className="text-xs text-slate-600 mt-0.5">
+                {cls.subject} · {cls.academicYear}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {importSuccessBanner && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2"
+        >
+          <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+          {importSuccessBanner}
+        </div>
+      )}
+
+      {/* Main Two-Column Area: Current Roster & Smart Import */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left: Existing Students List + Single Add + Edit + Audit Log */}
+        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
             <div>
-              <h2 className="text-base font-bold text-slate-900">
-                {activeClassroom.name} Öğrenci Listesi ({classStudents.length} Öğrenci)
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-4 h-4 text-teal-700" />
+                {activeClassroom?.name} Öğrenci Listesi ({classStudents.length})
               </h2>
               <p className="text-xs text-slate-500">
-                Ders: {activeClassroom.subject} · Akademik Yıl: {activeClassroom.academicYear}
+                Mükerrer numara korumalı, düzenlenebilir ve değerlendirme geçmişi korumalı liste
               </p>
             </div>
+            {archivedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowArchived(!showArchived)}
+                className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                {showArchived
+                  ? 'Arşivlenenleri Gizle'
+                  : `Arşivlenenler (${archivedCount})`}
+              </button>
+            )}
           </div>
 
-          <div className="border border-slate-200 rounded-lg overflow-x-auto">
+          {/* Quick Single Student Form (Separate No, Ad, Soyad) */}
+          <form
+            onSubmit={handleAddSingleStudent}
+            className="space-y-2 bg-slate-50 p-3 rounded-xl border border-slate-200"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+              <input
+                type="text"
+                aria-label="Öğrenci Okul Numarası"
+                value={singleStudentNum}
+                onChange={(e) => setSingleStudentNum(e.target.value)}
+                placeholder="Okul No (Örn: 115)"
+                className="sm:col-span-3 px-3 py-2 text-xs font-mono-num bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+              />
+              <input
+                type="text"
+                aria-label="Öğrenci Adı"
+                value={singleFirstName}
+                onChange={(e) => setSingleFirstName(e.target.value)}
+                placeholder="Ad (Örn: Zeynep)"
+                className="sm:col-span-4 px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+              />
+              <input
+                type="text"
+                aria-label="Öğrenci Soyadı"
+                value={singleLastName}
+                onChange={(e) => setSingleLastName(e.target.value)}
+                placeholder="Soyad (Örn: Kaya)"
+                className="sm:col-span-3 px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+              />
+              <button
+                type="submit"
+                className="sm:col-span-2 px-3 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+              >
+                Öğrenci Ekle
+              </button>
+            </div>
+            {singleStudentError && (
+              <div
+                role="alert"
+                className="text-xs text-red-700 font-medium flex items-center gap-1.5"
+              >
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                {singleStudentError}
+              </div>
+            )}
+          </form>
+
+          {/* Student Table */}
+          <div className="border border-slate-200 rounded-lg overflow-hidden max-h-[520px] overflow-y-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">
-                  <th className="py-3 px-4 w-24">Okul No</th>
-                  <th className="py-3 px-4">Ad Soyad</th>
-                  <th className="py-3 px-4 text-right">Değerlendirme Sayısı</th>
-                  <th className="py-3 px-4 text-right">Genel Ortalama</th>
-                  <th className="py-3 px-4 text-right">İşlemler</th>
+                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase">
+                  <th className="py-2.5 px-3 w-20">Okul No</th>
+                  <th className="py-2.5 px-3">Ad</th>
+                  <th className="py-2.5 px-3">Soyad</th>
+                  <th className="py-2.5 px-3 w-28">Geçmiş Kayıt</th>
+                  <th className="py-2.5 px-3 w-28 text-right">İşlem</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
-                {classStudents.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-8 text-center text-slate-500">
-                      Bu sınıfta kayıtlı öğrenci bulunmuyor.
-                    </td>
-                  </tr>
-                ) : (
-                  classStudents.map((stu) => {
-                    const metric = studentMetrics[stu.id] || {
-                      evalCount: 0,
-                      avgScore: null,
-                    };
-                    return (
-                      <tr key={stu.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-4 font-mono-num font-semibold text-slate-700">
-                          {stu.studentNumber}
-                        </td>
-                        <td className="py-3 px-4 font-semibold text-slate-900">
-                          {stu.fullName}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono-num text-slate-600">
-                          {metric.evalCount} oturum
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono-num font-bold">
-                          {metric.avgScore !== null ? (
-                            <span
-                              className={
-                                metric.avgScore >= 85
-                                  ? 'text-emerald-700'
-                                  : metric.avgScore >= 70
-                                  ? 'text-sky-700'
-                                  : 'text-amber-700'
-                              }
-                            >
-                              {metric.avgScore} / 100
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 font-normal">—</span>
+              <tbody className="divide-y divide-slate-200 text-sm">
+                {classStudents.map((stu) => {
+                  const split = splitTurkishFullName(stu.fullName);
+                  const firstName = stu.firstName || split.firstName;
+                  const lastName = stu.lastName || split.lastName;
+                  const impact = checkStudentDeletionImpact(stu.id, sessions);
+                  const isEditingThis = editingStudentId === stu.id;
+
+                  return (
+                    <tr
+                      key={stu.id}
+                      className={`${
+                        stu.archived
+                          ? 'bg-slate-100/80 text-slate-400'
+                          : 'hover:bg-slate-50/80'
+                      }`}
+                    >
+                      {isEditingThis ? (
+                        <td colSpan={5} className="p-3 bg-teal-50/50 space-y-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                            <input
+                              type="text"
+                              aria-label="Düzenlenen Okul No"
+                              value={editNum}
+                              onChange={(e) => setEditNum(e.target.value)}
+                              className="sm:col-span-2 px-2.5 py-1.5 text-xs font-mono-num bg-white border border-teal-400 rounded"
+                            />
+                            <input
+                              type="text"
+                              aria-label="Düzenlenen Ad"
+                              value={editFirst}
+                              onChange={(e) => setEditFirst(e.target.value)}
+                              className="sm:col-span-4 px-2.5 py-1.5 text-xs bg-white border border-teal-400 rounded"
+                            />
+                            <input
+                              type="text"
+                              aria-label="Düzenlenen Soyad"
+                              value={editLast}
+                              onChange={(e) => setEditLast(e.target.value)}
+                              className="sm:col-span-3 px-2.5 py-1.5 text-xs bg-white border border-teal-400 rounded"
+                            />
+                            <div className="sm:col-span-3 flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEditStudent(stu)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-white bg-teal-700 rounded cursor-pointer"
+                              >
+                                Kaydet
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingStudentId(null);
+                                  setEditError(null);
+                                }}
+                                className="px-2 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-300 rounded cursor-pointer"
+                              >
+                                İptal
+                              </button>
+                            </div>
+                          </div>
+                          {editError && (
+                            <div className="text-xs text-red-700 font-semibold">
+                              {editError}
+                            </div>
                           )}
                         </td>
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-3">
+                      ) : (
+                        <>
+                          <td className="py-2.5 px-3 font-mono-num text-xs font-bold text-slate-700">
+                            #{stu.studentNumber}
+                          </td>
+                          <td className="py-2.5 px-3 font-medium text-slate-900">
+                            {firstName}
+                            {stu.archived && (
+                              <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                                Arşivde
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-900">
+                            {lastName}
+                          </td>
+                          <td className="py-2.5 px-3">
                             <button
                               type="button"
-                              onClick={() => onSelectStudentForProgress(stu.id)}
-                              className="text-xs font-semibold text-sky-700 hover:text-sky-900 underline underline-offset-2 cursor-pointer whitespace-nowrap"
+                              onClick={() => setHistoryStudent(stu)}
+                              className="inline-flex items-center gap-1 text-[11px] font-mono-num font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 px-2 py-0.5 rounded border border-teal-200 cursor-pointer"
                             >
-                              Gelişim Grafiği
+                              <History className="w-3 h-3" />
+                              {impact.sessionCount} Oturum
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => onRemoveStudent(stu.id)}
-                              aria-label={`${stu.fullName} öğrencisini sil`}
-                              className="text-slate-400 hover:text-red-600 p-1 cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="inline-flex items-center gap-1">
+                              {!stu.archived && onUpdateStudent && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditStudent(stu)}
+                                  aria-label={`${stu.fullName} bilgilerini düzenle`}
+                                  className="p-1.5 text-slate-500 hover:text-teal-700 cursor-pointer"
+                                  title="Öğrenci bilgilerini düzenle"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {stu.archived && onUpdateStudent ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nowIso = new Date().toISOString();
+                                    onUpdateStudent({
+                                      ...stu,
+                                      archived: false,
+                                      updatedAt: nowIso,
+                                      auditLog: [
+                                        {
+                                          timestamp: nowIso,
+                                          action: 'restored',
+                                          details: 'Öğrenci arşivden geri yüklendi.',
+                                        },
+                                        ...(stu.auditLog || []),
+                                      ],
+                                    });
+                                  }}
+                                  aria-label={`${stu.fullName} kaydını arşivden çıkar`}
+                                  className="p-1.5 text-teal-700 hover:text-teal-900 cursor-pointer"
+                                  title="Arşivden Geri Yükle"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteStudent(stu.id)}
+                                  aria-label={
+                                    impact.hasHistory
+                                      ? `${stu.fullName} öğrencisini arşivle`
+                                      : `${stu.fullName} öğrencisini sil`
+                                  }
+                                  title={
+                                    impact.hasHistory
+                                      ? 'Değerlendirme geçmişi olduğu için güvenli arşivlenir (geçmiş notlar korunur)'
+                                      : 'Kaydı sil'
+                                  }
+                                  className="p-1.5 text-slate-400 hover:text-red-600 cursor-pointer"
+                                >
+                                  {impact.hasHistory ? (
+                                    <Archive className="w-3.5 h-3.5 text-amber-700" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                })}
+                {classStudents.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="py-8 text-center text-sm text-slate-500"
+                    >
+                      Bu sınıfta henüz öğrenci bulunmuyor. Sağdaki panelden toplu
+                      liste veya OCR ile ekleyebilirsiniz.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
+
+        {/* Right: Controlled OCR & Offline Roster Import + Separate Field Verification */}
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Camera className="w-4 h-4 text-teal-700" />
+              Sınıf Listesi Aktarımı ve Doğrulama (Yerel &amp; OCR)
+            </h2>
+            <p className="text-xs text-slate-600 mt-1">
+              Öğrenci numarası, ad ve soyad sütunları ayrı ayrı doğrulanır. Eksik
+              okul numarası için asla rastgele numara üretilmez.
+            </p>
+          </div>
+
+          {/* Mode Switcher: Offline Local vs Cloud OCR */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-xl">
+            <button
+              type="button"
+              onClick={() => {
+                setImportTab('local_text');
+                setOcrError(null);
+              }}
+              className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                importTab === 'local_text'
+                  ? 'bg-white text-teal-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <WifiOff className="w-3.5 h-3.5 text-teal-700" />
+              Yerel / Çevrimdışı Aktarım
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setImportTab('cloud_ocr');
+                setOcrError(null);
+              }}
+              className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                importTab === 'cloud_ocr'
+                  ? 'bg-white text-teal-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5 text-teal-700" />
+              Kontrollü Fotoğraf OCR
+            </button>
+          </div>
+
+          {importTab === 'local_text' ? (
+            <div className="space-y-3">
+              <div className="bg-teal-50/70 border border-teal-200 rounded-lg p-3 text-xs text-teal-950 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
+                <div>
+                  <strong>%100 Çevrimdışı ve Veri Gizliliği Korumalı:</strong>{' '}
+                  Verileriniz cihaz dışına çıkmadan yerel olarak ayrıştırılır.
+                  e-Okul veya Excel listesinden kopyaladığınız satırları
+                  yapıştırın.
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="bulk-roster-textarea"
+                  className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5"
+                >
+                  <FileText className="w-3.5 h-3.5 text-slate-500" />
+                  Okul No + Ad + Soyad Listesi (Her satıra bir öğrenci)
+                </label>
+                <textarea
+                  id="bulk-roster-textarea"
+                  rows={5}
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  placeholder={'109 - Beren Su Karahan\n110 - Kuzey Alp Tekin\n111 - Duru Erdem'}
+                  className="w-full p-3 text-xs font-mono-num bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleParseLocalRoster}
+                disabled={!bulkText.trim()}
+                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-40 rounded-lg cursor-pointer"
+              >
+                Satırları Ayrıştır ve Doğrulama Tablosunda İncele
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* P0 #8: Privacy Consent & Quota Control */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2 text-xs text-amber-950">
+                <div className="flex items-center justify-between font-bold">
+                  <span className="flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-amber-800" />
+                    KVKK ve Harici Servis Veri Gizliliği Kontrolü
+                  </span>
+                  {remainingOcrQuota !== null && (
+                    <span className="font-mono-num text-[11px] bg-white px-2 py-0.5 rounded border border-amber-300">
+                      Kalan Kota: {remainingOcrQuota}/10
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-amber-900 leading-relaxed">
+                  Yüklenen sınıf listesi görseli yalnızca metin ayrıştırma
+                  amacıyla şifreli bağlantı üzerinden OCR servisine iletilir ve
+                  saklanmaz. Öğrenci yüz fotoğrafı içeren görselleri
+                  yüklemeyiniz.
+                </p>
+                <label className="flex items-center gap-2 font-semibold text-slate-900 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={privacyConsent}
+                    onChange={(e) => setPrivacyConsent(e.target.checked)}
+                    className="rounded border-amber-400 text-teal-700 focus:ring-teal-600"
+                  />
+                  <span>
+                    Görselin yalnızca sınıf listesi metni içerdiğini ve harici
+                    OCR servisine gönderilmesini onaylıyorum.
+                  </span>
+                </label>
+              </div>
+
+              <label
+                className={`block border-2 border-dashed rounded-xl p-4 text-center transition-colors ${
+                  privacyConsent
+                    ? 'border-slate-300 hover:border-teal-600 cursor-pointer bg-slate-50/60'
+                    : 'border-slate-200 bg-slate-100 opacity-70 cursor-not-allowed'
+                }`}
+              >
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleOcrFileUpload}
+                  className="hidden"
+                  disabled={ocrLoading || !privacyConsent}
+                />
+                <div className="flex flex-col items-center gap-1.5">
+                  {ocrLoading ? (
+                    <Loader2 className="w-6 h-6 text-teal-700 animate-spin" />
+                  ) : (
+                    <Camera className="w-6 h-6 text-slate-600" />
+                  )}
+                  <span className="text-xs font-bold text-slate-800">
+                    {ocrLoading
+                      ? 'Görseldeki Sütunlar Okunuyor...'
+                      : 'Sınıf Listesi Görseli Seç (JPEG / PNG)'}
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    Okul No, Ad ve Soyad ayrı sütunlar olarak doğrulanır (Maks 4.5MB)
+                  </span>
+                </div>
+              </label>
+            </div>
+          )}
+
+          {ocrError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 text-xs text-red-900 bg-red-50 border border-red-200 rounded-lg p-3"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-700" />
+              <span>{ocrError}</span>
+            </div>
+          )}
+
+          {/* P1 #3: Separate Field Verification Table (Okul No, Ad, Soyad) */}
+          {verificationRows.length > 0 && (
+            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-slate-900">
+                  Aktarım Öncesi Sütun Doğrulama ({validRowCount} Geçerli
+                  {invalidRowCount > 0 ? `, ${invalidRowCount} Hatalı` : ''})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setVerificationRows([])}
+                  className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                >
+                  Tabloyu Temizle
+                </button>
+              </div>
+
+              <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-lg bg-white">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 border-b border-slate-200 text-[10px] font-bold text-slate-700 uppercase">
+                      <th className="p-2 w-20">Okul No</th>
+                      <th className="p-2">Ad</th>
+                      <th className="p-2">Soyad</th>
+                      <th className="p-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {verificationRows.map((row, rIdx) => (
+                      <React.Fragment key={rIdx}>
+                        <tr
+                          className={
+                            row.isValid ? 'bg-white' : 'bg-red-50/70'
+                          }
+                        >
+                          <td className="p-1.5">
+                            <input
+                              type="text"
+                              aria-label={`${rIdx + 1}. Satır Okul Numarası`}
+                              value={row.studentNumber}
+                              placeholder="Zorunlu"
+                              onChange={(e) => {
+                                const updated = verificationRows.map(
+                                  (item, i) =>
+                                    i === rIdx
+                                      ? {
+                                          ...item,
+                                          studentNumber: e.target.value,
+                                        }
+                                      : item
+                                );
+                                setVerificationRows(revalidateRows(updated));
+                              }}
+                              className={`w-full px-2 py-1 text-xs font-mono-num rounded border ${
+                                !row.studentNumber
+                                  ? 'border-red-400 bg-red-50'
+                                  : 'border-slate-300 bg-white'
+                              }`}
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              type="text"
+                              aria-label={`${rIdx + 1}. Satır Öğrenci Adı`}
+                              value={row.firstName}
+                              placeholder="Ad"
+                              onChange={(e) => {
+                                const updated = verificationRows.map(
+                                  (item, i) =>
+                                    i === rIdx
+                                      ? { ...item, firstName: e.target.value }
+                                      : item
+                                );
+                                setVerificationRows(revalidateRows(updated));
+                              }}
+                              className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white"
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              type="text"
+                              aria-label={`${rIdx + 1}. Satır Öğrenci Soyadı`}
+                              value={row.lastName}
+                              placeholder="Soyad"
+                              onChange={(e) => {
+                                const updated = verificationRows.map(
+                                  (item, i) =>
+                                    i === rIdx
+                                      ? { ...item, lastName: e.target.value }
+                                      : item
+                                );
+                                setVerificationRows(revalidateRows(updated));
+                              }}
+                              className={`w-full px-2 py-1 text-xs rounded border ${
+                                !row.lastName
+                                  ? 'border-red-400 bg-red-50'
+                                  : 'border-slate-300 bg-white'
+                              }`}
+                            />
+                          </td>
+                          <td className="p-1.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const filtered = verificationRows.filter(
+                                  (_, i) => i !== rIdx
+                                );
+                                setVerificationRows(revalidateRows(filtered));
+                              }}
+                              aria-label={`${rIdx + 1}. satırı kaldır`}
+                              className="text-slate-400 hover:text-red-600 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                        {!row.isValid && (
+                          <tr className="bg-red-50/90">
+                            <td
+                              colSpan={4}
+                              className="px-2 py-1 text-[11px] font-semibold text-red-800"
+                            >
+                              ⚠ {row.validationErrors.join(' · ')}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <button
+                type="button"
+                disabled={validRowCount === 0}
+                onClick={handleCommitVerifiedRoster}
+                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-40 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Check className="w-4 h-4" />
+                Doğrulanan {validRowCount} Öğrenciyi Sınıfa Kaydet
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Student Audit History Modal (P1 #4) */}
+      {historyStudent && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${historyStudent.fullName} Kayıt Geçmişi`}
+          className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4"
+        >
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div>
+                <span className="font-mono-num text-xs font-bold text-teal-800">
+                  #{historyStudent.studentNumber}
+                </span>
+                <h3 className="text-base font-bold text-slate-900">
+                  {historyStudent.fullName} — Kayıt ve Değerlendirme Geçmişi
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoryStudent(null)}
+                className="px-3 py-1 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Kapat
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <div className="font-bold text-slate-800 mb-1">
+                  İlişkili Değerlendirme Oturumları
+                </div>
+                {(() => {
+                  const impact = checkStudentDeletionImpact(
+                    historyStudent.id,
+                    sessions
+                  );
+                  return (
+                    <p className="text-slate-600">
+                      Bu öğrenci toplam{' '}
+                      <strong className="text-slate-900">
+                        {impact.sessionCount}
+                      </strong>{' '}
+                      bireysel/grup oturumunda değerlendirilmiş ve{' '}
+                      <strong className="text-slate-900">
+                        {impact.groupCount}
+                      </strong>{' '}
+                      çalışma grubunda yer almıştır.
+                    </p>
+                  );
+                })()}
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="font-bold text-slate-800">
+                  Denetim Günlüğü (Audit Log)
+                </div>
+                {historyStudent.auditLog && historyStudent.auditLog.length > 0 ? (
+                  <div className="max-h-48 overflow-y-auto divide-y divide-slate-200 border border-slate-200 rounded-lg">
+                    {historyStudent.auditLog.map((entry, idx) => (
+                      <div key={idx} className="p-2.5 bg-white">
+                        <div className="font-mono-num text-[10px] text-slate-500">
+                          {entry.timestamp.slice(0, 19).replace('T', ' ')} ·{' '}
+                          <span className="uppercase font-bold text-teal-800">
+                            {entry.action}
+                          </span>
+                        </div>
+                        <div className="text-slate-800 font-medium mt-0.5">
+                          {entry.details}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-slate-500 italic">
+                    Başlangıç sınıf listesi kaydı (henüz değişiklik yapılmadı).
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
