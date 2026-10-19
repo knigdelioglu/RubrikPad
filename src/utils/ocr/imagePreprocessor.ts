@@ -6,6 +6,104 @@ import type {
   RawGrayImage,
 } from './ocrTypes.ts';
 
+export const MAX_OCR_FILE_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB max file upload guard
+export const MAX_OCR_IMAGE_DIMENSION_PX = 1800; // Default max width/height cap for tablet performance
+export const MAX_OCR_RAW_MEGAPIXELS = 25; // 25 MP hard safety guard against tablet memory exhaustion
+
+export interface OcrImageDimensionPlan {
+  valid: boolean;
+  error?: string;
+  originalWidth: number;
+  originalHeight: number;
+  targetWidth: number;
+  targetHeight: number;
+  downscaleFactor: number;
+  wasDownscaled: boolean;
+}
+
+/**
+ * Validates file size and raw pixel dimensions before heavy Canvas/OCR buffer allocation,
+ * and computes proportional target dimensions capped at `maxDimensionPx` (default 1800px)
+ * so large smartphone/tablet photos never freeze the UI thread.
+ */
+export function validateAndPlanOcrImageDimensions(
+  width: number,
+  height: number,
+  fileSizeBytes?: number,
+  maxDimensionPx: number = MAX_OCR_IMAGE_DIMENSION_PX
+): OcrImageDimensionPlan {
+  if (
+    typeof fileSizeBytes === 'number' &&
+    fileSizeBytes > MAX_OCR_FILE_SIZE_BYTES
+  ) {
+    const sizeMb = (fileSizeBytes / (1024 * 1024)).toFixed(1);
+    const limitMb = Math.round(MAX_OCR_FILE_SIZE_BYTES / (1024 * 1024));
+    return {
+      valid: false,
+      error: `Fotoğraf dosya boyutu çok büyük (${sizeMb} MB). Tablet arayüzünün donmaması için en fazla ${limitMb} MB boyutunda görsel yükleyebilirsiniz.`,
+      originalWidth: width,
+      originalHeight: height,
+      targetWidth: width,
+      targetHeight: height,
+      downscaleFactor: 1,
+      wasDownscaled: false,
+    };
+  }
+
+  if (width <= 0 || height <= 0 || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return {
+      valid: false,
+      error: 'Görsel boyutları geçersiz.',
+      originalWidth: width,
+      originalHeight: height,
+      targetWidth: 0,
+      targetHeight: 0,
+      downscaleFactor: 1,
+      wasDownscaled: false,
+    };
+  }
+
+  const megapixels = (width * height) / 1_000_000;
+  if (megapixels > MAX_OCR_RAW_MEGAPIXELS) {
+    return {
+      valid: false,
+      error: `Görsel çözünürlüğü çok yüksek (${megapixels.toFixed(1)} MP). Tablet belleğini korumak için en fazla ${MAX_OCR_RAW_MEGAPIXELS} MP çözünürlükte fotoğraf seçin.`,
+      originalWidth: width,
+      originalHeight: height,
+      targetWidth: width,
+      targetHeight: height,
+      downscaleFactor: 1,
+      wasDownscaled: false,
+    };
+  }
+
+  const maxSide = Math.max(width, height);
+  if (maxSide > maxDimensionPx && maxDimensionPx > 0) {
+    const scale = maxDimensionPx / maxSide;
+    const targetWidth = Math.max(1, Math.round(width * scale));
+    const targetHeight = Math.max(1, Math.round(height * scale));
+    return {
+      valid: true,
+      originalWidth: width,
+      originalHeight: height,
+      targetWidth,
+      targetHeight,
+      downscaleFactor: Number(scale.toFixed(3)),
+      wasDownscaled: true,
+    };
+  }
+
+  return {
+    valid: true,
+    originalWidth: width,
+    originalHeight: height,
+    targetWidth: width,
+    targetHeight: height,
+    downscaleFactor: 1,
+    wasDownscaled: false,
+  };
+}
+
 /**
  * Converts RGBA pixel buffer (from Canvas ImageData) to single-channel grayscale (0..255).
  */
@@ -208,6 +306,39 @@ export function upscaleGrayImageBilinear(
     }
   }
   return { width: outW, height: outH, data: out };
+}
+
+/**
+ * Downscales an oversized grayscale image using area/bilinear sampling so high-megapixel
+ * camera photos are bounded to `maxDimensionPx` (default 1800px) before Sauvola thresholding and OCR.
+ */
+export function downscaleGrayImageBilinear(
+  image: RawGrayImage,
+  maxDimensionPx: number = MAX_OCR_IMAGE_DIMENSION_PX
+): { image: RawGrayImage; downscaleFactor: number } {
+  const maxSide = Math.max(image.width, image.height);
+  if (maxSide <= maxDimensionPx || maxDimensionPx <= 0) {
+    return { image, downscaleFactor: 1 };
+  }
+
+  const scale = maxDimensionPx / maxSide;
+  const outW = Math.max(1, Math.round(image.width * scale));
+  const outH = Math.max(1, Math.round(image.height * scale));
+  const out = new Uint8Array(outW * outH);
+
+  for (let y = 0; y < outH; y++) {
+    const srcY = (y + 0.5) / scale - 0.5;
+    const rowOff = y * outW;
+    for (let x = 0; x < outW; x++) {
+      const srcX = (x + 0.5) / scale - 0.5;
+      out[rowOff + x] = sampleGrayBilinear(image, srcX, srcY);
+    }
+  }
+
+  return {
+    image: { width: outW, height: outH, data: out },
+    downscaleFactor: Number(scale.toFixed(3)),
+  };
 }
 
 /**
@@ -681,7 +812,22 @@ export function preprocessRosterImage(
     perspectiveRectified = true;
   }
 
-  // 3. Resolution check & upscaling
+  // 3. Resolution bounds: downscale oversized camera photos & upscale tiny images
+  const targetMaxDimension =
+    options.targetMaxDimension ?? MAX_OCR_IMAGE_DIMENSION_PX;
+  let downscaleFactor = 1;
+  if (
+    targetMaxDimension > 0 &&
+    Math.max(working.width, working.height) > targetMaxDimension
+  ) {
+    const downscaled = downscaleGrayImageBilinear(working, targetMaxDimension);
+    working = downscaled.image;
+    downscaleFactor = downscaled.downscaleFactor;
+    qualityWarnings.push(
+      `Yüksek çözünürlüklü fotoğraf (${originalWidth}×${originalHeight}) tablet performansı için ${working.width}×${working.height} boyutuna optimize edildi.`
+    );
+  }
+
   const targetMinWidth = options.targetMinWidth ?? 900;
   let upscaleFactor = 1;
   if (working.width > 0 && working.width < targetMinWidth) {
@@ -747,6 +893,7 @@ export function preprocessRosterImage(
       detectedSkewDeg,
       perspectiveRectified,
       upscaleFactor,
+      downscaleFactor,
       contrastScore,
       horizontalGridLinesY,
       verticalGridLinesX,

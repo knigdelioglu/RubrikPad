@@ -379,23 +379,51 @@ export function computePayloadChecksum(payload: AppDataState): string {
 
 export type LegacyRpkHashAlgorithm =
   | 'cyrb53_16'
+  | 'cyrb53_no_len_16'
+  | 'dual_fnv1a_djb2_16'
   | 'fnv1a_8'
+  | 'fnv1a_float_8'
+  | 'fnv1_8'
   | 'djb2_8'
-  | 'cyrb53_8';
+  | 'djb2_add_8'
+  | 'java31_8'
+  | 'sdbm_8'
+  | 'cyrb53_8'
+  | 'fnv1a_base36'
+  | 'djb2_base36'
+  | 'fnv1a_len_hex';
 
 export interface LegacyRpkChecksumOptions {
   omitFullName?: boolean;
-  studentFields?: 'with_full_name' | 'omit_full_name' | 'only_full_name';
+  studentFields?:
+    | 'with_full_name'
+    | 'omit_full_name'
+    | 'only_full_name'
+    | 'v3_turn1_no_archived'
+    | 'v3_turn1_only_full_name_no_archived';
+  rubricFields?:
+    | 'v3_latest'
+    | 'v3_with_version_created'
+    | 'v3_without_maxpoints_required'
+    | 'v3_turn1_minimal';
   groupFields?:
     | 'v3_latest'
     | 'v3_without_last_applied'
-    | 'v3_initial_minimal';
+    | 'v3_initial_minimal'
+    | 'v3_turn1_original';
   evaluationFields?:
     | 'v3_latest'
+    | 'v3_with_updated_at'
     | 'v3_without_group_id'
     | 'v3_without_group_direct'
+    | 'v3_audit2_exact'
     | 'v3_initial_minimal'
+    | 'v3_turn1_original'
     | 'raw_record';
+  sessionFields?:
+    | 'v3_with_extras'
+    | 'v3_standard'
+    | 'v3_turn1_no_general_note';
   includeSessionExtras?: boolean;
   includeAuditAndUndo?: boolean;
   rawPayloadDirect?: boolean;
@@ -404,29 +432,106 @@ export interface LegacyRpkChecksumOptions {
   hashAlgorithm?: LegacyRpkHashAlgorithm;
 }
 
-function computeRpkHashFromSerialized(
+export function computeRpkHashFromSerialized(
   serialized: string,
   algorithm: LegacyRpkHashAlgorithm = 'cyrb53_16'
 ): string {
-  if (algorithm === 'fnv1a_8') {
+  if (
+    algorithm === 'fnv1a_8' ||
+    algorithm === 'fnv1a_base36' ||
+    algorithm === 'fnv1a_len_hex'
+  ) {
     let h = 0x811c9dc5;
     for (let i = 0; i < serialized.length; i++) {
       h ^= serialized.charCodeAt(i);
       h = Math.imul(h, 0x01000193);
     }
-    return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
+    const u = h >>> 0;
+    if (algorithm === 'fnv1a_base36') {
+      return `rpk-${u.toString(36)}`;
+    }
+    if (algorithm === 'fnv1a_len_hex') {
+      return `rpk-${u.toString(16).padStart(8, '0')}-${serialized.length.toString(16)}`;
+    }
+    return `rpk-${u.toString(16).padStart(8, '0')}`;
   }
 
-  if (algorithm === 'djb2_8') {
-    let h = 5381;
+  if (algorithm === 'fnv1a_float_8') {
+    let h = 0x811c9dc5;
     for (let i = 0; i < serialized.length; i++) {
-      h = (Math.imul(h, 33) ^ serialized.charCodeAt(i)) >>> 0;
+      h ^= serialized.charCodeAt(i);
+      h = (h * 0x01000193) >>> 0;
     }
     return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
   }
 
-  let h1 = 0xdeadbeef ^ serialized.length;
-  let h2 = 0x41c6ce57 ^ serialized.length;
+  if (algorithm === 'fnv1_8') {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < serialized.length; i++) {
+      h = Math.imul(h, 0x01000193);
+      h ^= serialized.charCodeAt(i);
+    }
+    return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  if (algorithm === 'djb2_8' || algorithm === 'djb2_base36') {
+    let h = 5381;
+    for (let i = 0; i < serialized.length; i++) {
+      h = (Math.imul(h, 33) ^ serialized.charCodeAt(i)) >>> 0;
+    }
+    const u = h >>> 0;
+    if (algorithm === 'djb2_base36') {
+      return `rpk-${u.toString(36)}`;
+    }
+    return `rpk-${u.toString(16).padStart(8, '0')}`;
+  }
+
+  if (algorithm === 'djb2_add_8') {
+    let h = 5381;
+    for (let i = 0; i < serialized.length; i++) {
+      h = (((h << 5) + h) + serialized.charCodeAt(i)) >>> 0;
+    }
+    return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  if (algorithm === 'java31_8') {
+    let h = 0;
+    for (let i = 0; i < serialized.length; i++) {
+      h = ((h << 5) - h + serialized.charCodeAt(i)) | 0;
+    }
+    return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  if (algorithm === 'sdbm_8') {
+    let h = 0;
+    for (let i = 0; i < serialized.length; i++) {
+      h = (serialized.charCodeAt(i) + (h << 6) + (h << 16) - h) >>> 0;
+    }
+    return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  if (algorithm === 'dual_fnv1a_djb2_16') {
+    let h1 = 0x811c9dc5;
+    let h2 = 5381;
+    for (let i = 0; i < serialized.length; i++) {
+      const ch = serialized.charCodeAt(i);
+      h1 ^= ch;
+      h1 = Math.imul(h1, 0x01000193);
+      h2 = (Math.imul(h2, 33) ^ ch) >>> 0;
+    }
+    const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
+    const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+    return `rpk-${hex1}${hex2}`;
+  }
+
+  let h1 =
+    algorithm === 'cyrb53_no_len_16'
+      ? 0xdeadbeef
+      : 0xdeadbeef ^ serialized.length;
+  let h2 =
+    algorithm === 'cyrb53_no_len_16'
+      ? 0x41c6ce57
+      : 0x41c6ce57 ^ serialized.length;
   for (let i = 0; i < serialized.length; i++) {
     const ch = serialized.charCodeAt(i);
     h1 = Math.imul(h1 ^ ch, 2654435761);
@@ -475,9 +580,14 @@ function buildLegacyV3DataProjection(
   const stuMode =
     options?.studentFields ??
     (options?.omitFullName ? 'omit_full_name' : 'with_full_name');
+  const rubMode = options?.rubricFields ?? 'v3_latest';
   const grpMode = options?.groupFields ?? 'v3_latest';
   const evalMode = options?.evaluationFields ?? 'v3_latest';
-  const includeSessionExtras = options?.includeSessionExtras !== false;
+  const sesMode =
+    options?.sessionFields ??
+    (options?.includeSessionExtras === false
+      ? 'v3_standard'
+      : 'v3_with_extras');
   const includeAuditAndUndo = Boolean(options?.includeAuditAndUndo);
 
   return {
@@ -507,6 +617,22 @@ function buildLegacyV3DataProjection(
               classId: s.classId,
               archived: Boolean(s.archived),
             }
+          : stuMode === 'v3_turn1_no_archived'
+          ? {
+              id: s.id,
+              studentNumber: s.studentNumber,
+              firstName: s.firstName || '',
+              lastName: s.lastName || '',
+              fullName: s.fullName,
+              classId: s.classId,
+            }
+          : stuMode === 'v3_turn1_only_full_name_no_archived'
+          ? {
+              id: s.id,
+              studentNumber: s.studentNumber,
+              fullName: s.fullName,
+              classId: s.classId,
+            }
           : {
               id: s.id,
               studentNumber: s.studentNumber,
@@ -528,29 +654,100 @@ function buildLegacyV3DataProjection(
         })),
       };
     }),
-    rubrics: (payload.rubrics || []).map((r) => ({
-      id: r.id,
-      title: r.title,
-      subject: r.subject,
-      description: r.description,
-      maxLevelPoints: r.maxLevelPoints,
-      criteria: (r.criteria || []).map((c) => ({
-        id: c.id,
-        title: c.title,
-        category: c.category,
-        weight: c.weight,
-        maxPoints: c.maxPoints ?? c.weight,
-        required: c.required !== false,
-        levels: (c.levels || []).map((l) => ({
-          level: l.level,
-          label: l.label,
-          points: l.points,
-          description: l.description,
+    rubrics: (payload.rubrics || []).map((r) => {
+      if (rubMode === 'v3_turn1_minimal') {
+        return {
+          id: r.id,
+          title: r.title,
+          subject: r.subject,
+          description: r.description,
+          maxLevelPoints: r.maxLevelPoints,
+          criteria: (r.criteria || []).map((c) => ({
+            id: c.id,
+            title: c.title,
+            weight: c.weight,
+            maxPoints: c.maxPoints ?? c.weight,
+          })),
+        };
+      }
+      if (rubMode === 'v3_without_maxpoints_required') {
+        return {
+          id: r.id,
+          title: r.title,
+          subject: r.subject,
+          description: r.description,
+          maxLevelPoints: r.maxLevelPoints,
+          criteria: (r.criteria || []).map((c) => ({
+            id: c.id,
+            title: c.title,
+            category: c.category,
+            weight: c.weight,
+            levels: (c.levels || []).map((l) => ({
+              level: l.level,
+              label: l.label,
+              points: l.points,
+              description: l.description,
+            })),
+          })),
+        };
+      }
+      if (rubMode === 'v3_with_version_created') {
+        return {
+          id: r.id,
+          title: r.title,
+          subject: r.subject,
+          description: r.description,
+          maxLevelPoints: r.maxLevelPoints,
+          createdAt: r.createdAt || '',
+          version: r.version ?? 3,
+          criteria: (r.criteria || []).map((c) => ({
+            id: c.id,
+            title: c.title,
+            category: c.category,
+            weight: c.weight,
+            maxPoints: c.maxPoints ?? c.weight,
+            required: c.required !== false,
+            levels: (c.levels || []).map((l) => ({
+              level: l.level,
+              label: l.label,
+              points: l.points,
+              description: l.description,
+            })),
+          })),
+        };
+      }
+      return {
+        id: r.id,
+        title: r.title,
+        subject: r.subject,
+        description: r.description,
+        maxLevelPoints: r.maxLevelPoints,
+        criteria: (r.criteria || []).map((c) => ({
+          id: c.id,
+          title: c.title,
+          category: c.category,
+          weight: c.weight,
+          maxPoints: c.maxPoints ?? c.weight,
+          required: c.required !== false,
+          levels: (c.levels || []).map((l) => ({
+            level: l.level,
+            label: l.label,
+            points: l.points,
+            description: l.description,
+          })),
         })),
-      })),
-    })),
+      };
+    }),
     sessions: (payload.sessions || []).map((ses) => {
       const mappedGroups = (ses.groups || []).map((g) => {
+        if (grpMode === 'v3_turn1_original') {
+          return {
+            id: g.id,
+            name: g.name,
+            studentIds: g.studentIds || [],
+            criterionScores: formatMap(g.criterionScores),
+          };
+        }
         if (grpMode === 'v3_initial_minimal') {
           return {
             id: g.id,
@@ -588,6 +785,26 @@ function buildLegacyV3DataProjection(
               .sort()
               .map((stuId) => {
                 const ev = ses.evaluations[stuId];
+                if (evalMode === 'v3_turn1_original') {
+                  return {
+                    studentId: ev.studentId || stuId,
+                    criterionScores: formatMap(ev.criterionScores),
+                    note: ev.note || '',
+                    tags: ev.tags || [],
+                  };
+                }
+                if (evalMode === 'v3_audit2_exact') {
+                  return {
+                    studentId: ev.studentId || stuId,
+                    criterionScores: formatMap(ev.criterionScores),
+                    directCriterionScores: formatMap(ev.directCriterionScores),
+                    groupCriterionScores: formatMap(ev.groupCriterionScores),
+                    note: ev.note || '',
+                    groupNote: ev.groupNote || '',
+                    tags: ev.tags || [],
+                    updatedAt: ev.updatedAt || '',
+                  };
+                }
                 if (evalMode === 'v3_initial_minimal') {
                   return {
                     studentId: ev.studentId || stuId,
@@ -627,6 +844,22 @@ function buildLegacyV3DataProjection(
                     evaluatedViaGroup: ev.evaluatedViaGroup || null,
                   };
                 }
+                if (evalMode === 'v3_with_updated_at') {
+                  return {
+                    studentId: ev.studentId || stuId,
+                    criterionScores: formatMap(ev.criterionScores),
+                    directCriterionScores: formatMap(ev.directCriterionScores),
+                    groupCriterionScores: formatMap(ev.groupCriterionScores),
+                    groupDirectScores: formatMap(ev.groupDirectScores),
+                    groupNote: ev.groupNote || '',
+                    groupId: ev.groupId || null,
+                    activeScoreSource: ev.activeScoreSource || 'individual',
+                    note: ev.note || '',
+                    tags: ev.tags || [],
+                    evaluatedViaGroup: ev.evaluatedViaGroup || null,
+                    updatedAt: ev.updatedAt || '',
+                  };
+                }
                 return {
                   studentId: ev.studentId || stuId,
                   criterionScores: formatMap(ev.criterionScores),
@@ -642,36 +875,49 @@ function buildLegacyV3DataProjection(
                 };
               });
 
-      const baseSession = includeSessionExtras
-        ? {
-            id: ses.id,
-            title: ses.title,
-            classId: ses.classId,
-            classIds:
-              Array.isArray(ses.classIds) && ses.classIds.length > 0
-                ? ses.classIds
-                : [ses.classId],
-            rubricId: ses.rubricId,
-            rubricSnapshot: ses.rubricSnapshot || null,
-            date: ses.date,
-            status: ses.status,
-            mode: ses.mode,
-            generalSessionNote: ses.generalSessionNote || '',
-            groups: mappedGroups,
-            evaluations: mappedEvaluations,
-          }
-        : {
-            id: ses.id,
-            title: ses.title,
-            classId: ses.classId,
-            rubricId: ses.rubricId,
-            date: ses.date,
-            status: ses.status,
-            mode: ses.mode,
-            generalSessionNote: ses.generalSessionNote || '',
-            groups: mappedGroups,
-            evaluations: mappedEvaluations,
-          };
+      const baseSession =
+        sesMode === 'v3_turn1_no_general_note'
+          ? {
+              id: ses.id,
+              title: ses.title,
+              classId: ses.classId,
+              rubricId: ses.rubricId,
+              date: ses.date,
+              status: ses.status,
+              mode: ses.mode,
+              groups: mappedGroups,
+              evaluations: mappedEvaluations,
+            }
+          : sesMode === 'v3_with_extras'
+          ? {
+              id: ses.id,
+              title: ses.title,
+              classId: ses.classId,
+              classIds:
+                Array.isArray(ses.classIds) && ses.classIds.length > 0
+                  ? ses.classIds
+                  : [ses.classId],
+              rubricId: ses.rubricId,
+              rubricSnapshot: ses.rubricSnapshot || null,
+              date: ses.date,
+              status: ses.status,
+              mode: ses.mode,
+              generalSessionNote: ses.generalSessionNote || '',
+              groups: mappedGroups,
+              evaluations: mappedEvaluations,
+            }
+          : {
+              id: ses.id,
+              title: ses.title,
+              classId: ses.classId,
+              rubricId: ses.rubricId,
+              date: ses.date,
+              status: ses.status,
+              mode: ses.mode,
+              generalSessionNote: ses.generalSessionNote || '',
+              groups: mappedGroups,
+              evaluations: mappedEvaluations,
+            };
 
       if (!includeAuditAndUndo) return baseSession;
       return {
@@ -692,6 +938,27 @@ function buildLegacyV3DataProjection(
       };
     }),
   };
+}
+
+/**
+ * Computes the original initial-v3 (`v3_turn1_original`) `rpk-` checksum algorithm
+ * from the very first v3 release so that early v3 records in localStorage/IndexedDB or backups
+ * are verified and upgraded without rejection.
+ */
+export function computeInitialV3RpkChecksum(
+  payload: AppDataState,
+  hashAlgorithm: LegacyRpkHashAlgorithm = 'fnv1a_8'
+): string {
+  const proj = buildLegacyV3DataProjection(payload, {
+    studentFields: 'v3_turn1_no_archived',
+    rubricFields: 'v3_turn1_minimal',
+    groupFields: 'v3_turn1_original',
+    evaluationFields: 'v3_turn1_original',
+    sessionFields: 'v3_turn1_no_general_note',
+    includeAuditAndUndo: false,
+    sortScoreMaps: true,
+  });
+  return computeRpkHashFromSerialized(JSON.stringify(proj), hashAlgorithm);
 }
 
 /**
@@ -727,67 +994,137 @@ function getCandidateV3SerializedProjections(rawPayload: AppDataState): string[]
     seen.add(str);
   };
 
-  // 1. Direct raw payload and normalized payload
-  addObj(rawPayload, true);
-  addObj(rawPayload, false);
-  addObj(
-    {
-      classrooms: rawPayload.classrooms || [],
-      students: rawPayload.students || [],
-      rubrics: rawPayload.rubrics || [],
-      sessions: rawPayload.sessions || [],
-    },
-    true
-  );
-  addObj(
-    {
-      classrooms: rawPayload.classrooms || [],
-      students: rawPayload.students || [],
-      rubrics: rawPayload.rubrics || [],
-      sessions: rawPayload.sessions || [],
-    },
-    false
-  );
+  // Only allow omit_full_name projection if no student has a contradicted fullName vs firstName+lastName
+  const allFullNamesConsistent = (rawPayload.students || []).every((s) => {
+    if (!s.fullName) return true;
+    if (!s.firstName && !s.lastName) return true;
+    const expectedFull = `${s.firstName?.trim() || ''} ${s.lastName?.trim() || ''}`.trim();
+    return s.fullName.trim() === expectedFull;
+  });
 
-  // 2. Matrix of early v3 and intermediate v3 structural projections
-  const studentModes: Array<'with_full_name' | 'omit_full_name' | 'only_full_name'> = [
-    'with_full_name',
-    'omit_full_name',
-    'only_full_name',
-  ];
-  const groupModes: Array<
-    'v3_latest' | 'v3_without_last_applied' | 'v3_initial_minimal'
-  > = ['v3_latest', 'v3_without_last_applied', 'v3_initial_minimal'];
-  const evalModes: Array<
-    | 'v3_latest'
-    | 'v3_without_group_id'
-    | 'v3_without_group_direct'
-    | 'v3_initial_minimal'
-    | 'raw_record'
-  > = [
-    'v3_latest',
-    'v3_without_group_id',
-    'v3_without_group_direct',
-    'v3_initial_minimal',
-    'raw_record',
-  ];
+  const payloadCandidates: AppDataState[] = [rawPayload];
 
-  for (const studentFields of studentModes) {
-    for (const groupFields of groupModes) {
-      for (const evaluationFields of evalModes) {
-        for (const includeSessionExtras of [true, false]) {
-          for (const includeAuditAndUndo of [false, true]) {
-            for (const sortScoreMaps of [false, true]) {
-              const proj = buildLegacyV3DataProjection(rawPayload, {
-                studentFields,
-                groupFields,
-                evaluationFields,
-                includeSessionExtras,
-                includeAuditAndUndo,
-                sortScoreMaps,
-              });
-              addObj(proj, true);
-              addObj(proj, false);
+  for (const candidatePayload of payloadCandidates) {
+    // 1. Direct raw payload and normalized payload
+    addObj(candidatePayload, true);
+    addObj(candidatePayload, false);
+    addObj(
+      {
+        classrooms: candidatePayload.classrooms || [],
+        students: candidatePayload.students || [],
+        rubrics: candidatePayload.rubrics || [],
+        sessions: candidatePayload.sessions || [],
+      },
+      true
+    );
+    addObj(
+      {
+        classrooms: candidatePayload.classrooms || [],
+        students: candidatePayload.students || [],
+        rubrics: candidatePayload.rubrics || [],
+        sessions: candidatePayload.sessions || [],
+      },
+      false
+    );
+
+    // 2. Targeted Initial v3 (Turn 1) and Audit #2 projections
+    const rubricModes: NonNullable<LegacyRpkChecksumOptions['rubricFields']>[] = [
+      'v3_latest',
+      'v3_with_version_created',
+      'v3_without_maxpoints_required',
+      'v3_turn1_minimal',
+    ];
+    const studentModes: NonNullable<LegacyRpkChecksumOptions['studentFields']>[] =
+      allFullNamesConsistent
+        ? [
+            'with_full_name',
+            'omit_full_name',
+            'only_full_name',
+            'v3_turn1_no_archived',
+            'v3_turn1_only_full_name_no_archived',
+          ]
+        : [
+            'with_full_name',
+            'only_full_name',
+            'v3_turn1_no_archived',
+            'v3_turn1_only_full_name_no_archived',
+          ];
+    const groupModes: NonNullable<LegacyRpkChecksumOptions['groupFields']>[] = [
+      'v3_latest',
+      'v3_without_last_applied',
+      'v3_initial_minimal',
+      'v3_turn1_original',
+    ];
+    const evalModes: NonNullable<LegacyRpkChecksumOptions['evaluationFields']>[] = [
+      'v3_latest',
+      'v3_with_updated_at',
+      'v3_without_group_id',
+      'v3_without_group_direct',
+      'v3_audit2_exact',
+      'v3_initial_minimal',
+      'v3_turn1_original',
+      'raw_record',
+    ];
+    const sessionModes: NonNullable<LegacyRpkChecksumOptions['sessionFields']>[] = [
+      'v3_with_extras',
+      'v3_standard',
+      'v3_turn1_no_general_note',
+    ];
+
+    // Core initial v3 / Turn 1 combinations across all rubric modes
+    for (const rubricFields of rubricModes) {
+      for (const studentFields of studentModes) {
+        for (const sessionFields of sessionModes) {
+          for (const sortScoreMaps of [false, true]) {
+            const turn1Proj = buildLegacyV3DataProjection(candidatePayload, {
+              studentFields,
+              rubricFields,
+              groupFields: 'v3_turn1_original',
+              evaluationFields: 'v3_turn1_original',
+              sessionFields,
+              includeAuditAndUndo: false,
+              sortScoreMaps,
+            });
+            addObj(turn1Proj, sortScoreMaps);
+
+            const audit2Proj = buildLegacyV3DataProjection(candidatePayload, {
+              studentFields,
+              rubricFields,
+              groupFields: 'v3_initial_minimal',
+              evaluationFields: 'v3_audit2_exact',
+              sessionFields,
+              includeAuditAndUndo: false,
+              sortScoreMaps,
+            });
+            addObj(audit2Proj, sortScoreMaps);
+          }
+        }
+      }
+    }
+
+    // Matrix of intermediate v3 structural projections
+    for (const studentFields of studentModes) {
+      for (const rubricFields of [
+        'v3_latest',
+        'v3_with_version_created',
+      ] as const) {
+        for (const groupFields of groupModes) {
+          for (const evaluationFields of evalModes) {
+            for (const sessionFields of sessionModes) {
+              for (const includeAuditAndUndo of [false, true]) {
+                for (const sortScoreMaps of [false, true]) {
+                  const proj = buildLegacyV3DataProjection(candidatePayload, {
+                    studentFields,
+                    rubricFields,
+                    groupFields,
+                    evaluationFields,
+                    sessionFields,
+                    includeAuditAndUndo,
+                    sortScoreMaps,
+                  });
+                  addObj(proj, sortScoreMaps);
+                }
+              }
             }
           }
         }
@@ -798,36 +1135,36 @@ function getCandidateV3SerializedProjections(rawPayload: AppDataState): string[]
   return Array.from(seen);
 }
 
+const ALL_LEGACY_RPK_ALGORITHMS: LegacyRpkHashAlgorithm[] = [
+  'cyrb53_16',
+  'cyrb53_no_len_16',
+  'dual_fnv1a_djb2_16',
+  'fnv1a_8',
+  'fnv1a_float_8',
+  'fnv1_8',
+  'djb2_8',
+  'djb2_add_8',
+  'java31_8',
+  'sdbm_8',
+  'cyrb53_8',
+  'fnv1a_base36',
+  'djb2_base36',
+  'fnv1a_len_hex',
+];
+
 function verifyLegacyRpkV3Checksum(
   rawPayload: AppDataState,
   checksum: string
 ): boolean {
   const normalizedChecksum = checksum.trim().toLowerCase();
-  // Accept 16-hex or 8-hex rpk- ONLY when it matches a deterministic hash of rawPayload (never a wildcard bypass!)
-  const is16Hex = /^rpk-[0-9a-f]{16}$/.test(normalizedChecksum);
-  const is8Hex = /^rpk-[0-9a-f]{8}$/.test(normalizedChecksum);
-  if (!is16Hex && !is8Hex) {
+  if (!/^rpk-[0-9a-z-]{5,28}$/.test(normalizedChecksum)) {
     return false;
   }
 
   const candidateSerializations = getCandidateV3SerializedProjections(rawPayload);
 
-  if (is16Hex) {
-    for (const serialized of candidateSerializations) {
-      if (
-        normalizedChecksum ===
-        computeRpkHashFromSerialized(serialized, 'cyrb53_16')
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Deterministic 8-hex initial v3 verification (FNV-1a, DJB2, Cyrb53-32)
-  const algos8: LegacyRpkHashAlgorithm[] = ['fnv1a_8', 'djb2_8', 'cyrb53_8'];
   for (const serialized of candidateSerializations) {
-    for (const algo of algos8) {
+    for (const algo of ALL_LEGACY_RPK_ALGORITHMS) {
       if (
         normalizedChecksum === computeRpkHashFromSerialized(serialized, algo)
       ) {

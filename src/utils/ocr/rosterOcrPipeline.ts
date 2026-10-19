@@ -29,6 +29,8 @@ export interface RosterOcrPerformanceMetrics {
   recognizedWordCount: number;
   averageWordConfidence: number;
   imageMegapixels: number;
+  downscaleFactor?: number;
+  executedInWebWorker?: boolean;
 }
 
 export interface FullRosterOcrPipelineResult {
@@ -46,7 +48,7 @@ function nowMs(): number {
 
 /**
  * Runs the complete 100% local, zero-network OCR & geometric table analysis pipeline:
- * 1. Image Preprocessing (orientation, perspective homography, upscaling, deskewing, Sauvola thresholding, grid removal, despeckling)
+ * 1. Image Preprocessing (orientation, perspective homography, resolution cap & upscaling, deskewing, Sauvola thresholding, grid removal, despeckling)
  * 2. Local OCR Engine word & coordinate extraction
  * 3. Geometric Table Structure Analysis (headers, dynamic columns, 1-to-1 row anchoring, missing row gap detection)
  * 4. Smart Uncertainty & Reliability Evaluation
@@ -135,8 +137,128 @@ export async function runLocalRosterOcrPipeline(
       recognizedWordCount,
       averageWordConfidence,
       imageMegapixels,
+      downscaleFactor: ocrOutput.preprocessing.diagnostics.downscaleFactor ?? 1,
+      executedInWebWorker: false,
     },
   };
+}
+
+/**
+ * Offloads heavy pixel preprocessing, Sauvola thresholding, local OCR, and geometric table parsing
+ * to a dedicated Web Worker in browser/tablet environments so the main UI thread never freezes on large photos.
+ * Falls back cleanly to in-process execution when Web Workers are unavailable (e.g. Node.js unit tests).
+ */
+export async function runLocalRosterOcrPipelineAsync(
+  image: RawGrayImage,
+  existingClassroomStudents: Student[] = [],
+  options: {
+    preprocessing?: PreprocessingOptions;
+    manualColumnRoles?: Record<number, ColumnRole>;
+    forceHeaderlessMode?: boolean;
+    engine?: OcrEngineAdapter;
+    preferWebWorker?: boolean;
+  } = {}
+): Promise<FullRosterOcrPipelineResult> {
+  const canUseWorker =
+    options.preferWebWorker !== false &&
+    !options.engine &&
+    typeof window !== 'undefined' &&
+    typeof Worker !== 'undefined';
+
+  if (canUseWorker) {
+    try {
+      const workerResult = await new Promise<FullRosterOcrPipelineResult>(
+        (resolve, reject) => {
+          const worker = new Worker(
+            new URL('./ocrWorker.ts', import.meta.url),
+            { type: 'module' }
+          );
+          const requestId = `ocr-req-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2, 7)}`;
+
+          const cleanup = () => {
+            worker.onmessage = null;
+            worker.onerror = null;
+            worker.terminate();
+          };
+
+          worker.onmessage = (event) => {
+            const msg = event.data;
+            if (!msg || msg.requestId !== requestId) return;
+            cleanup();
+            if (msg.ok && msg.result) {
+              // Ensure typed arrays are restored as Uint8Array instances after structured clone
+              const res = msg.result as FullRosterOcrPipelineResult;
+              if (
+                res.ocrOutput?.preprocessing?.grayImage?.data &&
+                !(res.ocrOutput.preprocessing.grayImage.data instanceof Uint8Array)
+              ) {
+                res.ocrOutput.preprocessing.grayImage.data = new Uint8Array(
+                  res.ocrOutput.preprocessing.grayImage.data
+                );
+              }
+              if (
+                res.ocrOutput?.preprocessing?.binaryImage?.mask &&
+                !(res.ocrOutput.preprocessing.binaryImage.mask instanceof Uint8Array)
+              ) {
+                res.ocrOutput.preprocessing.binaryImage.mask = new Uint8Array(
+                  res.ocrOutput.preprocessing.binaryImage.mask
+                );
+              }
+              if (
+                res.ocrOutput?.preprocessing?.gridLinesRemovedMask?.mask &&
+                !(
+                  res.ocrOutput.preprocessing.gridLinesRemovedMask.mask instanceof
+                  Uint8Array
+                )
+              ) {
+                res.ocrOutput.preprocessing.gridLinesRemovedMask.mask =
+                  new Uint8Array(
+                    res.ocrOutput.preprocessing.gridLinesRemovedMask.mask
+                  );
+              }
+              resolve(res);
+            } else {
+              reject(
+                new Error(msg.error || 'Web Worker OCR işlemi başarısız oldu.')
+              );
+            }
+          };
+
+          worker.onerror = (err) => {
+            cleanup();
+            reject(err);
+          };
+
+          // Copy buffer so caller's sourceGrayImage remains intact for rotation/re-runs
+          const clonedData = new Uint8Array(image.data);
+          worker.postMessage(
+            {
+              requestId,
+              image: {
+                width: image.width,
+                height: image.height,
+                data: clonedData,
+              },
+              existingClassroomStudents,
+              options: {
+                preprocessing: options.preprocessing,
+                manualColumnRoles: options.manualColumnRoles,
+                forceHeaderlessMode: options.forceHeaderlessMode,
+              },
+            },
+            [clonedData.buffer]
+          );
+        }
+      );
+      return workerResult;
+    } catch {
+      // Fallback to local thread if module worker instantiation is blocked
+    }
+  }
+
+  return runLocalRosterOcrPipeline(image, existingClassroomStudents, options);
 }
 
 /**

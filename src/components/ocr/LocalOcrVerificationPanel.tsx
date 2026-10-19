@@ -25,7 +25,10 @@ import type {
 } from '../../utils/ocr/ocrTypes.ts';
 import {
   grayToRgbaBuffer,
+  MAX_OCR_FILE_SIZE_BYTES,
+  MAX_OCR_IMAGE_DIMENSION_PX,
   rgbaToGrayImage,
+  validateAndPlanOcrImageDimensions,
 } from '../../utils/ocr/imagePreprocessor.ts';
 import { defaultLocalOcrRegistry } from '../../utils/ocr/localOcrEngine.ts';
 import {
@@ -33,7 +36,7 @@ import {
   createRealisticCameraSampleGrayImage,
   createReferenceSampleGrayImage,
   reparseOcrWithColumnRoles,
-  runLocalRosterOcrPipeline,
+  runLocalRosterOcrPipelineAsync,
   runRealisticCameraOcrBenchmarkSuite,
   type RealisticCameraBenchmarkSuiteSummary,
   type RosterOcrPerformanceMetrics,
@@ -253,7 +256,7 @@ export const LocalOcrVerificationPanel: React.FC<
     setOcrLoading(true);
     setOcrError(null);
     try {
-      const res = await runLocalRosterOcrPipeline(
+      const res = await runLocalRosterOcrPipelineAsync(
         grayImg,
         existingClassroomStudents,
         {
@@ -298,6 +301,17 @@ export const LocalOcrVerificationPanel: React.FC<
     const file = e.target.files?.[0];
     if (!file) return;
     setOcrError(null);
+
+    if (file.size > MAX_OCR_FILE_SIZE_BYTES) {
+      const preCheck = validateAndPlanOcrImageDimensions(100, 100, file.size);
+      setOcrError(
+        preCheck.error ||
+          'Fotoğraf dosya boyutu çok büyük. Lütfen daha küçük bir görsel seçin.'
+      );
+      e.target.value = '';
+      return;
+    }
+
     setOcrLoading(true);
 
     try {
@@ -315,14 +329,39 @@ export const LocalOcrVerificationPanel: React.FC<
         el.src = dataUrl;
       });
 
+      const rawWidth = img.naturalWidth || img.width;
+      const rawHeight = img.naturalHeight || img.height;
+      const dimensionPlan = validateAndPlanOcrImageDimensions(
+        rawWidth,
+        rawHeight,
+        file.size,
+        MAX_OCR_IMAGE_DIMENSION_PX
+      );
+
+      if (!dimensionPlan.valid) {
+        setOcrError(
+          dimensionPlan.error ||
+            'Görsel boyutları tablet güvenlik sınırlarını aşıyor.'
+        );
+        setOcrLoading(false);
+        return;
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth || img.width;
-      canvas.height = img.naturalHeight || img.height;
+      canvas.width = dimensionPlan.targetWidth;
+      canvas.height = dimensionPlan.targetHeight;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
         throw new Error('Tarayıcı Canvas görüntü bağlamı oluşturulamadı.');
       }
-      ctx.drawImage(img, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(
+        img,
+        0,
+        0,
+        dimensionPlan.targetWidth,
+        dimensionPlan.targetHeight
+      );
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const gray = rgbaToGrayImage(
         imgData.data,

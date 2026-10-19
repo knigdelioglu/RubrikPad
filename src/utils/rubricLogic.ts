@@ -305,6 +305,113 @@ export function getStudentEvaluationBreakdown(
   };
 }
 
+export type IndividualCriterionEditAction =
+  | {
+      type: 'level';
+      criterionId: string;
+      points: number;
+    }
+  | {
+      type: 'direct';
+      criterionId: string;
+      directPoints: number | null;
+    }
+  | {
+      type: 'clear';
+      criterionId: string;
+    };
+
+/**
+ * Applies a single-criterion edit (normal rubric level, precision direct integer score, or clear)
+ * to a student's evaluation, guaranteeing identical group-to-individual seeding semantics across
+ * normal level selection and precision direct score entry (P1 Precision Scoring Consistency).
+ *
+ * When a student is currently using their reflected group evaluation (`activeSource === 'group'`),
+ * editing any criterion via either normal level selection OR precision direct score entry seeds
+ * all other criteria from `groupCriterionScores` and `groupDirectScores` so a completed evaluation
+ * never loses its other criteria or becomes incomplete.
+ */
+export function applyIndividualCriterionEdit(
+  rubric: Rubric,
+  existing: StudentEvaluation | undefined,
+  studentId: string,
+  action: IndividualCriterionEditAction,
+  timestampIso = new Date().toISOString()
+): {
+  updatedEvaluation: StudentEvaluation;
+  prevCalc: ScoreCalculationResult;
+  newCalc: ScoreCalculationResult;
+  transitionedFromGroup: boolean;
+} {
+  const breakdown = getStudentEvaluationBreakdown(rubric, existing);
+  const prevCalc = breakdown.effectiveCalc;
+  const seedFromGroup = breakdown.activeSource === 'group';
+
+  const nextScores: Record<string, number | null> = seedFromGroup
+    ? {
+        ...(existing?.criterionScores || {}),
+        ...(existing?.groupCriterionScores || {}),
+      }
+    : { ...(existing?.criterionScores || {}) };
+
+  const nextDirect: Record<string, number | null> = seedFromGroup
+    ? {
+        ...(existing?.directCriterionScores || {}),
+        ...(existing?.groupDirectScores || {}),
+      }
+    : { ...(existing?.directCriterionScores || {}) };
+
+  if (seedFromGroup) {
+    // Ensure group authority per criterion before applying the new individual edit:
+    // if a criterion in group was scored ONLY via level (not direct), clear any stale individual direct override for it
+    for (const crit of rubric.criteria) {
+      const grpHasDirect = isScoreAssigned(
+        existing?.groupDirectScores?.[crit.id]
+      );
+      const grpHasLevel = isScoreAssigned(
+        existing?.groupCriterionScores?.[crit.id]
+      );
+      if (grpHasLevel && !grpHasDirect) {
+        delete nextDirect[crit.id];
+      }
+    }
+  }
+
+  if (action.type === 'level') {
+    nextScores[action.criterionId] = action.points;
+    delete nextDirect[action.criterionId];
+  } else if (action.type === 'direct') {
+    if (action.directPoints === null || action.directPoints === undefined) {
+      delete nextDirect[action.criterionId];
+    } else {
+      nextDirect[action.criterionId] = action.directPoints;
+    }
+  } else if (action.type === 'clear') {
+    delete nextScores[action.criterionId];
+    delete nextDirect[action.criterionId];
+  }
+
+  const updatedEvaluation: StudentEvaluation = {
+    ...existing,
+    studentId,
+    criterionScores: nextScores,
+    directCriterionScores: nextDirect,
+    activeScoreSource: 'individual',
+    note: existing?.note || '',
+    tags: existing?.tags || [],
+    updatedAt: timestampIso,
+  };
+
+  const newCalc = calculateWeightedScore(rubric, nextScores, nextDirect);
+
+  return {
+    updatedEvaluation,
+    prevCalc,
+    newCalc,
+    transitionedFromGroup: seedFromGroup,
+  };
+}
+
 /**
  * Checks whether a group's evaluation is complete and eligible to be applied to its member students.
  * P0: Incomplete group evaluations (where any required criterion is unscored) or empty groups

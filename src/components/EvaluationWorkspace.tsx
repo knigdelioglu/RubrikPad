@@ -21,6 +21,7 @@ import type {
 import {
   calculateWeightedScore,
   getStudentEvaluationBreakdown,
+  applyIndividualCriterionEdit,
   getEffectiveSessionRubric,
   freezeRubricSnapshot,
   changeSessionRubricSafely,
@@ -275,46 +276,22 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       if (!activeSession || !selectedStudent || !activeRubric) return;
 
       const existing = activeSession.evaluations[selectedStudent.id];
-      const prevCalc = getStudentEvaluationBreakdown(
-        activeRubric,
-        existing
-      ).effectiveCalc;
-
-      const hasExistingIndividual =
-        Object.keys(existing?.criterionScores || {}).length > 0 ||
-        Object.keys(existing?.directCriterionScores || {}).length > 0;
-
-      const baseCriterionScores =
-        !hasExistingIndividual && existing?.activeScoreSource === 'group'
-          ? { ...(existing?.groupCriterionScores || {}) }
-          : { ...(existing?.criterionScores || {}) };
-
-      const baseDirectScores =
-        !hasExistingIndividual && existing?.activeScoreSource === 'group'
-          ? { ...(existing?.groupDirectScores || {}) }
-          : { ...(existing?.directCriterionScores || {}) };
-
-      const nextScores = {
-        ...baseCriterionScores,
-        [criterionId]: points,
-      };
-      const nextDirect = { ...baseDirectScores };
-      delete nextDirect[criterionId];
-
-      const updatedEval: StudentEvaluation = {
-        ...existing,
-        studentId: selectedStudent.id,
-        criterionScores: nextScores,
-        directCriterionScores: nextDirect,
-        activeScoreSource: 'individual',
-        note: existing?.note || '',
-        tags: existing?.tags || [],
-        updatedAt: new Date().toISOString(),
-      };
+      const { updatedEvaluation, prevCalc, newCalc } =
+        applyIndividualCriterionEdit(
+          activeRubric,
+          existing,
+          selectedStudent.id,
+          {
+            type: 'level',
+            criterionId,
+            points,
+          },
+          new Date().toISOString()
+        );
 
       const nextEvaluations = {
         ...activeSession.evaluations,
-        [selectedStudent.id]: updatedEval,
+        [selectedStudent.id]: updatedEvaluation,
       };
 
       const undoHistory = recordSessionUndoEntry(activeSession, {
@@ -331,11 +308,6 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         undoHistory,
       });
 
-      const newCalc = calculateWeightedScore(
-        activeRubric,
-        nextScores,
-        nextDirect
-      );
       setStatusAnnouncement(
         `${selectedStudent.fullName}: ${points} puan verildi (${newCalc.completedCriteriaCount}/${newCalc.totalCriteriaCount} ölçüt)`
       );
@@ -417,32 +389,22 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     ) => {
       if (!activeSession || !selectedStudent || !activeRubric) return;
       const existing = activeSession.evaluations[selectedStudent.id];
-      const prevCalc = calculateWeightedScore(
-        activeRubric,
-        existing?.criterionScores || {},
-        existing?.directCriterionScores
-      );
+      const { updatedEvaluation, prevCalc, newCalc } =
+        applyIndividualCriterionEdit(
+          activeRubric,
+          existing,
+          selectedStudent.id,
+          {
+            type: 'direct',
+            criterionId,
+            directPoints,
+          },
+          new Date().toISOString()
+        );
 
-      const nextDirect = { ...(existing?.directCriterionScores || {}) };
-      if (directPoints === null) {
-        delete nextDirect[criterionId];
-      } else {
-        nextDirect[criterionId] = directPoints;
-      }
-
-      const nextScores = existing?.criterionScores || {};
       const nextEvaluations = {
         ...activeSession.evaluations,
-        [selectedStudent.id]: {
-          ...existing,
-          studentId: selectedStudent.id,
-          criterionScores: nextScores,
-          directCriterionScores: nextDirect,
-          activeScoreSource: 'individual' as const,
-          note: existing?.note || '',
-          tags: existing?.tags || [],
-          updatedAt: new Date().toISOString(),
-        },
+        [selectedStudent.id]: updatedEvaluation,
       };
 
       const undoHistory = recordSessionUndoEntry(activeSession, {
@@ -459,10 +421,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         undoHistory,
       });
 
-      const newCalc = calculateWeightedScore(
-        activeRubric,
-        nextScores,
-        nextDirect
+      setStatusAnnouncement(
+        `${selectedStudent.fullName}: ${directPoints ?? 'temizlendi'} hassas puan (${newCalc.completedCriteriaCount}/${newCalc.totalCriteriaCount} ölçüt)`
       );
 
       if (newCalc.isComplete && newCalc.finalScoreOutOf100 !== null) {
@@ -487,10 +447,35 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             nextStudentName: nextPending?.fullName || null,
             autoAdvanced: Boolean(shouldAdvance && nextPending),
           });
+        } else if (
+          justCompletedBanner &&
+          justCompletedBanner.completedStudentId === selectedStudent.id
+        ) {
+          setJustCompletedBanner({
+            ...justCompletedBanner,
+            scoreOutOf100: newCalc.finalScoreOutOf100,
+            performanceLabel: newCalc.performanceLabel,
+          });
         }
+
         if (shouldAdvance && nextPending) {
+          setFastCompletionBanner({
+            completedStudentId: selectedStudent.id,
+            completedStudentName: selectedStudent.fullName,
+            scoreOutOf100: newCalc.finalScoreOutOf100,
+            nextStudentId: nextPending.id,
+            nextStudentName: nextPending.fullName,
+          });
           setSelectedStudentId(nextPending.id);
           setActiveCriterionIndex(0);
+        } else if (!prevCalc.isComplete && activeSession.mode === 'grid') {
+          setFastCompletionBanner({
+            completedStudentId: selectedStudent.id,
+            completedStudentName: selectedStudent.fullName,
+            scoreOutOf100: newCalc.finalScoreOutOf100,
+            nextStudentId: nextPending?.id || null,
+            nextStudentName: nextPending?.fullName || null,
+          });
         }
       } else {
         setJustCompletedBanner(null);
@@ -501,6 +486,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       selectedStudent,
       activeRubric,
       classStudents,
+      justCompletedBanner,
       onUpdateSession,
     ]
   );
@@ -508,14 +494,20 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   // Clear single criterion score to null (unscored) (P0 #1)
   const handleClearCriterionScore = useCallback(
     (criterionId: string) => {
-      if (!activeSession || !selectedStudent) return;
+      if (!activeSession || !selectedStudent || !activeRubric) return;
       const existing = activeSession.evaluations[selectedStudent.id];
       if (!existing) return;
 
-      const nextScores = { ...(existing.criterionScores || {}) };
-      delete nextScores[criterionId];
-      const nextDirect = { ...(existing.directCriterionScores || {}) };
-      delete nextDirect[criterionId];
+      const { updatedEvaluation } = applyIndividualCriterionEdit(
+        activeRubric,
+        existing,
+        selectedStudent.id,
+        {
+          type: 'clear',
+          criterionId,
+        },
+        new Date().toISOString()
+      );
 
       const undoHistory = recordSessionUndoEntry(activeSession, {
         scope: 'criterion',
@@ -529,17 +521,12 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         ...activeSession,
         evaluations: {
           ...activeSession.evaluations,
-          [selectedStudent.id]: {
-            ...existing,
-            criterionScores: nextScores,
-            directCriterionScores: nextDirect,
-            updatedAt: new Date().toISOString(),
-          },
+          [selectedStudent.id]: updatedEvaluation,
         },
         undoHistory,
       });
     },
-    [activeSession, selectedStudent, onUpdateSession]
+    [activeSession, selectedStudent, activeRubric, onUpdateSession]
   );
 
   const handleResetStudentScores = useCallback(
@@ -729,6 +716,17 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           }
           onSetStudentCriterionScore={(studentId, criterionId, points) => {
             const existing = activeSession.evaluations[studentId];
+            const { updatedEvaluation } = applyIndividualCriterionEdit(
+              activeRubric,
+              existing,
+              studentId,
+              {
+                type: 'level',
+                criterionId,
+                points,
+              },
+              new Date().toISOString()
+            );
             const undoHistory = recordSessionUndoEntry(activeSession, {
               scope: 'criterion',
               studentId,
@@ -740,18 +738,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               ...activeSession,
               evaluations: {
                 ...activeSession.evaluations,
-                [studentId]: {
-                  ...existing,
-                  studentId,
-                  criterionScores: {
-                    ...(existing?.criterionScores || {}),
-                    [criterionId]: points,
-                  },
-                  activeScoreSource: 'individual',
-                  note: existing?.note || '',
-                  tags: existing?.tags || [],
-                  updatedAt: new Date().toISOString(),
-                },
+                [studentId]: updatedEvaluation,
               },
               undoHistory,
             });

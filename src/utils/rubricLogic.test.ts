@@ -6,6 +6,7 @@ import {
   isScoreAssigned,
   calculateWeightedScore,
   getStudentEvaluationBreakdown,
+  applyIndividualCriterionEdit,
   freezeRubricSnapshot,
   getEffectiveSessionRubric,
   validateRubric,
@@ -46,6 +47,7 @@ import {
   sha256Hex,
   computePayloadChecksum,
   computeLegacyRpkChecksum,
+  computeInitialV3RpkChecksum,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
   importLegacyBackupBundle,
@@ -2118,4 +2120,290 @@ test('Audit #17: evaluateGroupAndTransferToMembers and transferAllCompletedGroup
     assert.equal(betaEval.groupNote, 'Grup Beta poster çalışması');
   }
 });
+
+// ============================================================================
+// AUDIT #18: Original Initial-v3 rpk- Checksum, Precision Score Group Transition,
+// Android Backup Privacy, and Gemini Cleanup
+// ============================================================================
+test('Audit #18.1 (P0): Original initial-v3 rpk- checksum algorithm (Turn 1 summary & Audit #2 projections across FNV-1a, DJB2, Java31, SDBM, Cyrb53, Base36) is verified and auto-upgraded', () => {
+  const initialV3Payload = {
+    classrooms: [
+      {
+        id: 'cls-1',
+        name: '6-A',
+        gradeLevel: '6. Sınıf',
+        subject: 'Fen Bilimleri',
+        academicYear: '2026-2027',
+      },
+    ],
+    students: [
+      {
+        id: 'stu-1',
+        studentNumber: '101',
+        firstName: 'Elif',
+        lastName: 'Yılmaz',
+        fullName: 'Elif Yılmaz',
+        classId: 'cls-1',
+      },
+    ],
+    rubrics: [sampleRubric],
+    sessions: [
+      {
+        id: 'sess-v3-orig',
+        title: 'İlk v3 Kaydı',
+        classId: 'cls-1',
+        rubricId: sampleRubric.id,
+        mode: 'group' as const,
+        date: '2026-10-19',
+        status: 'completed' as const,
+        evaluations: {
+          'stu-1': {
+            studentId: 'stu-1',
+            criterionScores: { c1: 4, c2: 3 },
+            note: 'Tamamlandı',
+            tags: ['Aktif Katılım'],
+            updatedAt: '2026-10-19T08:00:00Z',
+          },
+        },
+        groups: [
+          {
+            id: 'grp-1',
+            name: 'Grup 1',
+            studentIds: ['stu-1'],
+            criterionScores: { c1: 4, c2: 3 },
+          },
+        ],
+      },
+    ],
+  };
+
+  const initialV3Checksums = [
+    computeInitialV3RpkChecksum(initialV3Payload, 'fnv1a_8'),
+    computeInitialV3RpkChecksum(initialV3Payload, 'djb2_8'),
+    computeInitialV3RpkChecksum(initialV3Payload, 'java31_8'),
+    computeInitialV3RpkChecksum(initialV3Payload, 'sdbm_8'),
+    computeInitialV3RpkChecksum(initialV3Payload, 'cyrb53_16'),
+    computeInitialV3RpkChecksum(initialV3Payload, 'fnv1a_base36'),
+    computeLegacyRpkChecksum(initialV3Payload, {
+      evaluationFields: 'v3_turn1_original',
+      groupFields: 'v3_turn1_original',
+      rubricFields: 'v3_turn1_minimal',
+      sessionFields: 'v3_turn1_no_general_note',
+      hashAlgorithm: 'fnv1a_8',
+    }),
+    computeLegacyRpkChecksum(initialV3Payload, {
+      studentFields: 'omit_full_name',
+      evaluationFields: 'v3_audit2_exact',
+      groupFields: 'v3_initial_minimal',
+      hashAlgorithm: 'fnv1a_8',
+    }),
+  ];
+
+  const fallbackSeed: typeof initialV3Payload = {
+    classrooms: [],
+    students: [],
+    rubrics: [],
+    sessions: [],
+  };
+
+  for (const rpkChecksum of initialV3Checksums) {
+    assert.ok(rpkChecksum.startsWith('rpk-'));
+
+    // 1. Verify backup bundle with this initial-v3 rpk- checksum
+    const bundleJson = JSON.stringify({
+      schemaVersion: 3,
+      exportedAt: '2026-10-19T08:00:00Z',
+      checksum: rpkChecksum,
+      payload: initialV3Payload,
+    });
+    const parsedBundle = verifyAndParseBackupBundle(bundleJson);
+    assert.equal(
+      parsedBundle.isValid,
+      true,
+      `Expected valid backup bundle verification for ${rpkChecksum}, got: ${parsedBundle.error}`
+    );
+    assert.equal(parsedBundle.upgradedFromRpkChecksum, true);
+
+    // 2. Verify localStorage state with this initial-v3 rpk- checksum via loadVerifiedInitialStateWithMeta
+    const rawEnvelope = JSON.stringify({
+      schemaVersion: 3,
+      updatedAt: '2026-10-19T08:00:00Z',
+      checksum: rpkChecksum,
+      payload: initialV3Payload,
+    });
+
+    const store: Record<string, string> = {
+      [STORAGE_KEY]: rawEnvelope,
+    };
+    const prevLs = (globalThis as Record<string, unknown>).localStorage;
+    (globalThis as Record<string, unknown>).localStorage = {
+      getItem: (k: string) => (k in store ? store[k] : null),
+      setItem: (k: string, v: string) => {
+        store[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete store[k];
+      },
+    };
+
+    try {
+      const metaRes = loadVerifiedInitialStateWithMeta(fallbackSeed);
+      assert.equal(
+        metaRes.source,
+        'localStorage_v3',
+        `Should load from localStorage_v3 and NOT fall back to seed for initial-v3 checksum ${rpkChecksum}`
+      );
+      assert.equal(metaRes.localStorageCorrupted, false);
+      assert.equal(metaRes.upgradedFromRpkChecksum, true);
+      assert.equal(metaRes.state.students[0].fullName, 'Elif Yılmaz');
+      const upgradedEnvelope = JSON.parse(store[STORAGE_KEY]);
+      assert.match(String(upgradedEnvelope.checksum), /^sha256-[0-9a-f]{64}$/);
+    } finally {
+      (globalThis as Record<string, unknown>).localStorage = prevLs;
+    }
+  }
+});
+
+test('Audit #18.2 (P1): applyIndividualCriterionEdit behaves identically for normal level selection and precision direct score entry when transitioning from group score to individual evaluation', () => {
+  // Student s1 currently has a completed group evaluation (c1: 4, c2: 3) as activeScoreSource: 'group'
+  // and no prior individual criterionScores.
+  const studentWithGroupScore = {
+    studentId: 's1',
+    criterionScores: {},
+    groupId: 'g1',
+    groupCriterionScores: { c1: 4, c2: 3 },
+    groupNote: 'Grup ortak değerlendirmesi',
+    activeScoreSource: 'group' as const,
+    note: '',
+    tags: [],
+    updatedAt: '2026-10-19T09:00:00Z',
+  };
+
+  // Case A: Teacher selects normal level 3 on c1 for student s1
+  const resNormal = applyIndividualCriterionEdit(
+    sampleRubric,
+    studentWithGroupScore,
+    's1',
+    {
+      type: 'level',
+      criterionId: 'c1',
+      points: 3,
+    }
+  );
+
+  const breakdownNormal = getStudentEvaluationBreakdown(
+    sampleRubric,
+    resNormal.updatedEvaluation
+  );
+  assert.equal(resNormal.transitionedFromGroup, true);
+  assert.equal(resNormal.updatedEvaluation.activeScoreSource, 'individual');
+  assert.equal(breakdownNormal.activeSource, 'individual');
+  assert.equal(
+    breakdownNormal.effectiveCalc.isComplete,
+    true,
+    'Normal level edit after group score must keep evaluation complete (c2 seeded from group)'
+  );
+  assert.equal(resNormal.updatedEvaluation.criterionScores['c1'], 3);
+  assert.equal(resNormal.updatedEvaluation.criterionScores['c2'], 3);
+
+  // Case B: Teacher enters precision direct score 35 on c1 (maxPoints=50) for student s1
+  const resPrecision = applyIndividualCriterionEdit(
+    sampleRubric,
+    studentWithGroupScore,
+    's1',
+    {
+      type: 'direct',
+      criterionId: 'c1',
+      directPoints: 35,
+    }
+  );
+
+  const breakdownPrecision = getStudentEvaluationBreakdown(
+    sampleRubric,
+    resPrecision.updatedEvaluation
+  );
+  assert.equal(resPrecision.transitionedFromGroup, true);
+  assert.equal(resPrecision.updatedEvaluation.activeScoreSource, 'individual');
+  assert.equal(breakdownPrecision.activeSource, 'individual');
+  assert.equal(
+    breakdownPrecision.effectiveCalc.isComplete,
+    true,
+    'Precision direct score edit after group score must also keep evaluation complete (c2 seeded from group)'
+  );
+  assert.equal(resPrecision.updatedEvaluation.directCriterionScores?.['c1'], 35);
+  assert.equal(resPrecision.updatedEvaluation.criterionScores['c2'], 3);
+  // Weighted score: c1 (50% weight, maxPoints 50): 35/50 = 35, c2 (50% weight, level 3/4): 37.5 => 72.5 -> 73
+  assert.equal(breakdownPrecision.effectiveCalc.scoreOutOf100, 73);
+
+  // Case C: Group itself had precision direct scores (groupDirectScores) and teacher edits c2 via precision direct score
+  const studentWithGroupPrecision = {
+    studentId: 's2',
+    criterionScores: {},
+    groupId: 'g1',
+    groupCriterionScores: { c1: 4, c2: 3 },
+    groupDirectScores: { c1: 42 },
+    activeScoreSource: 'group' as const,
+    note: '',
+    tags: [],
+    updatedAt: '2026-10-19T09:00:00Z',
+  };
+
+  const resEditingC2Direct = applyIndividualCriterionEdit(
+    sampleRubric,
+    studentWithGroupPrecision,
+    's2',
+    {
+      type: 'direct',
+      criterionId: 'c2',
+      directPoints: 38,
+    }
+  );
+  const breakdownC2Direct = getStudentEvaluationBreakdown(
+    sampleRubric,
+    resEditingC2Direct.updatedEvaluation
+  );
+  assert.equal(breakdownC2Direct.effectiveCalc.isComplete, true);
+  assert.equal(resEditingC2Direct.updatedEvaluation.directCriterionScores?.['c1'], 42);
+  assert.equal(resEditingC2Direct.updatedEvaluation.directCriterionScores?.['c2'], 38);
+  assert.equal(breakdownC2Direct.effectiveCalc.scoreOutOf100, 80);
+});
+
+test('Audit #18.3 (P1 & P2): AndroidManifest disables auto-backup for KVKK student privacy and Gemini remnants are removed', () => {
+  const manifestXml = fs.readFileSync(
+    'android/app/src/main/AndroidManifest.xml',
+    'utf-8'
+  );
+  assert.ok(
+    manifestXml.includes('android:allowBackup="false"'),
+    'AndroidManifest.xml must set android:allowBackup="false"'
+  );
+  assert.ok(
+    !manifestXml.includes('android:allowBackup="true"'),
+    'AndroidManifest.xml must not allow automatic cloud backups of student data'
+  );
+  assert.ok(
+    manifestXml.includes('android:dataExtractionRules="@xml/data_extraction_rules"'),
+    'AndroidManifest.xml must reference @xml/data_extraction_rules'
+  );
+
+  const extractionRulesXml = fs.readFileSync(
+    'android/app/src/main/res/xml/data_extraction_rules.xml',
+    'utf-8'
+  );
+  assert.ok(extractionRulesXml.includes('<cloud-backup>'));
+  assert.ok(extractionRulesXml.includes('<device-transfer>'));
+
+  const pkgJson = fs.readFileSync('package.json', 'utf-8');
+  assert.ok(
+    !pkgJson.includes('@google/genai'),
+    'package.json must not contain unused @google/genai dependency'
+  );
+
+  const viteCfg = fs.readFileSync('vite.config.ts', 'utf-8');
+  assert.ok(
+    !viteCfg.includes('GEMINI_API_KEY'),
+    'vite.config.ts must not expose GEMINI_API_KEY'
+  );
+});
+
 

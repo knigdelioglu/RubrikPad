@@ -46,6 +46,7 @@ export interface PreprocessingOptions {
   autoDeskew?: boolean;
   perspectiveCorners?: [Point2D, Point2D, Point2D, Point2D]; // TL, TR, BR, BL
   targetMinWidth?: number;
+  targetMaxDimension?: number;
   removeGridLines?: boolean;
 }
 
@@ -62,6 +63,7 @@ export interface PreprocessingResult {
     detectedSkewDeg: number;
     perspectiveRectified: boolean;
     upscaleFactor: number;
+    downscaleFactor?: number;
     contrastScore: number;
     horizontalGridLinesY: number[];
     verticalGridLinesX: number[];

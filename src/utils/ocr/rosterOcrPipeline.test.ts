@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import type { OcrWordToken } from './ocrTypes.ts';
 import {
   applyPerspectiveHomography,
+  downscaleGrayImageBilinear,
+  MAX_OCR_FILE_SIZE_BYTES,
+  MAX_OCR_IMAGE_DIMENSION_PX,
   preprocessRosterImage,
   rotateGrayImage90n,
+  upscaleGrayImageBilinear,
+  validateAndPlanOcrImageDimensions,
 } from './imagePreprocessor.ts';
 import {
   LocalOcrEngineRegistry,
@@ -26,6 +31,7 @@ import {
   evaluateRosterOcrAccuracyMetrics,
   reparseOcrWithColumnRoles,
   runLocalRosterOcrPipeline,
+  runLocalRosterOcrPipelineAsync,
   runRealisticCameraOcrBenchmarkSuite,
 } from './rosterOcrPipeline.ts';
 
@@ -364,4 +370,51 @@ test('OCR #8: Real camera classroom roster photos benchmark suite verifies >=98%
   assert.ok(suiteSummary.averageCharacterAccuracyPercent >= 98);
   assert.equal(suiteSummary.averageRowIdentityMatchRate, 100);
 });
+
+test('OCR #9: Oversized camera photos are bounded by validateAndPlanOcrImageDimensions and automatically downscaled in preprocessRosterImage to prevent tablet UI freezes', async () => {
+  // 1. File size limit guard (>15 MB rejected)
+  const overFileLimit = validateAndPlanOcrImageDimensions(
+    2000,
+    1500,
+    MAX_OCR_FILE_SIZE_BYTES + 1024
+  );
+  assert.equal(overFileLimit.valid, false);
+  assert.ok(overFileLimit.error?.includes('MB'));
+
+  // 2. Extreme megapixel guard (>25 MP rejected)
+  const overMpLimit = validateAndPlanOcrImageDimensions(6000, 5000, 4 * 1024 * 1024);
+  assert.equal(overMpLimit.valid, false);
+  assert.ok(overMpLimit.error?.includes('MP'));
+
+  // 3. Large 12MP tablet photo (4000x3000) is proportionally planned to max 1800x1350
+  const plan12Mp = validateAndPlanOcrImageDimensions(4000, 3000, 3 * 1024 * 1024);
+  assert.equal(plan12Mp.valid, true);
+  assert.equal(plan12Mp.wasDownscaled, true);
+  assert.equal(plan12Mp.targetWidth, MAX_OCR_IMAGE_DIMENSION_PX);
+  assert.equal(plan12Mp.targetHeight, 1350);
+
+  // 4. Preprocessing an oversized gray image automatically caps dimensions at MAX_OCR_IMAGE_DIMENSION_PX
+  const baseRef = createReferenceSampleGrayImage();
+  const oversizedImage = upscaleGrayImageBilinear(baseRef, 2.4); // > 2100px wide
+  assert.ok(oversizedImage.width > MAX_OCR_IMAGE_DIMENSION_PX);
+
+  const prepped = preprocessRosterImage(oversizedImage);
+  assert.ok(
+    Math.max(prepped.grayImage.width, prepped.grayImage.height) <=
+      MAX_OCR_IMAGE_DIMENSION_PX
+  );
+  assert.ok((prepped.diagnostics.downscaleFactor ?? 1) < 1);
+
+  const downscaledDirect = downscaleGrayImageBilinear(oversizedImage, 1500);
+  assert.equal(downscaledDirect.image.width, 1500);
+  assert.ok(downscaledDirect.downscaleFactor < 1);
+
+  // 5. Async pipeline wrapper executes cleanly and preserves full accuracy
+  const asyncResult = await runLocalRosterOcrPipelineAsync(oversizedImage, []);
+  assert.equal(asyncResult.verifiedRows.length, 2);
+  assert.equal(asyncResult.verifiedRows[0].studentNumber, '245');
+  assert.equal(asyncResult.verifiedRows[1].studentNumber, '246');
+  assert.ok((asyncResult.performanceMetrics.downscaleFactor ?? 1) < 1);
+});
+
 
