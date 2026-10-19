@@ -377,19 +377,89 @@ export function computePayloadChecksum(payload: AppDataState): string {
   return `sha256-${sha256Hex(canonical)}`;
 }
 
-/**
- * Computes the legacy v3 `rpk-<16_hex>` checksum used in earlier v3 builds
- * so that existing `rubrikpad_state_v3` data in localStorage/IndexedDB or v3 backups
- * can be verified for integrity and seamlessly upgraded to `sha256-` without data loss.
- */
-export function computeLegacyRpkChecksum(
-  payload: AppDataState,
-  options?: {
-    omitFullName?: boolean;
-    canonicalize?: boolean;
-    sortScoreMaps?: boolean;
-  }
+export type LegacyRpkHashAlgorithm =
+  | 'cyrb53_16'
+  | 'fnv1a_8'
+  | 'djb2_8'
+  | 'cyrb53_8';
+
+export interface LegacyRpkChecksumOptions {
+  omitFullName?: boolean;
+  studentFields?: 'with_full_name' | 'omit_full_name' | 'only_full_name';
+  groupFields?:
+    | 'v3_latest'
+    | 'v3_without_last_applied'
+    | 'v3_initial_minimal';
+  evaluationFields?:
+    | 'v3_latest'
+    | 'v3_without_group_id'
+    | 'v3_without_group_direct'
+    | 'v3_initial_minimal'
+    | 'raw_record';
+  includeSessionExtras?: boolean;
+  includeAuditAndUndo?: boolean;
+  rawPayloadDirect?: boolean;
+  canonicalize?: boolean;
+  sortScoreMaps?: boolean;
+  hashAlgorithm?: LegacyRpkHashAlgorithm;
+}
+
+function computeRpkHashFromSerialized(
+  serialized: string,
+  algorithm: LegacyRpkHashAlgorithm = 'cyrb53_16'
 ): string {
+  if (algorithm === 'fnv1a_8') {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < serialized.length; i++) {
+      h ^= serialized.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  if (algorithm === 'djb2_8') {
+    let h = 5381;
+    for (let i = 0; i < serialized.length; i++) {
+      h = (Math.imul(h, 33) ^ serialized.charCodeAt(i)) >>> 0;
+    }
+    return `rpk-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  }
+
+  let h1 = 0xdeadbeef ^ serialized.length;
+  let h2 = 0x41c6ce57 ^ serialized.length;
+  for (let i = 0; i < serialized.length; i++) {
+    const ch = serialized.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 =
+    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 =
+    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
+  if (algorithm === 'cyrb53_8') {
+    return `rpk-${hex1}`;
+  }
+  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
+  return `rpk-${hex1}${hex2}`;
+}
+
+function buildLegacyV3DataProjection(
+  payload: AppDataState,
+  options?: LegacyRpkChecksumOptions
+): unknown {
+  if (options?.rawPayloadDirect) {
+    return {
+      classrooms: payload.classrooms || [],
+      students: payload.students || [],
+      rubrics: payload.rubrics || [],
+      sessions: payload.sessions || [],
+    };
+  }
+
   const formatMap = (
     map: Record<string, number | null> | undefined
   ): Record<string, number | null> => {
@@ -402,7 +472,15 @@ export function computeLegacyRpkChecksum(
     return out;
   };
 
-  const fullDataToHash = {
+  const stuMode =
+    options?.studentFields ??
+    (options?.omitFullName ? 'omit_full_name' : 'with_full_name');
+  const grpMode = options?.groupFields ?? 'v3_latest';
+  const evalMode = options?.evaluationFields ?? 'v3_latest';
+  const includeSessionExtras = options?.includeSessionExtras !== false;
+  const includeAuditAndUndo = Boolean(options?.includeAuditAndUndo);
+
+  return {
     classrooms: (payload.classrooms || []).map((c) => ({
       id: c.id,
       name: c.name,
@@ -410,26 +488,46 @@ export function computeLegacyRpkChecksum(
       subject: c.subject,
       academicYear: c.academicYear,
     })),
-    students: (payload.students || []).map((s) =>
-      options?.omitFullName
-        ? {
-            id: s.id,
-            studentNumber: s.studentNumber,
-            firstName: s.firstName || '',
-            lastName: s.lastName || '',
-            classId: s.classId,
-            archived: Boolean(s.archived),
-          }
-        : {
-            id: s.id,
-            studentNumber: s.studentNumber,
-            firstName: s.firstName || '',
-            lastName: s.lastName || '',
-            fullName: s.fullName,
-            classId: s.classId,
-            archived: Boolean(s.archived),
-          }
-    ),
+    students: (payload.students || []).map((s) => {
+      const base =
+        stuMode === 'omit_full_name'
+          ? {
+              id: s.id,
+              studentNumber: s.studentNumber,
+              firstName: s.firstName || '',
+              lastName: s.lastName || '',
+              classId: s.classId,
+              archived: Boolean(s.archived),
+            }
+          : stuMode === 'only_full_name'
+          ? {
+              id: s.id,
+              studentNumber: s.studentNumber,
+              fullName: s.fullName,
+              classId: s.classId,
+              archived: Boolean(s.archived),
+            }
+          : {
+              id: s.id,
+              studentNumber: s.studentNumber,
+              firstName: s.firstName || '',
+              lastName: s.lastName || '',
+              fullName: s.fullName,
+              classId: s.classId,
+              archived: Boolean(s.archived),
+            };
+
+      if (!includeAuditAndUndo) return base;
+      return {
+        ...base,
+        updatedAt: s.updatedAt || null,
+        auditLog: (s.auditLog || []).map((entry) => ({
+          timestamp: entry.timestamp,
+          action: entry.action,
+          details: entry.details,
+        })),
+      };
+    }),
     rubrics: (payload.rubrics || []).map((r) => ({
       id: r.id,
       title: r.title,
@@ -451,99 +549,319 @@ export function computeLegacyRpkChecksum(
         })),
       })),
     })),
-    sessions: (payload.sessions || []).map((ses) => ({
-      id: ses.id,
-      title: ses.title,
-      classId: ses.classId,
-      classIds:
-        Array.isArray(ses.classIds) && ses.classIds.length > 0
-          ? ses.classIds
-          : [ses.classId],
-      rubricId: ses.rubricId,
-      rubricSnapshot: ses.rubricSnapshot || null,
-      date: ses.date,
-      status: ses.status,
-      mode: ses.mode,
-      generalSessionNote: ses.generalSessionNote || '',
-      groups: (ses.groups || []).map((g) => ({
-        id: g.id,
-        name: g.name,
-        studentIds: g.studentIds || [],
-        criterionScores: formatMap(g.criterionScores),
-        directCriterionScores: formatMap(g.directCriterionScores),
-        groupNote: g.groupNote || '',
-        lastAppliedAt: g.lastAppliedAt || null,
-      })),
-      evaluations: Object.keys(ses.evaluations || {})
-        .sort()
-        .map((stuId) => {
-          const ev = ses.evaluations[stuId];
+    sessions: (payload.sessions || []).map((ses) => {
+      const mappedGroups = (ses.groups || []).map((g) => {
+        if (grpMode === 'v3_initial_minimal') {
           return {
-            studentId: ev.studentId || stuId,
-            criterionScores: formatMap(ev.criterionScores),
-            directCriterionScores: formatMap(ev.directCriterionScores),
-            groupCriterionScores: formatMap(ev.groupCriterionScores),
-            groupDirectScores: formatMap(ev.groupDirectScores),
-            groupNote: ev.groupNote || '',
-            groupId: ev.groupId || null,
-            activeScoreSource: ev.activeScoreSource || 'individual',
-            note: ev.note || '',
-            tags: ev.tags || [],
-            evaluatedViaGroup: ev.evaluatedViaGroup || null,
+            id: g.id,
+            name: g.name,
+            studentIds: g.studentIds || [],
+            criterionScores: formatMap(g.criterionScores),
+            groupNote: g.groupNote || '',
           };
-        }),
-    })),
-  };
+        }
+        if (grpMode === 'v3_without_last_applied') {
+          return {
+            id: g.id,
+            name: g.name,
+            studentIds: g.studentIds || [],
+            criterionScores: formatMap(g.criterionScores),
+            directCriterionScores: formatMap(g.directCriterionScores),
+            groupNote: g.groupNote || '',
+          };
+        }
+        return {
+          id: g.id,
+          name: g.name,
+          studentIds: g.studentIds || [],
+          criterionScores: formatMap(g.criterionScores),
+          directCriterionScores: formatMap(g.directCriterionScores),
+          groupNote: g.groupNote || '',
+          lastAppliedAt: g.lastAppliedAt || null,
+        };
+      });
 
+      const mappedEvaluations =
+        evalMode === 'raw_record'
+          ? ses.evaluations || {}
+          : Object.keys(ses.evaluations || {})
+              .sort()
+              .map((stuId) => {
+                const ev = ses.evaluations[stuId];
+                if (evalMode === 'v3_initial_minimal') {
+                  return {
+                    studentId: ev.studentId || stuId,
+                    criterionScores: formatMap(ev.criterionScores),
+                    groupCriterionScores: formatMap(ev.groupCriterionScores),
+                    groupNote: ev.groupNote || '',
+                    activeScoreSource: ev.activeScoreSource || 'individual',
+                    note: ev.note || '',
+                    tags: ev.tags || [],
+                    evaluatedViaGroup: ev.evaluatedViaGroup || null,
+                  };
+                }
+                if (evalMode === 'v3_without_group_direct') {
+                  return {
+                    studentId: ev.studentId || stuId,
+                    criterionScores: formatMap(ev.criterionScores),
+                    directCriterionScores: formatMap(ev.directCriterionScores),
+                    groupCriterionScores: formatMap(ev.groupCriterionScores),
+                    groupNote: ev.groupNote || '',
+                    activeScoreSource: ev.activeScoreSource || 'individual',
+                    note: ev.note || '',
+                    tags: ev.tags || [],
+                    evaluatedViaGroup: ev.evaluatedViaGroup || null,
+                  };
+                }
+                if (evalMode === 'v3_without_group_id') {
+                  return {
+                    studentId: ev.studentId || stuId,
+                    criterionScores: formatMap(ev.criterionScores),
+                    directCriterionScores: formatMap(ev.directCriterionScores),
+                    groupCriterionScores: formatMap(ev.groupCriterionScores),
+                    groupDirectScores: formatMap(ev.groupDirectScores),
+                    groupNote: ev.groupNote || '',
+                    activeScoreSource: ev.activeScoreSource || 'individual',
+                    note: ev.note || '',
+                    tags: ev.tags || [],
+                    evaluatedViaGroup: ev.evaluatedViaGroup || null,
+                  };
+                }
+                return {
+                  studentId: ev.studentId || stuId,
+                  criterionScores: formatMap(ev.criterionScores),
+                  directCriterionScores: formatMap(ev.directCriterionScores),
+                  groupCriterionScores: formatMap(ev.groupCriterionScores),
+                  groupDirectScores: formatMap(ev.groupDirectScores),
+                  groupNote: ev.groupNote || '',
+                  groupId: ev.groupId || null,
+                  activeScoreSource: ev.activeScoreSource || 'individual',
+                  note: ev.note || '',
+                  tags: ev.tags || [],
+                  evaluatedViaGroup: ev.evaluatedViaGroup || null,
+                };
+              });
+
+      const baseSession = includeSessionExtras
+        ? {
+            id: ses.id,
+            title: ses.title,
+            classId: ses.classId,
+            classIds:
+              Array.isArray(ses.classIds) && ses.classIds.length > 0
+                ? ses.classIds
+                : [ses.classId],
+            rubricId: ses.rubricId,
+            rubricSnapshot: ses.rubricSnapshot || null,
+            date: ses.date,
+            status: ses.status,
+            mode: ses.mode,
+            generalSessionNote: ses.generalSessionNote || '',
+            groups: mappedGroups,
+            evaluations: mappedEvaluations,
+          }
+        : {
+            id: ses.id,
+            title: ses.title,
+            classId: ses.classId,
+            rubricId: ses.rubricId,
+            date: ses.date,
+            status: ses.status,
+            mode: ses.mode,
+            generalSessionNote: ses.generalSessionNote || '',
+            groups: mappedGroups,
+            evaluations: mappedEvaluations,
+          };
+
+      if (!includeAuditAndUndo) return baseSession;
+      return {
+        ...baseSession,
+        undoHistory: (ses.undoHistory || []).map((u) => ({
+          id: u.id,
+          timestamp: u.timestamp,
+          scope: u.scope,
+          studentId: u.studentId || null,
+          criterionId: u.criterionId || null,
+          groupId: u.groupId || null,
+          description: u.description,
+          previousEvaluations: u.previousEvaluations || {},
+          previousGroups: u.previousGroups || null,
+          previousRubricId: u.previousRubricId || null,
+          previousRubricSnapshot: u.previousRubricSnapshot || null,
+        })),
+      };
+    }),
+  };
+}
+
+/**
+ * Computes the legacy v3 `rpk-` checksum (supporting initial v3 and intermediate v3 schemas/algorithms)
+ * so that existing `rubrikpad_state_v3` data in localStorage/IndexedDB or v3 backups
+ * can be verified for integrity and seamlessly upgraded to `sha256-` without data loss.
+ */
+export function computeLegacyRpkChecksum(
+  payload: AppDataState,
+  options?: LegacyRpkChecksumOptions
+): string {
+  const fullDataToHash = buildLegacyV3DataProjection(payload, options);
   const shouldCanonicalize = options?.canonicalize ?? true;
   const serialized = shouldCanonicalize
     ? JSON.stringify(canonicalizeForChecksum(fullDataToHash))
     : JSON.stringify(fullDataToHash);
 
-  let h1 = 0xdeadbeef ^ serialized.length;
-  let h2 = 0x41c6ce57 ^ serialized.length;
-  for (let i = 0; i < serialized.length; i++) {
-    const ch = serialized.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 =
-    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
-    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 =
-    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
-    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return computeRpkHashFromSerialized(
+    serialized,
+    options?.hashAlgorithm ?? 'cyrb53_16'
+  );
+}
 
-  const hex1 = (h1 >>> 0).toString(16).padStart(8, '0');
-  const hex2 = (h2 >>> 0).toString(16).padStart(8, '0');
-  return `rpk-${hex1}${hex2}`;
+/**
+ * Generates all candidate serialized payload strings across initial v3 and intermediate v3 projections.
+ */
+function getCandidateV3SerializedProjections(rawPayload: AppDataState): string[] {
+  const seen = new Set<string>();
+  const addObj = (obj: unknown, canonicalize: boolean) => {
+    const str = canonicalize
+      ? JSON.stringify(canonicalizeForChecksum(obj))
+      : JSON.stringify(obj);
+    seen.add(str);
+  };
+
+  // 1. Direct raw payload and normalized payload
+  addObj(rawPayload, true);
+  addObj(rawPayload, false);
+  addObj(
+    {
+      classrooms: rawPayload.classrooms || [],
+      students: rawPayload.students || [],
+      rubrics: rawPayload.rubrics || [],
+      sessions: rawPayload.sessions || [],
+    },
+    true
+  );
+  addObj(
+    {
+      classrooms: rawPayload.classrooms || [],
+      students: rawPayload.students || [],
+      rubrics: rawPayload.rubrics || [],
+      sessions: rawPayload.sessions || [],
+    },
+    false
+  );
+
+  // 2. Matrix of early v3 and intermediate v3 structural projections
+  const studentModes: Array<'with_full_name' | 'omit_full_name' | 'only_full_name'> = [
+    'with_full_name',
+    'omit_full_name',
+    'only_full_name',
+  ];
+  const groupModes: Array<
+    'v3_latest' | 'v3_without_last_applied' | 'v3_initial_minimal'
+  > = ['v3_latest', 'v3_without_last_applied', 'v3_initial_minimal'];
+  const evalModes: Array<
+    | 'v3_latest'
+    | 'v3_without_group_id'
+    | 'v3_without_group_direct'
+    | 'v3_initial_minimal'
+    | 'raw_record'
+  > = [
+    'v3_latest',
+    'v3_without_group_id',
+    'v3_without_group_direct',
+    'v3_initial_minimal',
+    'raw_record',
+  ];
+
+  for (const studentFields of studentModes) {
+    for (const groupFields of groupModes) {
+      for (const evaluationFields of evalModes) {
+        for (const includeSessionExtras of [true, false]) {
+          for (const includeAuditAndUndo of [false, true]) {
+            for (const sortScoreMaps of [false, true]) {
+              const proj = buildLegacyV3DataProjection(rawPayload, {
+                studentFields,
+                groupFields,
+                evaluationFields,
+                includeSessionExtras,
+                includeAuditAndUndo,
+                sortScoreMaps,
+              });
+              addObj(proj, true);
+              addObj(proj, false);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return Array.from(seen);
 }
 
 function verifyLegacyRpkV3Checksum(
   rawPayload: AppDataState,
   checksum: string
 ): boolean {
-  // P0: Only accept genuine computed 16-hex rpk- checksum matches (no 8-char wildcard bypass!)
-  if (!/^rpk-[0-9a-f]{16}$/i.test(checksum)) {
+  const normalizedChecksum = checksum.trim().toLowerCase();
+  // Accept 16-hex or 8-hex rpk- ONLY when it matches a deterministic hash of rawPayload (never a wildcard bypass!)
+  const is16Hex = /^rpk-[0-9a-f]{16}$/.test(normalizedChecksum);
+  const is8Hex = /^rpk-[0-9a-f]{8}$/.test(normalizedChecksum);
+  if (!is16Hex && !is8Hex) {
     return false;
   }
 
-  const optionSets: Array<{
-    canonicalize?: boolean;
-    sortScoreMaps?: boolean;
-  }> = [
-    { canonicalize: true },
-    { canonicalize: false, sortScoreMaps: false },
-    { canonicalize: false, sortScoreMaps: true },
-  ];
+  const candidateSerializations = getCandidateV3SerializedProjections(rawPayload);
 
-  for (const opts of optionSets) {
-    if (checksum === computeLegacyRpkChecksum(rawPayload, opts)) {
-      return true;
+  if (is16Hex) {
+    for (const serialized of candidateSerializations) {
+      if (
+        normalizedChecksum ===
+        computeRpkHashFromSerialized(serialized, 'cyrb53_16')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Deterministic 8-hex initial v3 verification (FNV-1a, DJB2, Cyrb53-32)
+  const algos8: LegacyRpkHashAlgorithm[] = ['fnv1a_8', 'djb2_8', 'cyrb53_8'];
+  for (const serialized of candidateSerializations) {
+    for (const algo of algos8) {
+      if (
+        normalizedChecksum === computeRpkHashFromSerialized(serialized, algo)
+      ) {
+        return true;
+      }
     }
   }
 
   return false;
+}
+
+function verifySha256V3Checksum(
+  rawPayload: AppDataState,
+  checksum: string
+): { valid: boolean; upgradedFromEarlierSha256: boolean } {
+  const normalizedChecksum = checksum.trim().toLowerCase();
+  if (!/^sha256-[0-9a-f]{64}$/.test(normalizedChecksum)) {
+    return { valid: false, upgradedFromEarlierSha256: false };
+  }
+
+  const currentExpected = computePayloadChecksum(rawPayload).toLowerCase();
+  if (normalizedChecksum === currentExpected) {
+    return { valid: true, upgradedFromEarlierSha256: false };
+  }
+
+  // Also check earlier v3 SHA-256 projections (e.g. before lastAppliedAt / groupId / spread fields were added)
+  const candidateSerializations = getCandidateV3SerializedProjections(rawPayload);
+  for (const serialized of candidateSerializations) {
+    if (normalizedChecksum === `sha256-${sha256Hex(serialized)}`) {
+      return { valid: true, upgradedFromEarlierSha256: true };
+    }
+  }
+
+  return { valid: false, upgradedFromEarlierSha256: false };
 }
 
 /**
@@ -1008,8 +1326,8 @@ export function verifyAndParseBackupBundle(jsonString: string): {
     }
 
     if (parsed.checksum.startsWith('sha256-')) {
-      const expectedChecksum = computePayloadChecksum(rawPayload);
-      if (parsed.checksum !== expectedChecksum) {
+      const shaCheck = verifySha256V3Checksum(rawPayload, parsed.checksum);
+      if (!shaCheck.valid) {
         return {
           isValid: false,
           error:
@@ -1020,7 +1338,7 @@ export function verifyAndParseBackupBundle(jsonString: string): {
       return {
         isValid: true,
         state: normalized,
-        upgradedFromRpkChecksum: false,
+        upgradedFromRpkChecksum: shaCheck.upgradedFromEarlierSha256,
       };
     }
 

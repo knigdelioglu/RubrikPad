@@ -30,9 +30,13 @@ import {
 import { defaultLocalOcrRegistry } from '../../utils/ocr/localOcrEngine.ts';
 import {
   createChallengingSkewedSampleGrayImage,
+  createRealisticCameraSampleGrayImage,
   createReferenceSampleGrayImage,
   reparseOcrWithColumnRoles,
   runLocalRosterOcrPipeline,
+  runRealisticCameraOcrBenchmarkSuite,
+  type RealisticCameraBenchmarkSuiteSummary,
+  type RosterOcrPerformanceMetrics,
 } from '../../utils/ocr/rosterOcrPipeline.ts';
 import {
   applyOcrFieldSuggestion,
@@ -81,6 +85,11 @@ export const LocalOcrVerificationPanel: React.FC<
   const [tableAnalysis, setTableAnalysis] =
     useState<GeometricTableAnalysisResult | null>(null);
   const [rows, setRows] = useState<VerifiedOcrRosterRow[]>([]);
+  const [performanceMetrics, setPerformanceMetrics] =
+    useState<RosterOcrPerformanceMetrics | null>(null);
+  const [benchmarkSummary, setBenchmarkSummary] =
+    useState<RealisticCameraBenchmarkSuiteSummary | null>(null);
+  const [benchmarkRunning, setBenchmarkRunning] = useState(false);
 
   const [showColumnMapper, setShowColumnMapper] = useState(false);
   const [manualColumnRoles, setManualColumnRoles] = useState<
@@ -259,6 +268,7 @@ export const LocalOcrVerificationPanel: React.FC<
       setOcrOutput(res.ocrOutput);
       setTableAnalysis(res.tableAnalysis);
       setRows(res.verifiedRows);
+      setPerformanceMetrics(res.performanceMetrics);
       setInspectedRowId(res.verifiedRows[0]?.rowId ?? null);
 
       const initialRoleMap: Record<number, ColumnRole> = {};
@@ -342,6 +352,33 @@ export const LocalOcrVerificationPanel: React.FC<
     const sample = createChallengingSkewedSampleGrayImage();
     setManualRotation(0);
     await executePipelineOnGrayImage(sample, 0);
+  };
+
+  const handleLoadRealisticCameraSample = async () => {
+    const sample = createRealisticCameraSampleGrayImage();
+    setManualRotation(0);
+    await executePipelineOnGrayImage(sample, 0);
+  };
+
+  const handleRunRealisticBenchmarkSuite = async () => {
+    setBenchmarkRunning(true);
+    setOcrError(null);
+    try {
+      const summary = await runRealisticCameraOcrBenchmarkSuite();
+      setBenchmarkSummary(summary);
+      // Also load the realistic camera sample into the workspace so the user can inspect its rows
+      const sample = createRealisticCameraSampleGrayImage();
+      setManualRotation(0);
+      await executePipelineOnGrayImage(sample, 0);
+    } catch (err) {
+      setOcrError(
+        err instanceof Error
+          ? err.message
+          : 'Gerçek fotoğraf doğruluk ve performans testi sırasında hata oluştu.'
+      );
+    } finally {
+      setBenchmarkRunning(false);
+    }
   };
 
   const handleRotate90 = async () => {
@@ -482,27 +519,116 @@ export const LocalOcrVerificationPanel: React.FC<
         </label>
 
         <div className="sm:col-span-6 flex flex-col justify-between gap-2">
-          <button
-            type="button"
-            onClick={handleLoadReferenceSample}
-            disabled={ocrLoading}
-            className="w-full py-2.5 px-3 rounded-xl border border-teal-300 bg-teal-50/60 hover:bg-teal-100/70 text-teal-950 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <FileSpreadsheet className="w-4 h-4 text-teal-700 shrink-0" />
-            Örnek Sınıf Listesi Fotoğrafını Test Et (245 / 246)
-          </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={handleLoadReferenceSample}
+              disabled={ocrLoading || benchmarkRunning}
+              className="w-full py-2 px-2.5 rounded-xl border border-teal-300 bg-teal-50/60 hover:bg-teal-100/70 text-teal-950 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+              Referans Tablo (245/246)
+            </button>
 
-          <button
-            type="button"
-            onClick={handleLoadChallengingSample}
-            disabled={ocrLoading}
-            className="w-full py-2.5 px-3 rounded-xl border border-amber-300 bg-amber-50/60 hover:bg-amber-100/70 text-amber-950 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <Sparkles className="w-4 h-4 text-amber-700 shrink-0" />
-            Eğik ve Eksik Satırlı Zorlu Listeyi Test Et
-          </button>
+            <button
+              type="button"
+              onClick={handleLoadRealisticCameraSample}
+              disabled={ocrLoading || benchmarkRunning}
+              className="w-full py-2 px-2.5 rounded-xl border border-teal-400 bg-teal-100/60 hover:bg-teal-200/70 text-teal-950 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Camera className="w-3.5 h-3.5 text-teal-800 shrink-0" />
+              Gerçek Kamera Fotoğrafı
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={handleLoadChallengingSample}
+              disabled={ocrLoading || benchmarkRunning}
+              className="w-full py-2 px-2.5 rounded-xl border border-amber-300 bg-amber-50/60 hover:bg-amber-100/70 text-amber-950 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+              Eğik / Eksik Satırlı Liste
+            </button>
+
+            <button
+              type="button"
+              onClick={handleRunRealisticBenchmarkSuite}
+              disabled={ocrLoading || benchmarkRunning}
+              className="w-full py-2 px-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-900 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+            >
+              {benchmarkRunning ? (
+                <Loader2 className="w-3.5 h-3.5 text-teal-700 animate-spin shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+              )}
+              Doğruluk & Performans Testi
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Real Photo OCR Accuracy & Performance Benchmark Suite Report */}
+      {benchmarkSummary && (
+        <div className="border border-teal-300 bg-teal-50/50 rounded-xl p-3.5 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0" />
+              <span className="text-xs font-bold text-slate-900">
+                Gerçek Kamera Fotoğrafları OCR Doğruluk ve Performans Raporu (4 Senaryo)
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-xs font-mono-num">
+              <span className="font-bold text-teal-900">
+                Karakter Doğruluğu: %{benchmarkSummary.averageCharacterAccuracyPercent}
+              </span>
+              <span className="font-bold text-teal-900">
+                Satır Kimlik Eşleşmesi: %{benchmarkSummary.averageRowIdentityMatchRate}
+              </span>
+              <span className="text-slate-700">
+                Toplam Süre: {benchmarkSummary.totalDurationMs} ms
+              </span>
+              <button
+                type="button"
+                onClick={() => setBenchmarkSummary(null)}
+                className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+              >
+                Gizle
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {benchmarkSummary.scenarios.map((sc) => (
+              <div
+                key={sc.scenarioId}
+                className="bg-white border border-slate-200 rounded-lg p-2.5 text-[11px] space-y-1"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-slate-900">{sc.title}</span>
+                  <span className="font-mono-num font-bold text-teal-800">
+                    %{sc.accuracy.characterAccuracyPercent} · {sc.performance.totalDurationMs}ms
+                  </span>
+                </div>
+                <p className="text-slate-600 leading-snug">{sc.description}</p>
+                <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono-num text-slate-600 pt-0.5">
+                  <span>Okul No: %{sc.accuracy.studentNumberExactMatchRate}</span>
+                  <span>·</span>
+                  <span>Ad/Soyad: %{sc.accuracy.rowIdentityMatchRate}</span>
+                  <span>·</span>
+                  <span>CER: {sc.accuracy.characterErrorRate}</span>
+                  <span>·</span>
+                  <span>
+                    Komşu Satır Karışması:{' '}
+                    {sc.accuracy.zeroCrossRowContamination ? '0 (Yok)' : 'Tespit Edildi'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {ocrError && (
         <div
@@ -541,6 +667,14 @@ export const LocalOcrVerificationPanel: React.FC<
               <span>{tableAnalysis.columns.length} Sütun</span>
               <span>·</span>
               <span>{rows.length} Satır</span>
+              {performanceMetrics && (
+                <>
+                  <span>·</span>
+                  <span className="text-teal-800 font-semibold">
+                    Süre: {performanceMetrics.totalDurationMs} ms ({performanceMetrics.throughputRowsPerSec} satır/sn)
+                  </span>
+                </>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5">

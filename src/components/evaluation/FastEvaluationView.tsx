@@ -108,7 +108,8 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
     activeRubric,
     currentStudentEval
   );
-  const currentScoreCalc = breakdown.individualCalc;
+  const currentScoreCalc = breakdown.effectiveCalc;
+  const activeSource = breakdown.activeSource;
   const undoCount = activeSession.undoHistory?.length || 0;
 
   return (
@@ -272,7 +273,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                   classStudents.filter((s) => {
                     const ev = activeSession.evaluations[s.id];
                     return getStudentEvaluationBreakdown(activeRubric, ev)
-                      .individualCalc.isComplete;
+                      .effectiveCalc.isComplete;
                   }).length
                 }
                 /{classStudents.length} Tamam
@@ -285,7 +286,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                 const calc = getStudentEvaluationBreakdown(
                   activeRubric,
                   ev
-                ).individualCalc;
+                ).effectiveCalc;
                 const isSelected = stu.id === selectedStudent?.id;
 
                 return (
@@ -440,9 +441,19 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                 <div className="flex-1 flex flex-col gap-2 min-h-0 overflow-y-auto pr-1">
                   {activeRubric.criteria.map((criterion, cIdx) => {
                     const selectedPts =
-                      currentStudentEval?.criterionScores?.[criterion.id];
+                      activeSource === 'group'
+                        ? currentStudentEval?.groupCriterionScores?.[
+                            criterion.id
+                          ]
+                        : currentStudentEval?.criterionScores?.[criterion.id];
                     const directPts =
-                      currentStudentEval?.directCriterionScores?.[criterion.id];
+                      activeSource === 'group'
+                        ? currentStudentEval?.groupDirectScores?.[criterion.id]
+                        : currentStudentEval?.directCriterionScores?.[
+                            criterion.id
+                          ];
+                    const groupPts =
+                      currentStudentEval?.groupCriterionScores?.[criterion.id];
 
                     return (
                       <RubricCriterionCard
@@ -451,6 +462,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                         criterionIndex={cIdx}
                         selectedPoints={selectedPts}
                         directPoints={directPts}
+                        reflectedGroupPoints={groupPts}
                         viewMode={viewMode}
                         precisionScoringMode={precisionScoringMode}
                         onSelectLevel={(critId, pts) =>

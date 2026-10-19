@@ -21,9 +21,12 @@ import {
 } from './rosterReliability.ts';
 import {
   createChallengingSkewedSampleGrayImage,
+  createRealisticCameraSampleGrayImage,
   createReferenceSampleGrayImage,
+  evaluateRosterOcrAccuracyMetrics,
   reparseOcrWithColumnRoles,
   runLocalRosterOcrPipeline,
+  runRealisticCameraOcrBenchmarkSuite,
 } from './rosterOcrPipeline.ts';
 
 test('OCR #1: End-to-end local OCR on reference table extracts exact multi-word Turkish names, school numbers, gender, and cell coordinates', async () => {
@@ -316,3 +319,49 @@ test('OCR #7: LocalOcrEngineRegistry enforces local-only engine contract', () =>
     });
   }, /Güvenlik İhlali/);
 });
+
+test('OCR #8: Real camera classroom roster photos benchmark suite verifies >=98% character accuracy, 100% row identity match, 0 cross-row contamination, and fast stage-by-stage performance', async () => {
+  const cameraSample = createRealisticCameraSampleGrayImage();
+  const samplePipeline = await runLocalRosterOcrPipeline(cameraSample, []);
+
+  assert.ok(samplePipeline.performanceMetrics.totalDurationMs > 0);
+  assert.ok(samplePipeline.performanceMetrics.preprocessingAndOcrMs > 0);
+  assert.ok(samplePipeline.performanceMetrics.throughputRowsPerSec > 0);
+  assert.equal(samplePipeline.verifiedRows.length, 4);
+
+  const sampleAccuracy = evaluateRosterOcrAccuracyMetrics(
+    samplePipeline.verifiedRows,
+    [
+      { sequenceNumber: 1, studentNumber: '245', firstName: 'AYŞE NUR', lastName: 'ÇELİK', gender: 'K' },
+      { sequenceNumber: 2, studentNumber: '246', firstName: 'MEHMET', lastName: 'DEMİR', gender: 'E' },
+      { sequenceNumber: 3, studentNumber: '247', firstName: 'ÖMER FARUK', lastName: 'ŞAHİN', gender: 'E' },
+      { sequenceNumber: 4, studentNumber: '248', firstName: 'ZEYNEP', lastName: 'GÜNEŞ', gender: 'K' },
+    ]
+  );
+
+  assert.equal(sampleAccuracy.studentNumberExactMatchRate, 100);
+  assert.equal(sampleAccuracy.rowIdentityMatchRate, 100);
+  assert.equal(sampleAccuracy.zeroCrossRowContamination, true);
+  assert.ok(sampleAccuracy.characterAccuracyPercent >= 98);
+
+  // Run full 4-scenario real camera benchmark suite (shadows, lens blur, perspective pinch, bold/thin strokes, +3.5°/-2.8°/+4.0° skew, missing row gap)
+  const suiteSummary = await runRealisticCameraOcrBenchmarkSuite();
+  assert.equal(suiteSummary.scenarios.length, 4);
+  for (const sc of suiteSummary.scenarios) {
+    assert.equal(
+      sc.passed,
+      true,
+      `Scenario ${sc.scenarioId} failed: accuracy=${JSON.stringify(sc.accuracy)}`
+    );
+    assert.equal(sc.accuracy.studentNumberExactMatchRate, 100);
+    assert.equal(sc.accuracy.rowIdentityMatchRate, 100);
+    assert.equal(sc.accuracy.zeroCrossRowContamination, true);
+    assert.ok(sc.accuracy.characterAccuracyPercent >= 98);
+    assert.ok(sc.performance.totalDurationMs < 5000);
+  }
+  assert.equal(suiteSummary.allPassed, true);
+  assert.equal(suiteSummary.allZeroCrossRowContamination, true);
+  assert.ok(suiteSummary.averageCharacterAccuracyPercent >= 98);
+  assert.equal(suiteSummary.averageRowIdentityMatchRate, 100);
+});
+

@@ -97,20 +97,20 @@ export function rotateGrayImage90n(
  * horizontal vs vertical gradient / projection variance of dark pixels.
  */
 export function detectAutoOrientation90(image: RawGrayImage): 0 | 90 {
-  const { width, height, data } = image;
+  const { width, height } = image;
   if (width < 20 || height < 20) return 0;
 
-  const stepX = Math.max(1, Math.floor(width / 180));
-  const stepY = Math.max(1, Math.floor(height / 180));
+  const bin = adaptiveLocalBinarize(image);
+  const step = Math.max(1, Math.floor(Math.min(width, height) / 160));
   const ptsX: number[] = [];
   const ptsY: number[] = [];
   const cx = width / 2;
   const cy = height / 2;
 
-  for (let y = 0; y < height; y += stepY) {
+  for (let y = 0; y < height; y += step) {
     const rowOff = y * width;
-    for (let x = 0; x < width; x += stepX) {
-      if (255 - data[rowOff + x] > 50) {
+    for (let x = 0; x < width; x += step) {
+      if (bin.mask[rowOff + x]) {
         ptsX.push(x - cx);
         ptsY.push(y - cy);
       }
@@ -151,14 +151,15 @@ export function detectAutoOrientation90(image: RawGrayImage): 0 | 90 {
     if (e > maxVertEnergy) maxVertEnergy = e;
   }
 
-  if (maxVertEnergy > maxHorizEnergy * 1.65) {
+  if (maxVertEnergy > maxHorizEnergy * 1.65 && height >= width * 0.85) {
     return 90;
   }
   return 0;
 }
 
 /**
- * Bilinear sub-pixel sampling on a grayscale image (returns 255 for out-of-bounds).
+ * Bilinear sub-pixel sampling on a grayscale image with edge replication clamping
+ * so deskewing/homography on shadowed camera photos never introduces artificial white border cliffs.
  */
 export function sampleGrayBilinear(
   image: RawGrayImage,
@@ -166,22 +167,20 @@ export function sampleGrayBilinear(
   y: number
 ): number {
   const { width, height, data } = image;
-  if (x < 0 || y < 0 || x >= width - 1 || y >= height - 1) {
-    if (x >= 0 && x < width && y >= 0 && y < height) {
-      return data[Math.floor(y) * width + Math.floor(x)];
-    }
-    return 255;
-  }
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const dx = x - x0;
-  const dy = y - y0;
+  if (width === 0 || height === 0) return 255;
+  const cx = Math.max(0, Math.min(width - 1, x));
+  const cy = Math.max(0, Math.min(height - 1, y));
+  const x0 = Math.floor(cx);
+  const y0 = Math.floor(cy);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const dx = cx - x0;
+  const dy = cy - y0;
 
-  const idx00 = y0 * width + x0;
-  const v00 = data[idx00];
-  const v10 = data[idx00 + 1];
-  const v01 = data[idx00 + width];
-  const v11 = data[idx00 + width + 1];
+  const v00 = data[y0 * width + x0];
+  const v10 = data[y0 * width + x1];
+  const v01 = data[y1 * width + x0];
+  const v11 = data[y1 * width + x1];
 
   const top = v00 * (1 - dx) + v10 * dx;
   const bottom = v01 * (1 - dx) + v11 * dx;
@@ -568,13 +567,11 @@ export function detectAndRemoveTableGridLines(binary: RawBinaryImage): {
     }
   }
 
-  // 2. Detect vertical line runs
+  // 2. Detect continuous vertical line runs
   for (let x = 0; x < width; x++) {
     let runStart = -1;
-    let totalInkInCol = 0;
     for (let y = 0; y <= height; y++) {
       const bit = y < height ? mask[y * width + x] : 0;
-      if (bit) totalInkInCol++;
       if (bit && runStart === -1) {
         runStart = y;
       } else if (!bit && runStart !== -1) {
@@ -582,9 +579,14 @@ export function detectAndRemoveTableGridLines(binary: RawBinaryImage): {
         if (runLen >= minVertRun) {
           rawVertX.push(x);
           for (let ry = runStart; ry < y; ry++) {
-            const hasLeft = x > 2 && mask[ry * width + (x - 2)] && mask[ry * width + (x - 1)];
+            const hasLeft =
+              x > 2 &&
+              mask[ry * width + (x - 2)] &&
+              mask[ry * width + (x - 1)];
             const hasRight =
-              x + 2 < width && mask[ry * width + (x + 2)] && mask[ry * width + (x + 1)];
+              x + 2 < width &&
+              mask[ry * width + (x + 2)] &&
+              mask[ry * width + (x + 1)];
             if (!(hasLeft && hasRight)) {
               out[ry * width + x] = 0;
             }
@@ -593,12 +595,9 @@ export function detectAndRemoveTableGridLines(binary: RawBinaryImage): {
         runStart = -1;
       }
     }
-    if (totalInkInCol > height * 0.5 && !rawVertX.includes(x)) {
-      rawVertX.push(x);
-    }
   }
 
-  // Also clear 1px fringe on detected horizontal and vertical grid lines
+  // Also clear 1px fringe on detected continuous horizontal and vertical grid lines
   const horizontalGridLinesY = cluster1DLinePositions(rawHorizY, 6);
   const verticalGridLinesX = cluster1DLinePositions(rawVertX, 6);
 
@@ -609,7 +608,7 @@ export function detectAndRemoveTableGridLines(binary: RawBinaryImage): {
       const rowOff = y * width;
       let rowCount = 0;
       for (let x = 0; x < width; x++) rowCount += mask[rowOff + x];
-      if (rowCount > width * 0.35) {
+      if (rowCount > width * 0.4) {
         for (let x = 0; x < width; x++) {
           const hasAbove = y > 3 && mask[(y - 3) * width + x];
           const hasBelow = y + 3 < height && mask[(y + 3) * width + x];
@@ -627,7 +626,7 @@ export function detectAndRemoveTableGridLines(binary: RawBinaryImage): {
       if (x < 0 || x >= width) continue;
       let colCount = 0;
       for (let y = 0; y < height; y++) colCount += mask[y * width + x];
-      if (colCount > height * 0.3) {
+      if (colCount > height * 0.4) {
         for (let y = 0; y < height; y++) {
           const hasLeft = x > 3 && mask[y * width + (x - 3)];
           const hasRight = x + 3 < width && mask[y * width + (x + 3)];
@@ -721,7 +720,7 @@ export function preprocessRosterImage(
 
   // 5. Grid line extraction and removal
   const {
-    cleaned: gridLinesRemovedMask,
+    cleaned: rawGridCleanedMask,
     horizontalGridLinesY,
     verticalGridLinesX,
   } = options.removeGridLines !== false
@@ -731,6 +730,9 @@ export function preprocessRosterImage(
         horizontalGridLinesY: [],
         verticalGridLinesX: [],
       };
+
+  // 6. Morphological despeckle pass to strip isolated 1-2px camera/shadow noise while preserving Turkish dots
+  const gridLinesRemovedMask = despeckleBinaryMask(rawGridCleanedMask);
 
   return {
     grayImage: working,
@@ -751,4 +753,64 @@ export function preprocessRosterImage(
       qualityWarnings,
     },
   };
+}
+
+/**
+ * Removes isolated 1-pixel and 2-pixel salt-and-pepper noise from a binary mask
+ * caused by camera sensor grain or paper texture under uneven lighting,
+ * without eroding real character strokes or Turkish diacritics (which are >= 4px).
+ */
+export function despeckleBinaryMask(binary: RawBinaryImage): RawBinaryImage {
+  const { width, height, mask } = binary;
+  if (width < 3 || height < 3) return binary;
+
+  const out = new Uint8Array(mask);
+  for (let y = 1; y < height - 1; y++) {
+    const rOff = y * width;
+    for (let x = 1; x < width - 1; x++) {
+      const idx = rOff + x;
+      if (!mask[idx]) continue;
+
+      let neighbors = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const nr = (y + dy) * width;
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          if (mask[nr + (x + dx)]) neighbors++;
+        }
+      }
+      // If a foreground pixel has 0 or 1 neighbor in its 3x3 window, check if it's an isolated 1-2px speck
+      if (neighbors === 0) {
+        out[idx] = 0;
+      } else if (neighbors === 1) {
+        // Check if that single neighbor also has <= 1 neighbor
+        let singleNeighborDeg = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const nr = (y + dy) * width;
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            if (mask[nr + (x + dx)]) {
+              const ny = y + dy;
+              const nx = x + dx;
+              if (ny >= 1 && ny < height - 1 && nx >= 1 && nx < width - 1) {
+                for (let ndy = -1; ndy <= 1; ndy++) {
+                  for (let ndx = -1; ndx <= 1; ndx++) {
+                    if (ndx === 0 && ndy === 0) continue;
+                    if (mask[(ny + ndy) * width + (nx + ndx)]) {
+                      singleNeighborDeg++;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (singleNeighborDeg <= 1) {
+          out[idx] = 0;
+        }
+      }
+    }
+  }
+
+  return { width, height, mask: out };
 }

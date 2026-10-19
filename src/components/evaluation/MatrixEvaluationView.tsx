@@ -144,10 +144,12 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
             <tbody className="divide-y divide-slate-200 text-xs">
               {classStudents.map((stu) => {
                 const ev = activeSession.evaluations[stu.id];
-                const calc = getStudentEvaluationBreakdown(
+                const breakdown = getStudentEvaluationBreakdown(
                   activeRubric,
                   ev
-                ).individualCalc;
+                );
+                const calc = breakdown.effectiveCalc;
+                const activeSource = breakdown.activeSource;
                 const isActiveRow = stu.id === selectedStudentId;
 
                 return (
@@ -176,16 +178,27 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                             {stu.fullName}
                           </span>
                         </div>
-                        {calc.isComplete && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 shrink-0">
-                            <Check className="w-2.5 h-2.5" />
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {activeSource === 'group' &&
+                            calc.completedCriteriaCount > 0 && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
+                                Grup
+                              </span>
+                            )}
+                          {calc.isComplete && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              <Check className="w-2.5 h-2.5" />
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
 
                     {activeRubric.criteria.map((c, colIdx) => {
-                      const selectedPts = ev?.criterionScores?.[c.id];
+                      const selectedPts =
+                        activeSource === 'group'
+                          ? ev?.groupCriterionScores?.[c.id]
+                          : ev?.criterionScores?.[c.id];
                       const isTargetCell =
                         isActiveRow && colIdx === safeCriterionIdx;
 

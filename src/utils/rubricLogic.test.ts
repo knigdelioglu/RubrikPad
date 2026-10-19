@@ -9,7 +9,10 @@ import {
   freezeRubricSnapshot,
   getEffectiveSessionRubric,
   validateRubric,
+  canApplyGroupScoresToMembers,
   applyGroupScoresToMembers,
+  evaluateGroupAndTransferToMembers,
+  transferAllCompletedGroupsToMembers,
   reconcileGroupEvaluationsWithMemberships,
   deleteGroupAndReconcile,
   toggleGroupMemberAndReconcile,
@@ -1749,7 +1752,370 @@ test('Audit #14: Smart auto-advance triggers only on last missing criterion, and
   assert.equal(statusAfterEdit.finalScoreOutOf100, 100);
 });
 
+test('Audit #15: Incomplete group scores are strictly blocked from being applied to group members across all entry points', () => {
+  const incompleteGroup: StudentGroup = {
+    id: 'grp-inc',
+    name: 'Grup Eksik',
+    studentIds: ['s1', 's2'],
+    criterionScores: { c1: 4 }, // c2 is missing!
+    groupNote: 'Henüz tamamlanmadı',
+  };
 
+  // 1. canApplyGroupScoresToMembers returns allowed: false when any required criterion is missing
+  assert.equal(
+    canApplyGroupScoresToMembers(incompleteGroup, sampleRubric).allowed,
+    false
+  );
 
+  // 2. applyGroupScoresToMembers refuses to propagate incomplete group scores when rubric is provided
+  const initialEvals = {};
+  const afterBlockedApply = applyGroupScoresToMembers(
+    initialEvals,
+    incompleteGroup,
+    '2026-10-19T09:00:00Z',
+    sampleRubric
+  );
+  assert.deepEqual(afterBlockedApply, {});
+  assert.equal(afterBlockedApply['s1'], undefined);
+  assert.equal(afterBlockedApply['s2'], undefined);
 
+  // 3. Even if no rubric argument is passed to applyGroupScoresToMembers, if the group has partial null/unscored criteria or no scores, it blocks propagation
+  const partialNullGroup: StudentGroup = {
+    ...incompleteGroup,
+    criterionScores: { c1: 4, c2: null },
+  };
+  const afterPartialNullApply = applyGroupScoresToMembers(
+    initialEvals,
+    partialNullGroup,
+    '2026-10-19T09:00:00Z'
+  );
+  assert.deepEqual(afterPartialNullApply, {});
+
+  // 4. toggleGroupMemberAndReconcile does NOT auto-apply an incomplete group's scores to a newly added member
+  const sessionWithIncompleteGroup: EvaluationSession = {
+    id: 'ses-inc-grp',
+    title: 'Grup Oturumu',
+    classId: 'cls-1',
+    classIds: ['cls-1'],
+    rubricId: sampleRubric.id,
+    rubricSnapshot: freezeRubricSnapshot(sampleRubric),
+    date: '2026-10-19',
+    status: 'in_progress',
+    mode: 'group',
+    generalSessionNote: '',
+    groups: [
+      {
+        id: 'grp-inc',
+        name: 'Grup Eksik',
+        studentIds: ['s1'],
+        criterionScores: { c1: 4 }, // incomplete (1/2)
+        groupNote: 'Kısmi not',
+      },
+    ],
+    evaluations: {},
+  };
+
+  const afterAddingS2ToIncomplete = toggleGroupMemberAndReconcile(
+    sessionWithIncompleteGroup,
+    'grp-inc',
+    's2',
+    '2026-10-19T09:05:00Z'
+  );
+  assert.equal(
+    afterAddingS2ToIncomplete.evaluations['s2'],
+    undefined,
+    'Incomplete group scores must never be synced to newly added member s2'
+  );
+
+  // 5. Once all required criteria (c1 and c2) are scored, canApplyGroupScoresToMembers is true and applyGroupScoresToMembers succeeds
+  const completedGroup: StudentGroup = {
+    ...incompleteGroup,
+    criterionScores: { c1: 4, c2: 3 },
+  };
+  assert.equal(
+    canApplyGroupScoresToMembers(completedGroup, sampleRubric).allowed,
+    true
+  );
+  const afterValidApply = applyGroupScoresToMembers(
+    initialEvals,
+    completedGroup,
+    '2026-10-19T09:10:00Z',
+    sampleRubric
+  );
+  assert.deepEqual(afterValidApply['s1']?.groupCriterionScores, { c1: 4, c2: 3 });
+  assert.deepEqual(afterValidApply['s2']?.groupCriterionScores, { c1: 4, c2: 3 });
+});
+
+test('Audit #16: Initial and intermediate v3 checksum compatibility across all rpk- (16-hex & 8-hex) and sha256- projections with strict tamper rejection', () => {
+  const baseState = migrateV2ToV3({
+    classrooms: [
+      {
+        id: 'cls-1',
+        name: '7/A',
+        gradeLevel: '7',
+        subject: 'Fen Bilimleri',
+        academicYear: '2025-2026',
+      },
+    ],
+    students: [
+      {
+        id: 's1',
+        studentNumber: '245',
+        firstName: 'AYŞE NUR',
+        lastName: 'ÇELİK',
+        fullName: 'AYŞE NUR ÇELİK',
+        classId: 'cls-1',
+      },
+    ],
+    rubrics: [sampleRubric],
+    sessions: [
+      {
+        id: 'ses-v3-compat',
+        title: 'İlk v3 Uyumluluk Testi',
+        classId: 'cls-1',
+        classIds: ['cls-1'],
+        rubricId: sampleRubric.id,
+        rubricSnapshot: freezeRubricSnapshot(sampleRubric),
+        date: '2026-10-19',
+        status: 'in_progress',
+        mode: 'group',
+        generalSessionNote: '',
+        groups: [
+          {
+            id: 'g1',
+            name: 'Grup 1',
+            studentIds: ['s1'],
+            criterionScores: { c1: 4, c2: 3 },
+            groupNote: 'Tamamlandı',
+          },
+        ],
+        evaluations: {
+          s1: {
+            studentId: 's1',
+            criterionScores: { c1: 4, c2: 3 },
+            groupCriterionScores: { c1: 4, c2: 3 },
+            groupNote: 'Tamamlandı',
+            groupId: 'g1',
+            activeScoreSource: 'group',
+            note: 'Bireysel not',
+            tags: [],
+            updatedAt: '2026-10-19T08:00:00Z',
+          },
+        },
+      },
+    ],
+  });
+
+  const legacyVariants: Array<{
+    label: string;
+    checksum: string;
+  }> = [
+    {
+      label: 'Initial v3 minimal schema + cyrb53_16',
+      checksum: computeLegacyRpkChecksum(baseState, {
+        studentFields: 'only_full_name',
+        groupFields: 'v3_initial_minimal',
+        evaluationFields: 'v3_initial_minimal',
+        includeSessionExtras: false,
+        includeAuditAndUndo: false,
+        hashAlgorithm: 'cyrb53_16',
+      }),
+    },
+    {
+      label: 'Initial v3 omit_full_name + v3_without_last_applied + cyrb53_16',
+      checksum: computeLegacyRpkChecksum(baseState, {
+        studentFields: 'omit_full_name',
+        groupFields: 'v3_without_last_applied',
+        evaluationFields: 'v3_without_group_id',
+        includeSessionExtras: true,
+        includeAuditAndUndo: false,
+        hashAlgorithm: 'cyrb53_16',
+      }),
+    },
+    {
+      label: 'Initial v3 rawPayloadDirect + non-canonicalized + cyrb53_16',
+      checksum: computeLegacyRpkChecksum(baseState, {
+        rawPayloadDirect: true,
+        canonicalize: false,
+        hashAlgorithm: 'cyrb53_16',
+      }),
+    },
+    {
+      label: 'Initial v3 8-hex FNV-1a (rpk-<8_hex>) minimal projection',
+      checksum: computeLegacyRpkChecksum(baseState, {
+        studentFields: 'only_full_name',
+        groupFields: 'v3_initial_minimal',
+        evaluationFields: 'raw_record',
+        includeSessionExtras: false,
+        hashAlgorithm: 'fnv1a_8',
+      }),
+    },
+    {
+      label: 'Initial v3 8-hex DJB2 (rpk-<8_hex>) projection',
+      checksum: computeLegacyRpkChecksum(baseState, {
+        studentFields: 'with_full_name',
+        groupFields: 'v3_without_last_applied',
+        evaluationFields: 'v3_without_group_direct',
+        hashAlgorithm: 'djb2_8',
+      }),
+    },
+    {
+      label: 'Initial v3 8-hex Cyrb53-32 (rpk-<8_hex>) projection',
+      checksum: computeLegacyRpkChecksum(baseState, {
+        rawPayloadDirect: true,
+        canonicalize: true,
+        hashAlgorithm: 'cyrb53_8',
+      }),
+    },
+    {
+      label: 'Earlier v3 SHA-256 over raw payload directly',
+      checksum: `sha256-${sha256Hex(
+        JSON.stringify({
+          classrooms: baseState.classrooms,
+          students: baseState.students,
+          rubrics: baseState.rubrics,
+          sessions: baseState.sessions,
+        })
+      )}`,
+    },
+  ];
+
+  for (const variant of legacyVariants) {
+    const bundleJson = JSON.stringify({
+      schemaVersion: 3,
+      exportedAt: '2026-10-19T08:00:00Z',
+      checksum: variant.checksum,
+      payload: baseState,
+    });
+
+    const parsed = verifyAndParseBackupBundle(bundleJson);
+    assert.equal(
+      parsed.isValid,
+      true,
+      `Expected valid verification for ${variant.label} (${variant.checksum}), got error: ${parsed.error}`
+    );
+    assert.equal(
+      parsed.upgradedFromRpkChecksum,
+      true,
+      `Expected upgradedFromRpkChecksum=true for ${variant.label}`
+    );
+
+    // Tampering with a score in payload MUST fail verification for every single variant!
+    const tamperedState = JSON.parse(JSON.stringify(baseState));
+    tamperedState.sessions[0].evaluations['s1'].criterionScores['c1'] = 1;
+    const tamperedBundleJson = JSON.stringify({
+      schemaVersion: 3,
+      exportedAt: '2026-10-19T08:00:00Z',
+      checksum: variant.checksum,
+      payload: tamperedState,
+    });
+    const tamperedResult = verifyAndParseBackupBundle(tamperedBundleJson);
+    assert.equal(
+      tamperedResult.isValid,
+      false,
+      `Tampered payload MUST be rejected for ${variant.label}`
+    );
+  }
+});
+
+// ============================================================================
+// AUDIT #17: Group Evaluation & Seamless Transfer to Group Member Students
+// ============================================================================
+test('Audit #17: evaluateGroupAndTransferToMembers and transferAllCompletedGroupsToMembers evaluate a group as a unit and transfer evaluation to all member students', () => {
+  const baseSession: EvaluationSession = {
+    id: 'sess-grp-transfer',
+    title: 'Proje Grup Değerlendirmesi',
+    classroomId: 'cls-1',
+    rubricId: sampleRubric.id,
+    rubricSnapshot: freezeRubricSnapshot(sampleRubric),
+    mode: 'group',
+    date: '2026-10-19',
+    evaluations: {
+      // s1 has an older individual evaluation that should be preserved in history while group score becomes active
+      s1: {
+        studentId: 's1',
+        criterionScores: { c1: 2, c2: 2 },
+        activeScoreSource: 'individual',
+        note: 'Önceki bireysel not',
+        tags: [],
+        updatedAt: '2026-10-18T10:00:00Z',
+      },
+    },
+    groups: [
+      {
+        id: 'g1',
+        name: 'Grup Alfa',
+        studentIds: ['s1', 's2', 's3'],
+        criterionScores: { c1: 4 }, // 1 of 2 criteria scored initially
+        groupNote: 'Grup Alfa ortak sunum ve araştırma raporu',
+      },
+      {
+        id: 'g2',
+        name: 'Grup Beta',
+        studentIds: ['s4', 's5'],
+        criterionScores: { c1: 3, c2: 4 }, // Complete!
+        groupNote: 'Grup Beta poster çalışması',
+      },
+    ],
+  };
+
+  // 1. Score the second criterion of Grup Alfa using evaluateGroupAndTransferToMembers with autoTransferToMembers=true
+  const g1Result = evaluateGroupAndTransferToMembers(
+    baseSession,
+    'g1',
+    (grp) => ({
+      ...grp,
+      criterionScores: { ...grp.criterionScores, c2: 3 },
+    }),
+    {
+      rubric: sampleRubric,
+      autoTransferToMembers: true,
+      undoDescription: 'Grup Alfa Kriter 2 puanlandı',
+      criterionId: 'c2',
+    }
+  );
+
+  assert.equal(g1Result.wasCompleteBefore, false);
+  assert.equal(g1Result.isCompleteAfter, true);
+  assert.equal(g1Result.transferredToMembers, true);
+  assert.equal(g1Result.transferredMemberCount, 3);
+
+  const afterG1Completed = g1Result.updatedSession;
+  const g1After = afterG1Completed.groups!.find((g) => g.id === 'g1')!;
+  assert.ok(g1After.lastAppliedAt, 'Completed group should have lastAppliedAt stamped automatically');
+
+  // Verify all 3 members of Grup Alfa (s1, s2, s3) received the group evaluation as their active evaluation
+  for (const memberId of ['s1', 's2', 's3']) {
+    const memberEval = afterG1Completed.evaluations[memberId];
+    assert.ok(memberEval, `Member ${memberId} must have an evaluation record`);
+    assert.equal(memberEval.groupId, 'g1');
+    assert.equal(memberEval.activeScoreSource, 'group', `Member ${memberId} activeScoreSource must be 'group'`);
+    assert.deepEqual(memberEval.groupCriterionScores, { c1: 4, c2: 3 });
+
+    const breakdown = getStudentEvaluationBreakdown(sampleRubric, memberEval);
+    assert.equal(breakdown.activeSource, 'group');
+    assert.equal(breakdown.effectiveCalc.isComplete, true);
+    assert.equal(breakdown.effectiveCalc.scoreOutOf100, 88); // c1(50%): 4/4=50, c2(50%): 3/4=37.5 -> 87.5 rounded to 88
+  }
+
+  // Verify s1's prior individual evaluation was preserved so teacher can still switch between 'group' and 'individual'
+  assert.deepEqual(afterG1Completed.evaluations['s1'].criterionScores, { c1: 2, c2: 2 });
+  assert.equal(afterG1Completed.evaluations['s1'].note, 'Önceki bireysel not');
+  // And s2/s3received the group note
+  assert.equal(afterG1Completed.evaluations['s2'].groupNote, 'Grup Alfa ortak sunum ve araştırma raporu');
+
+  // 2. Test bulk transfer of all completed groups (Grup Alfa + Grup Beta)
+  const bulkResult = transferAllCompletedGroupsToMembers(afterG1Completed, sampleRubric);
+  assert.equal(bulkResult.transferredGroupCount, 2);
+  assert.equal(bulkResult.transferredStudentCount, 5);
+
+  for (const betaMemberId of ['s4', 's5']) {
+    const betaEval = bulkResult.updatedSession.evaluations[betaMemberId];
+    assert.ok(betaEval);
+    assert.equal(betaEval.groupId, 'g2');
+    assert.equal(betaEval.activeScoreSource, 'group');
+    assert.deepEqual(betaEval.groupCriterionScores, { c1: 3, c2: 4 });
+    assert.equal(betaEval.groupNote, 'Grup Beta poster çalışması');
+  }
+});
 

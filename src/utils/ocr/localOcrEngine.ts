@@ -28,6 +28,7 @@ interface GlyphTemplate {
   hasBottomDiacritic: boolean;
   aspectRatio: number;
   grid: Float32Array; // length NORM_W * NORM_H (0..1)
+  smoothGrid: Float32Array; // 3x3 Gaussian-smoothed density grid for blur/font invariance
 }
 
 /**
@@ -552,6 +553,31 @@ const TURKISH_ROSTER_LEXICON = [
   'BOZKURT',
   'ÜNAL',
   'AVCI',
+  'FARUK',
+  'SUDE',
+  'CAN',
+  'MERVE',
+  'BURAK',
+  'EMRE',
+  'SELİN',
+  'ECE',
+  'BERK',
+  'KAĞAN',
+  'ADA',
+  'KERİM',
+  'SENA',
+  ' DİLARA',
+  'BÜŞRA',
+  'ENES',
+  'FURKAN',
+  'TALHA',
+  'UMUT',
+  'BARIŞ',
+  'TOLGA',
+  'ONUR',
+  'SERKAN',
+  'GÖKHAN',
+  'SİNAN',
 ];
 
 function normalizeBinaryPatchToGrid(
@@ -592,6 +618,29 @@ function normalizeBinaryPatchToGrid(
   return out;
 }
 
+function smoothGrid16x24(grid: Float32Array): Float32Array {
+  const out = new Float32Array(NORM_W * NORM_H);
+  for (let y = 0; y < NORM_H; y++) {
+    for (let x = 0; x < NORM_W; x++) {
+      let sum = 0;
+      let weightSum = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= NORM_H) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= NORM_W) continue;
+          const w = dx === 0 && dy === 0 ? 4 : dx === 0 || dy === 0 ? 2 : 1;
+          sum += grid[ny * NORM_W + nx] * w;
+          weightSum += w;
+        }
+      }
+      out[y * NORM_W + x] = weightSum > 0 ? sum / weightSum : 0;
+    }
+  }
+  return out;
+}
+
 function buildBuiltinTemplates(): GlyphTemplate[] {
   const templates: GlyphTemplate[] = [];
 
@@ -599,45 +648,55 @@ function buildBuiltinTemplates(): GlyphTemplate[] {
     const h = rows.length;
     const w = rows[0].length;
     const scale = 3;
-    const bw = w * scale;
-    const bh = h * scale;
-    const mask = new Uint8Array(bw * bh);
+    const bw = w * scale + 2;
+    const bh = h * scale + 2;
 
-    let minX = bw;
-    let minY = bh;
-    let maxX = 0;
-    let maxY = 0;
+    // Generate 'regular' and 'bold' (blurred/shadowed camera ink) variants
+    const variants: Array<'regular' | 'bold'> = ['regular', 'bold'];
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (rows[y][x] === '#') {
-          for (let dy = 0; dy < scale; dy++) {
-            for (let dx = 0; dx < scale; dx++) {
-              const px = x * scale + dx;
-              const py = y * scale + dy;
-              mask[py * bw + px] = 1;
-              if (px < minX) minX = px;
-              if (py < minY) minY = py;
-              if (px > maxX) maxX = px;
-              if (py > maxY) maxY = py;
+    for (const variant of variants) {
+      const mask = new Uint8Array(bw * bh);
+      let minX = bw;
+      let minY = bh;
+      let maxX = 0;
+      let maxY = 0;
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (rows[y][x] === '#') {
+            const startDelta = variant === 'bold' ? -1 : 0;
+            const endDelta = variant === 'bold' ? scale + 1 : scale;
+            for (let dy = startDelta; dy < endDelta; dy++) {
+              for (let dx = startDelta; dx < endDelta; dx++) {
+                const px = 1 + x * scale + dx;
+                const py = 1 + y * scale + dy;
+                if (px >= 0 && px < bw && py >= 0 && py < bh) {
+                  mask[py * bw + px] = 1;
+                  if (px < minX) minX = px;
+                  if (py < minY) minY = py;
+                  if (px > maxX) maxX = px;
+                  if (py > maxY) maxY = py;
+                }
+              }
             }
           }
         }
       }
-    }
 
-    if (maxX >= minX && maxY >= minY) {
-      const grid = normalizeBinaryPatchToGrid(mask, bw, minX, minY, maxX, maxY);
-      templates.push({
-        char,
-        isDigit: /^[0-9]$/.test(char),
-        isUpper: !/^[0-9]$/.test(char),
-        isLower: false,
-        hasTopDiacritic: ['Ğ', 'İ', 'Ö', 'Ü'].includes(char),
-        hasBottomDiacritic: ['Ç', 'Ş'].includes(char),
-        aspectRatio: (maxX - minX + 1) / Math.max(1, maxY - minY + 1),
-        grid,
-      });
+      if (maxX >= minX && maxY >= minY) {
+        const grid = normalizeBinaryPatchToGrid(mask, bw, minX, minY, maxX, maxY);
+        templates.push({
+          char,
+          isDigit: /^[0-9]$/.test(char),
+          isUpper: !/^[0-9]$/.test(char),
+          isLower: false,
+          hasTopDiacritic: ['Ğ', 'İ', 'Ö', 'Ü'].includes(char),
+          hasBottomDiacritic: ['Ç', 'Ş'].includes(char),
+          aspectRatio: (maxX - minX + 1) / Math.max(1, maxY - minY + 1),
+          grid,
+          smoothGrid: smoothGrid16x24(grid),
+        });
+      }
     }
   }
 
@@ -647,7 +706,7 @@ function buildBuiltinTemplates(): GlyphTemplate[] {
       const canvas = document.createElement('canvas');
       canvas.width = 64;
       canvas.height = 64;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (ctx) {
         const chars =
           '0123456789ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZabcçdefgğhıijklmnoöprsştuüvyz';
@@ -703,6 +762,7 @@ function buildBuiltinTemplates(): GlyphTemplate[] {
                 hasBottomDiacritic: ['Ç', 'Ş', 'ç', 'ş'].includes(ch),
                 aspectRatio: (maxX - minX + 1) / Math.max(1, maxY - minY + 1),
                 grid,
+                smoothGrid: smoothGrid16x24(grid),
               });
             }
           }
@@ -874,20 +934,290 @@ function deskewGrayImageByForwardAngle(
   const cx = width / 2;
   const cy = height / 2;
   const out = new Uint8Array(width * height);
-  out.fill(250);
 
   for (let y = 0; y < height; y++) {
     const dy = y - cy;
     for (let x = 0; x < width; x++) {
       const dx = x - cx;
-      const sx = Math.round(dx * cosA + dy * sinA + cx);
-      const sy = Math.round(-dx * sinA + dy * cosA + cy);
-      if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
-        out[y * width + x] = data[sy * width + sx];
-      }
+      const sx = Math.max(
+        0,
+        Math.min(width - 1, Math.round(dx * cosA + dy * sinA + cx))
+      );
+      const sy = Math.max(
+        0,
+        Math.min(height - 1, Math.round(-dx * sinA + dy * cosA + cy))
+      );
+      out[y * width + x] = data[sy * width + sx];
     }
   }
   return { width, height, data: out };
+}
+
+export interface RealisticCameraRosterConfig {
+  headers?: string[];
+  rows: string[][];
+  columnWidths?: number[];
+  rowHeight?: number;
+  rowHeights?: number[];
+  skewDeg?: number;
+  drawGridLines?: boolean;
+  strokeWeight?: 'thin' | 'regular' | 'bold';
+  shadowIntensity?: number; // 0..0.45 directional hand/phone shadow across sheet
+  vignetteIntensity?: number; // 0..0.30 corner lens darkening
+  blurStrength?: number; // 0..0.45 optical 3x3 PSF lens softness
+  noiseAmplitude?: number; // 0..18 paper grain & camera sensor noise
+  perspectivePinch?: number; // 0..0.04 trapezoidal camera perspective distortion
+  seed?: number;
+}
+
+/**
+ * Renders a realistic smartphone camera capture of a printed classroom roster sheet,
+ * including uneven directional shadow gradients, radial lens vignette, paper texture & sensor grain,
+ * optical 3x3 lens blur, variable row heights, variable font stroke weights, perspective pinch, and camera tilt.
+ */
+export function renderRealisticCameraRosterPhotoToGrayImage(
+  config: RealisticCameraRosterConfig
+): RawGrayImage {
+  const colCount = Math.max(
+    config.headers?.length ?? 0,
+    ...config.rows.map((r) => r.length),
+    1
+  );
+  const colWidths =
+    config.columnWidths && config.columnWidths.length === colCount
+      ? config.columnWidths
+      : Array.from({ length: colCount }, (_, i) =>
+          i === 0 ? 105 : i === 1 ? 165 : i === 4 ? 145 : 240
+        );
+  const defaultRowH = config.rowHeight ?? 58;
+  const totalRows = (config.headers ? 1 : 0) + config.rows.length;
+
+  const rowHeights: number[] = [];
+  for (let r = 0; r < totalRows; r++) {
+    if (config.headers && r === 0) {
+      rowHeights.push(defaultRowH);
+    } else {
+      const dataIdx = config.headers ? r - 1 : r;
+      rowHeights.push(config.rowHeights?.[dataIdx] ?? defaultRowH);
+    }
+  }
+
+  const rowYOffsets: number[] = [0];
+  for (let r = 0; r < totalRows; r++) {
+    rowYOffsets.push(rowYOffsets[r] + rowHeights[r]);
+  }
+
+  const padX = 34;
+  const padY = 34;
+  const totalTableW = colWidths.reduce((a, b) => a + b, 0);
+  const totalTableH = rowYOffsets[totalRows];
+
+  const width = totalTableW + padX * 2;
+  const height = totalTableH + padY * 2;
+  const data = new Uint8Array(width * height);
+  data.fill(244); // realistic warm paper base luminance
+
+  const strokeWeight = config.strokeWeight ?? 'regular';
+
+  const drawTextCell = (
+    text: string,
+    cellX0: number,
+    cellY0: number,
+    cellW: number,
+    cellH: number
+  ) => {
+    const upper = text
+      .trim()
+      .replace(/i/g, 'İ')
+      .replace(/ı/g, 'I')
+      .toUpperCase();
+    if (!upper) return;
+
+    let charScale = 3;
+    let charW = 7 * charScale;
+    let charH = 9 * charScale;
+    let charSpacing = 5;
+
+    let totalTextW =
+      upper.length * charW + Math.max(0, upper.length - 1) * charSpacing;
+    if (totalTextW > cellW - 16) {
+      charScale = 2;
+      charW = 7 * charScale;
+      charH = 9 * charScale;
+      charSpacing = 4;
+      totalTextW =
+        upper.length * charW + Math.max(0, upper.length - 1) * charSpacing;
+    }
+
+    let curX = Math.max(
+      cellX0 + 8,
+      Math.round(cellX0 + (cellW - totalTextW) / 2)
+    );
+    const curY = Math.round(cellY0 + (cellH - charH) / 2);
+
+    for (const ch of upper) {
+      if (ch === ' ') {
+        curX += charW + 4;
+        continue;
+      }
+      const pattern = BUILTIN_BITMAP_FONT[ch];
+      if (pattern) {
+        const inkLum = strokeWeight === 'thin' ? 78 : 28;
+        const endDeltaX = strokeWeight === 'bold' ? charScale + 1 : charScale;
+        const endDeltaY = charScale;
+        for (let py = 0; py < pattern.length; py++) {
+          for (let px = 0; px < pattern[py].length; px++) {
+            if (pattern[py][px] === '#') {
+              for (let dy = 0; dy < endDeltaY; dy++) {
+                for (let dx = 0; dx < endDeltaX; dx++) {
+                  const ix = curX + px * charScale + dx;
+                  const iy = curY + py * charScale + dy;
+                  if (ix >= 0 && ix < width && iy >= 0 && iy < height) {
+                    data[iy * width + ix] = inkLum;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      curX += charW + charSpacing;
+    }
+  };
+
+  if (config.drawGridLines !== false) {
+    for (let r = 0; r <= totalRows; r++) {
+      const y = padY + rowYOffsets[r];
+      for (let x = padX; x <= padX + totalTableW; x++) {
+        if (y >= 0 && y < height && x >= 0 && x < width) {
+          data[y * width + x] = 95;
+        }
+      }
+    }
+    let accX = padX;
+    for (let c = 0; c <= colCount; c++) {
+      for (let y = padY; y <= padY + totalTableH; y++) {
+        if (y >= 0 && y < height && accX >= 0 && accX < width) {
+          data[y * width + accX] = 95;
+        }
+      }
+      if (c < colCount) accX += colWidths[c];
+    }
+  }
+
+  let curRowIdx = 0;
+  if (config.headers) {
+    let cellX = padX;
+    const rh = rowHeights[curRowIdx];
+    const ry = padY + rowYOffsets[curRowIdx];
+    for (let c = 0; c < config.headers.length; c++) {
+      drawTextCell(config.headers[c], cellX, ry, colWidths[c], rh);
+      cellX += colWidths[c];
+    }
+    curRowIdx++;
+  }
+
+  for (const row of config.rows) {
+    let cellX = padX;
+    const rh = rowHeights[curRowIdx];
+    const ry = padY + rowYOffsets[curRowIdx];
+    for (let c = 0; c < row.length; c++) {
+      drawTextCell(row[c] || '', cellX, ry, colWidths[c], rh);
+      cellX += colWidths[c];
+    }
+    curRowIdx++;
+  }
+
+  // 1. Apply optical lens blur (3x3 Gaussian blend) if configured
+  const blurStrength = Math.max(0, Math.min(0.45, config.blurStrength ?? 0.14));
+  if (blurStrength > 0.01) {
+    const blurred = new Uint8Array(data);
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const idx = y * width + x;
+        const neighborAvg =
+          (data[(y - 1) * width + x] +
+            data[(y + 1) * width + x] +
+            data[y * width + (x - 1)] +
+            data[y * width + (x + 1)]) *
+          0.25;
+        blurred[idx] = Math.round(
+          data[idx] * (1 - blurStrength) + neighborAvg * blurStrength
+        );
+      }
+    }
+    data.set(blurred);
+  }
+
+  // 2. Apply uneven directional lighting shadow + lens vignette + deterministic sensor/paper grain
+  const shadowIntensity = Math.max(
+    0,
+    Math.min(0.45, config.shadowIntensity ?? 0.22)
+  );
+  const vignetteIntensity = Math.max(
+    0,
+    Math.min(0.3, config.vignetteIntensity ?? 0.12)
+  );
+  const noiseAmplitude = Math.max(0, Math.min(18, config.noiseAmplitude ?? 6));
+  let prng = (config.seed ?? 133742) >>> 0;
+
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const maxDistSq = cx * cx + cy * cy;
+
+  for (let y = 0; y < height; y++) {
+    const ny = y / Math.max(1, height - 1);
+    for (let x = 0; x < width; x++) {
+      const nx = x / Math.max(1, width - 1);
+      // Directional phone/hand shadow across diagonal (darker toward bottom-right)
+      const shadowFactor = 1 - shadowIntensity * (0.55 * nx + 0.45 * ny);
+      // Radial lens vignette
+      const dx = x - cx;
+      const dy = y - cy;
+      const rSq = (dx * dx + dy * dy) / Math.max(1, maxDistSq);
+      const vignetteFactor = 1 - vignetteIntensity * rSq;
+
+      // Deterministic LCG sensor noise
+      prng = (Math.imul(prng, 1664525) + 1013904223) >>> 0;
+      const noise =
+        noiseAmplitude > 0
+          ? (((prng >>> 16) & 0xff) / 127.5 - 1.0) * noiseAmplitude
+          : 0;
+
+      const idx = y * width + x;
+      const val = Math.round(
+        data[idx] * shadowFactor * vignetteFactor + noise
+      );
+      data[idx] = Math.max(0, Math.min(255, val));
+    }
+  }
+
+  let result: RawGrayImage = { width, height, data };
+
+  // 3. Apply subtle perspective keystone pinch if configured
+  const pinch = Math.max(0, Math.min(0.04, config.perspectivePinch ?? 0));
+  if (pinch > 0.001) {
+    const warped = new Uint8Array(width * height);
+    warped.fill(220);
+    for (let y = 0; y < height; y++) {
+      const ny = y / Math.max(1, height - 1);
+      const scaleX = 1 - pinch * (1 - ny); // slightly narrower at top
+      for (let x = 0; x < width; x++) {
+        const sx = Math.round((x - cx) / scaleX + cx);
+        if (sx >= 0 && sx < width) {
+          warped[y * width + x] = result.data[y * width + sx];
+        }
+      }
+    }
+    result = { width, height, data: warped };
+  }
+
+  // 4. Apply camera tilt / skew if configured
+  if (config.skewDeg && Math.abs(config.skewDeg) > 0.1) {
+    result = deskewGrayImageByForwardAngle(result, config.skewDeg);
+  }
+
+  return result;
 }
 
 /**
@@ -1180,6 +1510,7 @@ function classifyCharacterBox(
     cbox.x1,
     cbox.y1
   );
+  const smoothPatchGrid = smoothGrid16x24(patchGrid);
   const cw = cbox.x1 - cbox.x0 + 1;
   const ch = cbox.y1 - cbox.y0 + 1;
   const aspect = cw / Math.max(1, ch);
@@ -1210,18 +1541,31 @@ function classifyCharacterBox(
       if (tpl.isDigit) continue;
     }
 
-    // Cosine / normalized cross-correlation similarity on 16x24 grid
+    // Combined crisp + 3x3 Gaussian-smoothed cosine similarity on 16x24 grid
     let dot = 0;
     let normA = 0;
     let normB = 0;
+    let sDot = 0;
+    let sNormA = 0;
+    let sNormB = 0;
     for (let i = 0; i < patchGrid.length; i++) {
       const a = patchGrid[i];
       const b = tpl.grid[i];
       dot += a * b;
       normA += a * a;
       normB += b * b;
+
+      const sa = smoothPatchGrid[i];
+      const sb = tpl.smoothGrid[i];
+      sDot += sa * sb;
+      sNormA += sa * sa;
+      sNormB += sb * sb;
     }
-    let sim = normA > 0 && normB > 0 ? dot / Math.sqrt(normA * normB) : 0;
+    const directSim =
+      normA > 0 && normB > 0 ? dot / Math.sqrt(normA * normB) : 0;
+    const smoothSim =
+      sNormA > 0 && sNormB > 0 ? sDot / Math.sqrt(sNormA * sNormB) : 0;
+    let sim = directSim * 0.62 + smoothSim * 0.38;
 
     // Aspect ratio penalty for narrow glyphs ('1', 'I', 'İ') vs wide glyphs
     const aspectDiff = Math.abs(aspect - tpl.aspectRatio);

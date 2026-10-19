@@ -649,9 +649,15 @@ export const IndividualEvaluationView: React.FC<
               >
                 {activeRubric.criteria.map((criterion, cIdx) => {
                   const selectedPts =
-                    currentStudentEval?.criterionScores?.[criterion.id];
+                    activeSource === 'group'
+                      ? currentStudentEval?.groupCriterionScores?.[criterion.id]
+                      : currentStudentEval?.criterionScores?.[criterion.id];
                   const directPts =
-                    currentStudentEval?.directCriterionScores?.[criterion.id];
+                    activeSource === 'group'
+                      ? currentStudentEval?.groupDirectScores?.[criterion.id]
+                      : currentStudentEval?.directCriterionScores?.[
+                          criterion.id
+                        ];
                   const groupPts =
                     currentStudentEval?.groupCriterionScores?.[criterion.id];
 

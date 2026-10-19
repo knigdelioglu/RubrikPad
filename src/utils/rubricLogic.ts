@@ -306,15 +306,109 @@ export function getStudentEvaluationBreakdown(
 }
 
 /**
+ * Checks whether a group's evaluation is complete and eligible to be applied to its member students.
+ * P0: Incomplete group evaluations (where any required criterion is unscored) or empty groups
+ * MUST NOT be applied to members.
+ */
+export function canApplyGroupScoresToMembers(
+  group: StudentGroup | null | undefined,
+  rubric?: Rubric
+): {
+  allowed: boolean;
+  completedCriteriaCount: number;
+  totalCriteriaCount: number;
+  reason?: string;
+} {
+  if (!group) {
+    return {
+      allowed: false,
+      completedCriteriaCount: 0,
+      totalCriteriaCount: rubric?.criteria?.length || 0,
+      reason: 'Geçerli bir grup seçilmedi.',
+    };
+  }
+
+  if (!Array.isArray(group.studentIds) || group.studentIds.length === 0) {
+    return {
+      allowed: false,
+      completedCriteriaCount: 0,
+      totalCriteriaCount: rubric?.criteria?.length || 0,
+      reason: 'Grupta henüz üye öğrenci bulunmuyor.',
+    };
+  }
+
+  if (rubric) {
+    const calc = calculateWeightedScore(
+      rubric,
+      group.criterionScores || {},
+      group.directCriterionScores
+    );
+    if (!calc.isComplete) {
+      return {
+        allowed: false,
+        completedCriteriaCount: calc.completedCriteriaCount,
+        totalCriteriaCount: calc.totalCriteriaCount,
+        reason: `Eksik grup değerlendirmesi (${calc.completedCriteriaCount}/${calc.totalCriteriaCount} ölçüt) üyelere uygulanamaz. Lütfen tüm ölçütleri tamamlayın.`,
+      };
+    }
+    return {
+      allowed: true,
+      completedCriteriaCount: calc.completedCriteriaCount,
+      totalCriteriaCount: calc.totalCriteriaCount,
+    };
+  }
+
+  // Fallback check when rubric is not passed: ensure at least one score is assigned and no explicit null/undefined entries exist
+  const levelEntries = Object.entries(group.criterionScores || {});
+  const directEntries = Object.entries(group.directCriterionScores || {});
+  const assignedCount =
+    levelEntries.filter(([, v]) => isScoreAssigned(v)).length +
+    directEntries.filter(
+      ([k, v]) => isScoreAssigned(v) && !isScoreAssigned(group.criterionScores?.[k])
+    ).length;
+
+  const hasExplicitUnscored =
+    levelEntries.some(
+      ([k, v]) => !isScoreAssigned(v) && !isScoreAssigned(group.directCriterionScores?.[k])
+    ) ||
+    directEntries.some(
+      ([k, v]) => !isScoreAssigned(v) && !isScoreAssigned(group.criterionScores?.[k])
+    );
+
+  if (assignedCount === 0 || hasExplicitUnscored) {
+    return {
+      allowed: false,
+      completedCriteriaCount: assignedCount,
+      totalCriteriaCount: Math.max(levelEntries.length, directEntries.length, 1),
+      reason: 'Eksik grup değerlendirmesi üyelere uygulanamaz.',
+    };
+  }
+
+  return {
+    allowed: true,
+    completedCriteriaCount: assignedCount,
+    totalCriteriaCount: assignedCount,
+  };
+}
+
+/**
  * Propagates a group's criterion scores and observation note to all member students in the session.
- * P0 #4: Stores group results in separate `groupCriterionScores` and `groupNote` fields so
- * individual `criterionScores` and individual `note` are NEVER overwritten or destroyed.
+ * P0 #4 & P0 Group Completeness Guard:
+ * - Stores group results in separate `groupCriterionScores` and `groupNote` fields so
+ *   individual `criterionScores` and individual `note` are NEVER overwritten or destroyed.
+ * - Strictly refuses to apply incomplete group evaluations to member students.
  */
 export function applyGroupScoresToMembers(
   currentEvaluations: Record<string, StudentEvaluation>,
   group: StudentGroup,
-  timestampIso: string
+  timestampIso: string,
+  rubric?: Rubric
 ): Record<string, StudentEvaluation> {
+  const eligibility = canApplyGroupScoresToMembers(group, rubric);
+  if (!eligibility.allowed) {
+    return currentEvaluations;
+  }
+
   const updated: Record<string, StudentEvaluation> = { ...currentEvaluations };
 
   for (const studentId of group.studentIds) {
@@ -337,12 +431,6 @@ export function applyGroupScoresToMembers(
       ? existingTags
       : [...existingTags, 'Grup Çalışması'];
 
-    const hasIndividualScores =
-      Object.values(preservedIndividualScores).some((v) => isScoreAssigned(v)) ||
-      Object.values(preservedIndividualDirect || {}).some((v) =>
-        isScoreAssigned(v)
-      );
-
     updated[studentId] = {
       studentId,
       criterionScores: preservedIndividualScores,
@@ -351,9 +439,7 @@ export function applyGroupScoresToMembers(
       groupDirectScores: nextGroupDirect,
       groupNote: groupNoteClean,
       groupId: group.id,
-      activeScoreSource: hasIndividualScores
-        ? existing?.activeScoreSource || 'individual'
-        : 'group',
+      activeScoreSource: 'group',
       note: existingNote,
       tags: nextTags,
       updatedAt: timestampIso,
@@ -1257,7 +1343,8 @@ export function findDuplicateGroupMemberships(
 export function reconcileGroupEvaluationsWithMemberships(
   currentEvaluations: Record<string, StudentEvaluation>,
   groups: StudentGroup[],
-  timestampIso = new Date().toISOString()
+  timestampIso = new Date().toISOString(),
+  rubric?: Rubric
 ): Record<string, StudentEvaluation> {
   const updated: Record<string, StudentEvaluation> = { ...currentEvaluations };
 
@@ -1267,6 +1354,11 @@ export function reconcileGroupEvaluationsWithMemberships(
       currentGroupByStudentId.set(sid, grp);
     }
   }
+
+  const isGroupEligibleToApply = (grp: StudentGroup): boolean => {
+    if (!hasGroupEvaluationData(grp)) return false;
+    return canApplyGroupScoresToMembers(grp, rubric).allowed;
+  };
 
   // 1. Clean or update existing student evaluation records
   for (const [stuId, existing] of Object.entries(updated)) {
@@ -1304,9 +1396,9 @@ export function reconcileGroupEvaluationsWithMemberships(
     }
 
     // Student IS in `assignedGroup`
-    const groupHasScores = hasGroupEvaluationData(assignedGroup);
-    if (!groupHasScores) {
-      // Student is in an unscored group: clear any stale scores from a previous group
+    const groupEligible = isGroupEligibleToApply(assignedGroup);
+    if (!groupEligible) {
+      // Student is in an unscored or incomplete group: clear any stale reflected group scores
       if (hadReflectedGroupData) {
         updated[stuId] = {
           ...existing,
@@ -1324,14 +1416,8 @@ export function reconcileGroupEvaluationsWithMemberships(
       Boolean(assignedGroup.lastAppliedAt) ||
       hadReflectedGroupData
     ) {
-      // Sync student's reflected group scores with their current evaluated group
-      const hasIndScores =
-        Object.values(existing.criterionScores || {}).some((v) =>
-          isScoreAssigned(v)
-        ) ||
-        Object.values(existing.directCriterionScores || {}).some((v) =>
-          isScoreAssigned(v)
-        );
+      // Sync student's reflected group scores with their current COMPLETE evaluated group
+      const wasAlreadyInSameGroup = existing.groupId === assignedGroup.id;
       const existingTags = existing.tags || [];
       const nextTags = existingTags.includes('Grup Çalışması')
         ? existingTags
@@ -1346,8 +1432,8 @@ export function reconcileGroupEvaluationsWithMemberships(
         groupNote: assignedGroup.groupNote || '',
         groupId: assignedGroup.id,
         evaluatedViaGroup: assignedGroup.name,
-        activeScoreSource: hasIndScores
-          ? existing.activeScoreSource || 'individual'
+        activeScoreSource: wasAlreadyInSameGroup
+          ? existing.activeScoreSource || 'group'
           : 'group',
         tags: nextTags,
         updatedAt: timestampIso,
@@ -1355,7 +1441,7 @@ export function reconcileGroupEvaluationsWithMemberships(
     }
   }
 
-  // 2. Also ensure any newly added member of a group that ALREADY had scores applied gets synced
+  // 2. Also ensure any newly added member of a COMPLETE group that ALREADY had scores applied gets synced
   for (const [stuId, grp] of currentGroupByStudentId.entries()) {
     const groupWasAlreadyApplied =
       Boolean(grp.lastAppliedAt) ||
@@ -1375,7 +1461,7 @@ export function reconcileGroupEvaluationsWithMemberships(
 
     if (
       !updated[stuId] &&
-      hasGroupEvaluationData(grp) &&
+      isGroupEligibleToApply(grp) &&
       groupWasAlreadyApplied
     ) {
       updated[stuId] = {
@@ -1400,13 +1486,192 @@ export function reconcileGroupEvaluationsWithMemberships(
 }
 
 /**
+ * Evaluates a group as a unit (updating criterionScores, directCriterionScores, or groupNote)
+ * and transfers the evaluation to the group's member students when complete:
+ * - If the updated group evaluation is complete (`canApplyGroupScoresToMembers` is true) and
+ *   `autoTransferToMembers !== false`, automatically transfers the group evaluation to all member students.
+ * - If the updated group evaluation becomes incomplete (e.g., a criterion was cleared or reset),
+ *   reconciles member records so incomplete group scores are never left applied on members.
+ */
+export function evaluateGroupAndTransferToMembers(
+  session: EvaluationSession,
+  groupId: string,
+  updater: (group: StudentGroup) => StudentGroup,
+  options?: {
+    rubric?: Rubric;
+    timestampIso?: string;
+    autoTransferToMembers?: boolean;
+    undoDescription?: string;
+    criterionId?: string;
+  }
+): {
+  updatedSession: EvaluationSession;
+  transferredToMembers: boolean;
+  transferredMemberCount: number;
+  wasCompleteBefore: boolean;
+  isCompleteAfter: boolean;
+} {
+  const effectiveRubric = options?.rubric ?? session.rubricSnapshot;
+  const nowIso = options?.timestampIso ?? new Date().toISOString();
+  const autoTransfer = options?.autoTransferToMembers !== false;
+
+  const targetGroup = (session.groups || []).find((g) => g.id === groupId);
+  if (!targetGroup) {
+    return {
+      updatedSession: session,
+      transferredToMembers: false,
+      transferredMemberCount: 0,
+      wasCompleteBefore: false,
+      isCompleteAfter: false,
+    };
+  }
+
+  const wasCompleteBefore = canApplyGroupScoresToMembers(
+    targetGroup,
+    effectiveRubric
+  ).allowed;
+
+  const nextGroupRaw = updater(targetGroup);
+  const eligibilityAfter = canApplyGroupScoresToMembers(
+    nextGroupRaw,
+    effectiveRubric
+  );
+  const isCompleteAfter = eligibilityAfter.allowed;
+
+  const shouldTransferNow =
+    isCompleteAfter &&
+    (autoTransfer || Boolean(targetGroup.lastAppliedAt));
+
+  const finalizedGroup: StudentGroup = shouldTransferNow
+    ? { ...nextGroupRaw, lastAppliedAt: nowIso }
+    : !isCompleteAfter
+    ? { ...nextGroupRaw, lastAppliedAt: undefined }
+    : nextGroupRaw;
+
+  const updatedGroups = (session.groups || []).map((g) =>
+    g.id === groupId ? finalizedGroup : g
+  );
+
+  let updatedEvaluations = session.evaluations;
+  let transferredToMembers = false;
+
+  if (shouldTransferNow) {
+    updatedEvaluations = applyGroupScoresToMembers(
+      session.evaluations,
+      finalizedGroup,
+      nowIso,
+      effectiveRubric
+    );
+    transferredToMembers = true;
+  } else if (!isCompleteAfter) {
+    updatedEvaluations = reconcileGroupEvaluationsWithMemberships(
+      session.evaluations,
+      updatedGroups,
+      nowIso,
+      effectiveRubric
+    );
+  }
+
+  const undoHistory = options?.undoDescription
+    ? recordSessionUndoEntry(session, {
+        scope: 'group',
+        groupId,
+        criterionId: options.criterionId,
+        description: options.undoDescription,
+        previousEvaluations: session.evaluations,
+        previousGroups: session.groups,
+      })
+    : session.undoHistory;
+
+  return {
+    updatedSession: {
+      ...session,
+      groups: updatedGroups,
+      evaluations: updatedEvaluations,
+      undoHistory,
+    },
+    transferredToMembers,
+    transferredMemberCount: transferredToMembers
+      ? finalizedGroup.studentIds.length
+      : 0,
+    wasCompleteBefore,
+    isCompleteAfter,
+  };
+}
+
+/**
+ * Transfers all completed group evaluations in a session to their respective member students.
+ * Incomplete or empty groups are strictly skipped.
+ */
+export function transferAllCompletedGroupsToMembers(
+  session: EvaluationSession,
+  rubric?: Rubric,
+  timestampIso = new Date().toISOString()
+): {
+  updatedSession: EvaluationSession;
+  transferredGroupCount: number;
+  transferredStudentCount: number;
+} {
+  const effectiveRubric = rubric ?? session.rubricSnapshot;
+  let nextEvaluations = { ...session.evaluations };
+  let transferredGroupCount = 0;
+  let transferredStudentCount = 0;
+
+  const nextGroups = (session.groups || []).map((grp) => {
+    const eligibility = canApplyGroupScoresToMembers(grp, effectiveRubric);
+    if (!eligibility.allowed) {
+      return grp;
+    }
+    transferredGroupCount += 1;
+    transferredStudentCount += grp.studentIds.length;
+    nextEvaluations = applyGroupScoresToMembers(
+      nextEvaluations,
+      grp,
+      timestampIso,
+      effectiveRubric
+    );
+    return {
+      ...grp,
+      lastAppliedAt: timestampIso,
+    };
+  });
+
+  if (transferredGroupCount === 0) {
+    return {
+      updatedSession: session,
+      transferredGroupCount: 0,
+      transferredStudentCount: 0,
+    };
+  }
+
+  const undoHistory = recordSessionUndoEntry(session, {
+    scope: 'group',
+    description: `${transferredGroupCount} grubun değerlendirmesi ${transferredStudentCount} öğrenciye aktarıldı`,
+    previousEvaluations: session.evaluations,
+    previousGroups: session.groups,
+  });
+
+  return {
+    updatedSession: {
+      ...session,
+      groups: nextGroups,
+      evaluations: nextEvaluations,
+      undoHistory,
+    },
+    transferredGroupCount,
+    transferredStudentCount,
+  };
+}
+
+/**
  * Deletes a group from a session and automatically reconciles all former members' reflected
  * `groupCriterionScores`, `groupDirectScores`, `groupNote`, and `groupId` while recording an undo entry.
  */
 export function deleteGroupAndReconcile(
   session: EvaluationSession,
   groupId: string,
-  timestampIso = new Date().toISOString()
+  timestampIso = new Date().toISOString(),
+  rubric?: Rubric
 ): EvaluationSession {
   const targetGroup = (session.groups || []).find((g) => g.id === groupId);
   const nextGroups = (session.groups || []).filter((g) => g.id !== groupId);
@@ -1420,7 +1685,8 @@ export function deleteGroupAndReconcile(
   const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
     session.evaluations,
     nextGroups,
-    timestampIso
+    timestampIso,
+    rubric ?? session.rubricSnapshot
   );
 
   return {
@@ -1434,13 +1700,14 @@ export function deleteGroupAndReconcile(
 /**
  * Toggles a student's membership in a group and automatically reconciles reflected group scores:
  * - Removing a student from a group immediately clears their stale `groupCriterionScores`, `groupNote`, and `groupId`.
- * - Adding a student to an evaluated group syncs that group's scores to the student's `groupCriterionScores`.
+ * - Adding a student to a completed evaluated group syncs that group's scores to the student's `groupCriterionScores`.
  */
 export function toggleGroupMemberAndReconcile(
   session: EvaluationSession,
   groupId: string,
   studentId: string,
-  timestampIso = new Date().toISOString()
+  timestampIso = new Date().toISOString(),
+  rubric?: Rubric
 ): EvaluationSession {
   const conflicts = findDuplicateGroupMemberships(
     session.groups || [],
@@ -1479,7 +1746,8 @@ export function toggleGroupMemberAndReconcile(
   const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
     session.evaluations,
     nextGroups,
-    timestampIso
+    timestampIso,
+    rubric ?? session.rubricSnapshot
   );
 
   return {

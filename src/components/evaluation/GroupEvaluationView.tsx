@@ -25,11 +25,14 @@ import type {
   StudentGroup,
 } from '../../types.ts';
 import {
+  canApplyGroupScoresToMembers,
   findDuplicateGroupMemberships,
   getGroupLifecycleStatus,
   getGroupProgressHistory,
   getNextPendingGroup,
+  getStudentEvaluationBreakdown,
   hasGroupEvaluationData,
+  isScoreAssigned,
   redistributeGroupsSafely,
 } from '../../utils/rubricLogic.ts';
 import {
@@ -66,6 +69,10 @@ interface GroupEvaluationViewProps {
     group: StudentGroup,
     options?: { advanceToNextGroup?: boolean }
   ) => void;
+  onTransferAllCompletedGroups?: () => void;
+  autoTransferToMembers?: boolean;
+  onToggleAutoTransferToMembers?: () => void;
+  onInspectStudentInIndividualMode?: (studentId: string) => void;
   groupAppliedFeedback: string | null;
   lastAppliedGroupBanner?: {
     previousGroupId: string;
@@ -99,6 +106,10 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   onResetGroupScores,
   onUpdateGroupNote,
   onApplyGroupScoresToMembers,
+  onTransferAllCompletedGroups,
+  autoTransferToMembers = true,
+  onToggleAutoTransferToMembers,
+  onInspectStudentInIndividualMode,
   groupAppliedFeedback,
   lastAppliedGroupBanner,
   onDismissGroupBanner,
@@ -153,6 +164,27 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
       (activeSession.groups || []).filter((g) => hasGroupEvaluationData(g))
         .length,
     [activeSession.groups]
+  );
+
+  const completedGroupsCount = useMemo(
+    () =>
+      (activeSession.groups || []).filter(
+        (g) => canApplyGroupScoresToMembers(g, activeRubric).allowed
+      ).length,
+    [activeSession.groups, activeRubric]
+  );
+
+  const unappliedCompletedGroupsCount = useMemo(
+    () =>
+      (activeSession.groups || []).filter((g) => {
+        const st = getGroupLifecycleStatus(
+          activeRubric,
+          g,
+          activeSession.evaluations
+        );
+        return st.state === 'completed_unapplied' && g.studentIds.length > 0;
+      }).length,
+    [activeSession.groups, activeRubric, activeSession.evaluations]
   );
 
   const groupHistory = useMemo(
@@ -282,15 +314,54 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
         <div>
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <Users className="w-4 h-4 text-teal-700" />
-            Grup Değerlendirmesi ve Görsel Takım Kartları
+            Grup Değerlendirmesi ve Öğrencilere Aktarım Merkezi
           </h2>
           <p className="text-xs text-slate-600">
-            Takımları puanlayın, tamamlanan grup notunu tek dokunuşla üyelere
-            uygulayın. Bireysel puanlar korunur.
+            Grubu ortak rubrikle grup olarak değerlendirin; tamamlanan grup
+            değerlendirmesi gruptaki tüm öğrencilere aktarılır.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {onToggleAutoTransferToMembers && (
+            <button
+              type="button"
+              onClick={onToggleAutoTransferToMembers}
+              aria-pressed={autoTransferToMembers}
+              title="Grup değerlendirmesinin tüm ölçütleri tamamlandığında puan ve gözlem notunu gruptaki öğrencilere otomatik aktarır"
+              className={`px-3 py-1.5 text-xs font-bold rounded-xl border flex items-center gap-1.5 cursor-pointer min-h-[38px] transition-colors ${
+                autoTransferToMembers
+                  ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              <CheckCircle2
+                className={`w-3.5 h-3.5 ${
+                  autoTransferToMembers ? 'text-emerald-700' : 'text-slate-400'
+                }`}
+              />
+              Otomatik Öğrenciye Aktarım:{' '}
+              {autoTransferToMembers ? 'Açık' : 'Kapalı'}
+            </button>
+          )}
+
+          {onTransferAllCompletedGroups && completedGroupsCount > 0 && (
+            <button
+              type="button"
+              onClick={onTransferAllCompletedGroups}
+              className={`px-3 py-1.5 text-xs font-bold rounded-xl border flex items-center gap-1.5 cursor-pointer min-h-[38px] transition-colors ${
+                unappliedCompletedGroupsCount > 0
+                  ? 'bg-teal-700 text-white border-teal-800 hover:bg-teal-800 shadow-xs'
+                  : 'bg-teal-50 text-teal-900 border-teal-200 hover:bg-teal-100'
+              }`}
+            >
+              <Send className="w-3.5 h-3.5" />
+              {unappliedCompletedGroupsCount > 0
+                ? `Tamamlanan ${unappliedCompletedGroupsCount} Grubu Öğrencilere Aktar`
+                : `Tüm Tamamlanan Grupları Öğrencilere Eşitle (${completedGroupsCount})`}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -980,11 +1051,11 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       )}
                     </span>
                     <div>
-                      <div>3. Üyelere Uygulandı</div>
+                      <div>3. Öğrencilere Aktarıldı</div>
                       <div className="text-[10px] font-mono-num font-normal opacity-90">
                         {activeGroupLifecycle.state === 'applied'
-                          ? `${activeGroupLifecycle.appliedMemberCount} üyeye aktarıldı`
-                          : 'Uygulama onayı bekleniyor'}
+                          ? `${activeGroupLifecycle.appliedMemberCount} öğrenciye aktarıldı`
+                          : 'Gruptaki öğrencilere aktarım'}
                       </div>
                     </div>
                   </div>
@@ -995,7 +1066,8 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   <div className="text-xs font-medium text-slate-700">
                     {activeGroupLifecycle.state === 'in_progress' && (
                       <span>
-                        Grup puanını üyelere uygulamak için kalan{' '}
+                        Grup değerlendirmesini gruptaki öğrencilere aktarmak
+                        için kalan{' '}
                         <strong>
                           {activeGroupLifecycle.totalCriteriaCount -
                             activeGroupLifecycle.completedCriteriaCount}{' '}
@@ -1007,15 +1079,17 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     {activeGroupLifecycle.state === 'completed_unapplied' && (
                       <span className="text-sky-950 font-bold">
                         {activeGroupLifecycle.hasStaleMemberScores
-                          ? 'Grup puanı veya üyeleri güncellendi. Güncel grup puanını üyelere uygulayın:'
-                          : 'Grup değerlendirmesi tamamlandı! Puanların öğrenci kayıtlarına geçmesi için üyelere uygulayın:'}
+                          ? 'Grup değerlendirmesi güncellendi. Güncel grup değerlendirmesini gruptaki öğrencilere aktarın:'
+                          : 'Grup değerlendirmesi tamamlandı! Bu değerlendirmeyi gruptaki öğrencilere aktarın:'}
                       </span>
                     )}
                     {activeGroupLifecycle.state === 'applied' && (
                       <span className="text-emerald-950 font-semibold">
-                        Bu grubun puanları ({activeGroupLifecycle.finalScoreOutOf100}
-                        /100) tüm grup üyelerine ({selectedGroup.studentIds.length}{' '}
-                        öğrenci) güncel olarak uygulanmıştır.
+                        Bu grubun değerlendirmesi (
+                        {activeGroupLifecycle.finalScoreOutOf100}
+                        /100) gruptaki tüm öğrencilere (
+                        {selectedGroup.studentIds.length} öğrenci) başarıyla
+                        aktarılmıştır.
                       </span>
                     )}
                   </div>
@@ -1023,13 +1097,21 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      disabled={selectedGroup.studentIds.length === 0}
+                      disabled={
+                        selectedGroup.studentIds.length === 0 ||
+                        !activeGroupLifecycle.isComplete
+                      }
+                      title={
+                        !activeGroupLifecycle.isComplete
+                          ? `Grup değerlendirmesini öğrencilere aktarmak için tüm ölçütleri tamamlayın (${activeGroupLifecycle.completedCriteriaCount}/${activeGroupLifecycle.totalCriteriaCount})`
+                          : undefined
+                      }
                       onClick={() =>
                         onApplyGroupScoresToMembers(selectedGroup, {
                           advanceToNextGroup: false,
                         })
                       }
-                      className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all min-h-[42px] disabled:opacity-40 ${
+                      className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all min-h-[42px] disabled:opacity-40 disabled:cursor-not-allowed ${
                         activeGroupLifecycle.state === 'completed_unapplied'
                           ? 'bg-teal-700 hover:bg-teal-800 text-white shadow-sm'
                           : activeGroupLifecycle.state === 'applied'
@@ -1039,8 +1121,8 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     >
                       <Users className="w-4 h-4" />
                       {activeGroupLifecycle.state === 'applied'
-                        ? `Üyelere Tekrar Uygula (${selectedGroup.studentIds.length} Üye)`
-                        : `Grup Puanını ${selectedGroup.studentIds.length} Üyeye Uygula`}
+                        ? `Değerlendirmeyi Öğrencilere Tekrar Aktar (${selectedGroup.studentIds.length} Öğrenci)`
+                        : `Grup Değerlendirmesini ${selectedGroup.studentIds.length} Öğrenciye Aktar`}
                     </button>
 
                     {activeGroupLifecycle.isComplete &&
@@ -1056,7 +1138,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                           className="px-4 py-2.5 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm min-h-[42px]"
                         >
                           <Send className="w-3.5 h-3.5 shrink-0" />
-                          <span>Uygula ve Sıradaki Gruba Geç</span>
+                          <span>Öğrencilere Aktar ve Sıradaki Gruba Geç</span>
                           <ChevronRight className="w-4 h-4 shrink-0" />
                         </button>
                       )}
@@ -1236,8 +1318,8 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   htmlFor="group-obs-note"
                   className="block text-xs font-bold text-slate-700 mb-1.5"
                 >
-                  Grup Ortak Gözlem Notu (Öğrencilerin bireysel notlarını
-                  silmeden grup notu alanına kaydedilir)
+                  Grup Ortak Gözlem Notu (Gruptaki öğrencilere grup
+                  değerlendirmesiyle birlikte aktarılır; bireysel notlar korunur)
                 </label>
                 <textarea
                   id="group-obs-note"
@@ -1247,6 +1329,179 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   placeholder="Grubun işbirliği, görev paylaşımı ve ortak çıktısına dair gözlem notu..."
                   className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600"
                 />
+              </div>
+
+              {/* Group-to-Student Evaluation Transfer Table (Gruptaki Öğrencilere Aktarılan Değerlendirme Tablosu) */}
+              <div className="pt-3 border-t border-slate-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <Users className="w-4 h-4 text-teal-700" />
+                      Gruptaki Öğrencilere Aktarılan Değerlendirme Özeti (
+                      {selectedGroup.studentIds.length} Öğrenci)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Grup olarak yapılan değerlendirmenin gruptaki her bir
+                      öğrenciye yansıyan ölçüt puanları ve kesin not durumu
+                    </p>
+                  </div>
+
+                  {activeGroupLifecycle.isComplete &&
+                    selectedGroup.studentIds.length > 0 &&
+                    activeGroupLifecycle.state !== 'applied' && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onApplyGroupScoresToMembers(selectedGroup, {
+                            advanceToNextGroup: false,
+                          })
+                        }
+                        className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        Şimdi Öğrencilere Aktar
+                      </button>
+                    )}
+                </div>
+
+                {selectedGroup.studentIds.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    Grup değerlendirmesinin aktarılabilmesi için yukarıdan gruba
+                    en az bir öğrenci ekleyin.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                        <tr>
+                          <th className="py-2.5 px-3">Gruptaki Öğrenci</th>
+                          {activeRubric.criteria.map((c, idx) => (
+                            <th
+                              key={c.id}
+                              className="py-2.5 px-2.5 text-center font-mono-num"
+                              title={c.title}
+                            >
+                              Ö{idx + 1} (%{c.weight})
+                            </th>
+                          ))}
+                          <th className="py-2.5 px-3 text-right">
+                            Aktarılan Grup Notu
+                          </th>
+                          <th className="py-2.5 px-3">Aktarım Durumu</th>
+                          {onInspectStudentInIndividualMode && (
+                            <th className="py-2.5 px-3 text-right">İşlem</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {selectedGroup.studentIds.map((stuId) => {
+                          const stu = studentsById[stuId];
+                          if (!stu) return null;
+                          const ev = activeSession.evaluations[stu.id];
+                          const stuBreakdown = getStudentEvaluationBreakdown(
+                            activeRubric,
+                            ev
+                          );
+                          const grpCalc = stuBreakdown.groupCalc;
+                          const isTransferred =
+                            grpCalc.isComplete &&
+                            grpCalc.finalScoreOutOf100 !== null &&
+                            (ev?.groupId === selectedGroup.id ||
+                              ev?.evaluatedViaGroup === selectedGroup.name);
+
+                          return (
+                            <tr
+                              key={stu.id}
+                              className={
+                                isTransferred
+                                  ? 'bg-emerald-50/25'
+                                  : 'hover:bg-slate-50'
+                              }
+                            >
+                              <td className="py-2.5 px-3 font-semibold text-slate-900">
+                                <span className="font-mono-num text-slate-400 mr-1.5">
+                                  #{stu.studentNumber}
+                                </span>
+                                {stu.fullName}
+                                {ev?.groupNote && isTransferred && (
+                                  <div className="text-[11px] font-normal text-slate-500 truncate max-w-[220px]">
+                                    Not: &ldquo;{ev.groupNote}&rdquo;
+                                  </div>
+                                )}
+                              </td>
+
+                              {activeRubric.criteria.map((c) => {
+                                const directVal =
+                                  ev?.groupDirectScores?.[c.id];
+                                const lvlVal =
+                                  ev?.groupCriterionScores?.[c.id];
+                                const shownVal = isScoreAssigned(directVal)
+                                  ? `${directVal}/${c.maxPoints ?? c.weight}`
+                                  : isScoreAssigned(lvlVal)
+                                  ? `${lvlVal}P`
+                                  : '—';
+                                return (
+                                  <td
+                                    key={c.id}
+                                    className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-800"
+                                  >
+                                    {isTransferred ? shownVal : '—'}
+                                  </td>
+                                );
+                              })}
+
+                              <td className="py-2.5 px-3 text-right font-mono-num">
+                                {isTransferred &&
+                                grpCalc.finalScoreOutOf100 !== null ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-950 border border-emerald-300 font-bold">
+                                    {grpCalc.finalScoreOutOf100} / 100
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
+
+                              <td className="py-2.5 px-3">
+                                {isTransferred ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                    <Check className="w-3 h-3 text-emerald-700 stroke-[2.5]" />
+                                    Öğrenciye Aktarıldı
+                                  </span>
+                                ) : activeGroupLifecycle.isComplete ? (
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-900 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200">
+                                    Aktarım Bekliyor
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-900 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                                    Grup Puanlanıyor (
+                                    {
+                                      activeGroupLifecycle.completedCriteriaCount
+                                    }
+                                    /{activeGroupLifecycle.totalCriteriaCount})
+                                  </span>
+                                )}
+                              </td>
+
+                              {onInspectStudentInIndividualMode && (
+                                <td className="py-2.5 px-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onInspectStudentInIndividualMode(stu.id)
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:border-teal-600 hover:text-teal-900 text-[11px] font-bold text-slate-700 cursor-pointer"
+                                  >
+                                    Öğrenci Kartı →
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           ) : null}

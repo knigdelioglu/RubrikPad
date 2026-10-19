@@ -24,7 +24,10 @@ import {
   getEffectiveSessionRubric,
   freezeRubricSnapshot,
   changeSessionRubricSafely,
+  canApplyGroupScoresToMembers,
   applyGroupScoresToMembers,
+  evaluateGroupAndTransferToMembers,
+  transferAllCompletedGroupsToMembers,
   reconcileGroupEvaluationsWithMemberships,
   deleteGroupAndReconcile,
   toggleGroupMemberAndReconcile,
@@ -164,6 +167,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     autoAdvanced?: boolean;
   } | null>(null);
 
+  const [autoTransferGroupScores, setAutoTransferGroupScores] =
+    useState<boolean>(true);
   const [groupAppliedFeedback, setGroupAppliedFeedback] = useState<
     string | null
   >(null);
@@ -270,17 +275,30 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       if (!activeSession || !selectedStudent || !activeRubric) return;
 
       const existing = activeSession.evaluations[selectedStudent.id];
-      const prevCalc = calculateWeightedScore(
+      const prevCalc = getStudentEvaluationBreakdown(
         activeRubric,
-        existing?.criterionScores || {},
-        existing?.directCriterionScores
-      );
+        existing
+      ).effectiveCalc;
+
+      const hasExistingIndividual =
+        Object.keys(existing?.criterionScores || {}).length > 0 ||
+        Object.keys(existing?.directCriterionScores || {}).length > 0;
+
+      const baseCriterionScores =
+        !hasExistingIndividual && existing?.activeScoreSource === 'group'
+          ? { ...(existing?.groupCriterionScores || {}) }
+          : { ...(existing?.criterionScores || {}) };
+
+      const baseDirectScores =
+        !hasExistingIndividual && existing?.activeScoreSource === 'group'
+          ? { ...(existing?.groupDirectScores || {}) }
+          : { ...(existing?.directCriterionScores || {}) };
 
       const nextScores = {
-        ...(existing?.criterionScores || {}),
+        ...baseCriterionScores,
         [criterionId]: points,
       };
-      const nextDirect = { ...(existing?.directCriterionScores || {}) };
+      const nextDirect = { ...baseDirectScores };
       delete nextDirect[criterionId];
 
       const updatedEval: StudentEvaluation = {
@@ -1319,142 +1337,155 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             const targetGroup = activeSession.groups.find(
               (g) => g.id === selectedGroupId
             );
-            const undoHistory = recordSessionUndoEntry(activeSession, {
-              scope: 'group',
-              groupId: selectedGroupId,
-              criterionId,
-              description: `${targetGroup?.name || 'Grup'} — ölçüt puanı (${points}P)`,
-              previousEvaluations: activeSession.evaluations,
-              previousGroups: activeSession.groups,
-            });
-            const updatedGroups = activeSession.groups.map((g) => {
-              if (g.id !== selectedGroupId) return g;
-              const nextDirect = { ...(g.directCriterionScores || {}) };
-              delete nextDirect[criterionId];
-              return {
-                ...g,
-                criterionScores: {
-                  ...g.criterionScores,
-                  [criterionId]: points,
-                },
-                directCriterionScores: nextDirect,
-              };
-            });
-            onUpdateSession({
-              ...activeSession,
-              groups: updatedGroups,
-              undoHistory,
-            });
+            const result = evaluateGroupAndTransferToMembers(
+              activeSession,
+              selectedGroupId,
+              (g) => {
+                const nextDirect = { ...(g.directCriterionScores || {}) };
+                delete nextDirect[criterionId];
+                return {
+                  ...g,
+                  criterionScores: {
+                    ...g.criterionScores,
+                    [criterionId]: points,
+                  },
+                  directCriterionScores: nextDirect,
+                };
+              },
+              {
+                rubric: activeRubric,
+                autoTransferToMembers: autoTransferGroupScores,
+                criterionId,
+                undoDescription: `${targetGroup?.name || 'Grup'} — ölçüt puanı (${points}P)`,
+              }
+            );
+            onUpdateSession(result.updatedSession);
+            if (result.transferredToMembers && !result.wasCompleteBefore) {
+              setGroupAppliedFeedback(
+                `${targetGroup?.name || 'Grup'} değerlendirmesi tamamlandı ve gruptaki ${result.transferredMemberCount} öğrenciye otomatik aktarıldı.`
+              );
+              setTimeout(() => setGroupAppliedFeedback(null), 4000);
+            }
           }}
           onSetGroupDirectCriterionScore={(criterionId, directPoints) => {
             const targetGroup = activeSession.groups.find(
               (g) => g.id === selectedGroupId
             );
-            const undoHistory = recordSessionUndoEntry(activeSession, {
-              scope: 'group',
-              groupId: selectedGroupId,
-              criterionId,
-              description: `${targetGroup?.name || 'Grup'} — hassas tam sayı puanı`,
-              previousEvaluations: activeSession.evaluations,
-              previousGroups: activeSession.groups,
-            });
-            const updatedGroups = activeSession.groups.map((g) => {
-              if (g.id !== selectedGroupId) return g;
-              const nextDirect = { ...(g.directCriterionScores || {}) };
-              if (directPoints === null) {
-                delete nextDirect[criterionId];
-              } else {
-                nextDirect[criterionId] = directPoints;
+            const result = evaluateGroupAndTransferToMembers(
+              activeSession,
+              selectedGroupId,
+              (g) => {
+                const nextDirect = { ...(g.directCriterionScores || {}) };
+                if (directPoints === null) {
+                  delete nextDirect[criterionId];
+                } else {
+                  nextDirect[criterionId] = directPoints;
+                }
+                return {
+                  ...g,
+                  directCriterionScores: nextDirect,
+                };
+              },
+              {
+                rubric: activeRubric,
+                autoTransferToMembers: autoTransferGroupScores,
+                criterionId,
+                undoDescription: `${targetGroup?.name || 'Grup'} — hassas tam sayı puanı`,
               }
-              return {
-                ...g,
-                directCriterionScores: nextDirect,
-              };
-            });
-            onUpdateSession({
-              ...activeSession,
-              groups: updatedGroups,
-              undoHistory,
-            });
+            );
+            onUpdateSession(result.updatedSession);
+            if (result.transferredToMembers && !result.wasCompleteBefore) {
+              setGroupAppliedFeedback(
+                `${targetGroup?.name || 'Grup'} değerlendirmesi tamamlandı ve gruptaki ${result.transferredMemberCount} öğrenciye otomatik aktarıldı.`
+              );
+              setTimeout(() => setGroupAppliedFeedback(null), 4000);
+            }
           }}
           onClearGroupCriterionScore={(criterionId) => {
             const targetGroup = activeSession.groups.find(
               (g) => g.id === selectedGroupId
             );
-            const undoHistory = recordSessionUndoEntry(activeSession, {
-              scope: 'group',
-              groupId: selectedGroupId,
-              criterionId,
-              description: `${targetGroup?.name || 'Grup'} — ölçüt puanı temizlendi`,
-              previousEvaluations: activeSession.evaluations,
-              previousGroups: activeSession.groups,
-            });
-            const updatedGroups = activeSession.groups.map((g) => {
-              if (g.id !== selectedGroupId) return g;
-              const nextScores = { ...(g.criterionScores || {}) };
-              delete nextScores[criterionId];
-              const nextDirect = { ...(g.directCriterionScores || {}) };
-              delete nextDirect[criterionId];
-              return {
-                ...g,
-                criterionScores: nextScores,
-                directCriterionScores: nextDirect,
-              };
-            });
-            onUpdateSession({
-              ...activeSession,
-              groups: updatedGroups,
-              undoHistory,
-            });
+            const result = evaluateGroupAndTransferToMembers(
+              activeSession,
+              selectedGroupId,
+              (g) => {
+                const nextScores = { ...(g.criterionScores || {}) };
+                delete nextScores[criterionId];
+                const nextDirect = { ...(g.directCriterionScores || {}) };
+                delete nextDirect[criterionId];
+                return {
+                  ...g,
+                  criterionScores: nextScores,
+                  directCriterionScores: nextDirect,
+                };
+              },
+              {
+                rubric: activeRubric,
+                autoTransferToMembers: autoTransferGroupScores,
+                criterionId,
+                undoDescription: `${targetGroup?.name || 'Grup'} — ölçüt puanı temizlendi`,
+              }
+            );
+            onUpdateSession(result.updatedSession);
           }}
           onResetGroupScores={(groupId) => {
             const targetGroup = activeSession.groups.find(
               (g) => g.id === groupId
             );
-            const undoHistory = recordSessionUndoEntry(activeSession, {
-              scope: 'group',
+            const result = evaluateGroupAndTransferToMembers(
+              activeSession,
               groupId,
-              description: `${targetGroup?.name || 'Grup'} puanları sıfırlandı`,
-              previousEvaluations: activeSession.evaluations,
-              previousGroups: activeSession.groups,
-            });
-            const updatedGroups = activeSession.groups.map((g) =>
-              g.id === groupId
-                ? {
-                    ...g,
-                    criterionScores: {},
-                    directCriterionScores: {},
-                  }
-                : g
+              (g) => ({
+                ...g,
+                criterionScores: {},
+                directCriterionScores: {},
+              }),
+              {
+                rubric: activeRubric,
+                autoTransferToMembers: autoTransferGroupScores,
+                undoDescription: `${targetGroup?.name || 'Grup'} puanları sıfırlandı`,
+              }
             );
-            onUpdateSession({
-              ...activeSession,
-              groups: updatedGroups,
-              undoHistory,
-            });
+            onUpdateSession(result.updatedSession);
           }}
           onUpdateGroupNote={(note) => {
-            const updatedGroups = activeSession.groups.map((g) =>
-              g.id === selectedGroupId ? { ...g, groupNote: note } : g
+            const result = evaluateGroupAndTransferToMembers(
+              activeSession,
+              selectedGroupId,
+              (g) => ({ ...g, groupNote: note }),
+              {
+                rubric: activeRubric,
+                autoTransferToMembers: autoTransferGroupScores,
+              }
             );
-            onUpdateSession({
-              ...activeSession,
-              groups: updatedGroups,
-            });
+            onUpdateSession(result.updatedSession);
           }}
           onApplyGroupScoresToMembers={(group, options) => {
+            const eligibility = canApplyGroupScoresToMembers(
+              group,
+              activeRubric
+            );
+            if (!eligibility.allowed) {
+              setStatusAnnouncement(
+                eligibility.reason ||
+                  'Eksik grup değerlendirmesi üyelere uygulanamaz.'
+              );
+              return;
+            }
+
             const nowIso = new Date().toISOString();
             const undoHistory = recordSessionUndoEntry(activeSession, {
               scope: 'group',
               groupId: group.id,
-              description: `${group.name} puanları üyelere uygulandı`,
+              description: `${group.name} değerlendirmesi gruptaki öğrencilere aktarıldı`,
               previousEvaluations: activeSession.evaluations,
               previousGroups: activeSession.groups,
             });
             const updatedEvaluations = applyGroupScoresToMembers(
               activeSession.evaluations,
               group,
-              nowIso
+              nowIso,
+              activeRubric
             );
             const updatedGroups = activeSession.groups.map((g) =>
               g.id === group.id ? { ...g, lastAppliedAt: nowIso } : g
@@ -1491,10 +1522,35 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               }
             } else {
               setGroupAppliedFeedback(
-                `${group.name} puanları ${group.studentIds.length} öğrencinin ayrı grup hanesine uygulandı (bireysel puanlar korundu).`
+                `${group.name} grup değerlendirmesi (${grpCalc.finalScoreOutOf100 ?? 0}/100) gruptaki ${group.studentIds.length} öğrenciye aktarıldı.`
               );
               setTimeout(() => setGroupAppliedFeedback(null), 4000);
             }
+          }}
+          onTransferAllCompletedGroups={() => {
+            const res = transferAllCompletedGroupsToMembers(
+              activeSession,
+              activeRubric,
+              new Date().toISOString()
+            );
+            if (res.transferredGroupCount > 0) {
+              onUpdateSession(res.updatedSession);
+              setGroupAppliedFeedback(
+                `Tamamlanan ${res.transferredGroupCount} grubun değerlendirmesi toplam ${res.transferredStudentCount} öğrenciye aktarıldı.`
+              );
+              setTimeout(() => setGroupAppliedFeedback(null), 4000);
+            }
+          }}
+          autoTransferToMembers={autoTransferGroupScores}
+          onToggleAutoTransferToMembers={() =>
+            setAutoTransferGroupScores(!autoTransferGroupScores)
+          }
+          onInspectStudentInIndividualMode={(studentId) => {
+            setSelectedStudentId(studentId);
+            onUpdateSession({
+              ...activeSession,
+              mode: 'individual',
+            });
           }}
           groupAppliedFeedback={groupAppliedFeedback}
           lastAppliedGroupBanner={lastAppliedGroupBanner}
