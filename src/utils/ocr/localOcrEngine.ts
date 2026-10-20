@@ -475,13 +475,18 @@ const TURKISH_ROSTER_LEXICON = [
   'SIRA',
   'OKUL',
   'NO',
+  'NUMARA',
+  'NUMARASI',
   'ADI',
   'SOYADI',
+  'AD',
+  'SOYAD',
   'CİNSİYET',
   'CINSIYET',
   'ÖĞRENCİ',
   'SINIF',
   'ŞUBE',
+  'LİSTESİ',
   'AYŞE',
   'NUR',
   'ÇELİK',
@@ -529,7 +534,7 @@ const TURKISH_ROSTER_LEXICON = [
   'ECEM',
   'YAĞMUR',
   'IRMAK',
-  ' Eylül',
+  'EYLÜL',
   'ARSLAN',
   'DOĞAN',
   'KILIÇ',
@@ -566,7 +571,7 @@ const TURKISH_ROSTER_LEXICON = [
   'ADA',
   'KERİM',
   'SENA',
-  ' DİLARA',
+  'DİLARA',
   'BÜŞRA',
   'ENES',
   'FURKAN',
@@ -578,6 +583,227 @@ const TURKISH_ROSTER_LEXICON = [
   'SERKAN',
   'GÖKHAN',
   'SİNAN',
+  'İREM',
+  'BEYZA',
+  'ESRA',
+  'GAMZE',
+  'GİZEM',
+  'MELİS',
+  'MELİSA',
+  'CEREN',
+  'ASLI',
+  'DAMLA',
+  'SILA',
+  'NİSA',
+  'AZRA',
+  'NEHİR',
+  'ASYA',
+  'MİNA',
+  'ECRİN',
+  'RABİA',
+  'HİRA',
+  'MELEK',
+  'DERYA',
+  'ÖYKÜ',
+  'PELİN',
+  'TUĞBA',
+  'BETÜL',
+  'ŞEYMA',
+  'KÜBRA',
+  'YASEMİN',
+  'PINAR',
+  'SEDA',
+  'ÖZGE',
+  'CANSU',
+  'EZGİ',
+  'BAHAR',
+  'YAREN',
+  'ALEYNA',
+  'İLAYDA',
+  'TUANA',
+  'CEMRE',
+  'KADİR',
+  'MURAT',
+  'ORHAN',
+  'OSMAN',
+  'RAMAZAN',
+  'SALİH',
+  'SAMET',
+  'SELİM',
+  'SEMİH',
+  'SERDAR',
+  'SÜLEYMAN',
+  'TARIK',
+  'TUNA',
+  'UFUK',
+  'UĞUR',
+  'VOLKAN',
+  'YASİN',
+  'YUNUS',
+  'ZAFER',
+  'ADEM',
+  'ALPER',
+  'ALPEREN',
+  'ARDA',
+  'ATAKAN',
+  'BATUHAN',
+  'BERKAY',
+  'BİLAL',
+  'BORA',
+  'BUĞRA',
+  'CEM',
+  'CİHAN',
+  'ÇAĞRI',
+  'ÇINAR',
+  'DOĞUKAN',
+  'DORUK',
+  'EFE',
+  'EGEMEN',
+  'EKİN',
+  'EMİR',
+  'EREN',
+  'ERKAN',
+  'FATİH',
+  'FERHAT',
+  'GÖKTUĞ',
+  'GÖRKEM',
+  'HALİL',
+  'HAMZA',
+  'HARUN',
+  'HAKAN',
+  'İSMAİL',
+  'KIVANÇ',
+  'KORAY',
+  'LEVENT',
+  'MAHMUT',
+  'MELİH',
+  'METE',
+  'METEHAN',
+  'MUHAMMED',
+  'MUHAMMET',
+  'MUSA',
+  'OĞUZ',
+  'OĞUZHAN',
+  'OKAN',
+  'ÖZGÜR',
+  'POYRAZ',
+  'RECEP',
+  'RÜZGAR',
+  'SARP',
+  'SEFA',
+  'SERHAT',
+  'TAHA',
+  'TOPRAK',
+  'UTKU',
+  'YAĞIZ',
+  'AKIN',
+  'ALKAN',
+  'ALTUN',
+  'ARI',
+  'ATALAY',
+  'AYAZ',
+  'AYDOĞAN',
+  'BAKIR',
+  'BALCI',
+  'BARAN',
+  'BAŞARAN',
+  'BAYRAM',
+  'BAYRAKTAR',
+  'BEKTAŞ',
+  'BİLGİN',
+  'BULUT',
+  'CENGİZ',
+  'CEYLAN',
+  'COŞKUN',
+  'ÇALIŞKAN',
+  'ÇAM',
+  'ÇİFTÇİ',
+  'ÇOBAN',
+  'DAĞ',
+  'DEMİRCİ',
+  'DEMİREL',
+  'DİNÇ',
+  'DUMAN',
+  'DURAN',
+  'DURMUŞ',
+  'DURSUN',
+  'EKİNCİ',
+  'ERCAN',
+  'ERGÜN',
+  'EROĞLU',
+  'ERSOY',
+  'ERTÜRK',
+  'ESEN',
+  'FİDAN',
+  'GENÇ',
+  'GÖK',
+  'GÖKÇE',
+  'GÜL',
+  'GÜMÜŞ',
+  'GÜNDÜZ',
+  'GÜNGÖR',
+  'GÜRBÜZ',
+  'GÜRSOY',
+  'IŞIK',
+  'İNAN',
+  'İNCE',
+  'İPEK',
+  'KAHRAMAN',
+  'KALKAN',
+  'KAPLAN',
+  'KARACA',
+  'KARADAĞ',
+  'KARADENİZ',
+  'KARAGÖZ',
+  'KARAKAŞ',
+  'KARAKAYA',
+  'KARAMAN',
+  'KARATAŞ',
+  'KARTAL',
+  'KOÇAK',
+  'KÖSE',
+  'KUTLU',
+  'KÜÇÜK',
+  'MUTLU',
+  'ÖZEN',
+  'ÖZER',
+  'ÖZCAN',
+  'ÖZÇELİK',
+  'PEKER',
+  'SAĞLAM',
+  'SARI',
+  'SARIKAYA',
+  'SEZER',
+  'SÖNMEZ',
+  'ŞEN',
+  'ŞENER',
+  'ŞENGÜL',
+  'ŞENTÜRK',
+  'TAŞ',
+  'TAŞKIN',
+  'TEMEL',
+  'TOPAL',
+  'TOPÇU',
+  'TOSUN',
+  'TUNCER',
+  'TUNÇ',
+  'TURAN',
+  'TURGUT',
+  'TÜRK',
+  'UÇAR',
+  'ULUSOY',
+  'USLU',
+  'UYSAL',
+  'UZUN',
+  'ÜNLÜ',
+  'VAROL',
+  'VURAL',
+  'YALÇIN',
+  'YAMAN',
+  'YILDIRIM',
+  'YÜCEL',
+  'YÜKSEL',
+  'ZENGİN',
 ];
 
 function normalizeBinaryPatchToGrid(
@@ -700,77 +926,98 @@ function buildBuiltinTemplates(): GlyphTemplate[] {
     }
   }
 
-  // In browser environments, also build templates from native Canvas font rendering
-  if (typeof document !== 'undefined') {
-    try {
+  // In browser or Web Worker environments, also build templates from native Canvas / OffscreenCanvas font rendering
+  try {
+    let ctx:
+      | CanvasRenderingContext2D
+      | OffscreenCanvasRenderingContext2D
+      | null = null;
+    if (typeof document !== 'undefined') {
       const canvas = document.createElement('canvas');
       canvas.width = 64;
       canvas.height = 64;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (ctx) {
-        const chars =
-          '0123456789ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZabcçdefgğhıijklmnoöprsştuüvyz';
-        const fonts = [
-          'bold 34px sans-serif',
-          '500 34px sans-serif',
-          '34px Arial, sans-serif',
-        ];
-        for (const fontSpec of fonts) {
-          for (const ch of chars) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, 64, 64);
-            ctx.fillStyle = '#000000';
-            ctx.font = fontSpec;
-            ctx.textBaseline = 'top';
-            ctx.fillText(ch, 10, 8);
-            const imgData = ctx.getImageData(0, 0, 64, 64).data;
-            const mask = new Uint8Array(64 * 64);
-            let minX = 64;
-            let minY = 64;
-            let maxX = -1;
-            let maxY = -1;
-            for (let y = 0; y < 64; y++) {
-              for (let x = 0; x < 64; x++) {
-                const lum = imgData[(y * 64 + x) * 4];
-                if (lum < 160) {
-                  mask[y * 64 + x] = 1;
-                  if (x < minX) minX = x;
-                  if (y < minY) minY = y;
-                  if (x > maxX) maxX = x;
-                  if (y > maxY) maxY = y;
-                }
+      ctx = canvas.getContext('2d', { willReadFrequently: true });
+    } else if (typeof OffscreenCanvas !== 'undefined') {
+      const offscreen = new OffscreenCanvas(64, 64);
+      ctx = offscreen.getContext('2d', {
+        willReadFrequently: true,
+      }) as OffscreenCanvasRenderingContext2D | null;
+    }
+
+    if (ctx) {
+      const chars =
+        '0123456789ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZabcçdefgğhıijklmnoöprsştuüvyz';
+      const fonts = [
+        'bold 34px sans-serif',
+        '500 34px sans-serif',
+        '34px Arial, Helvetica, sans-serif',
+        '34px "Times New Roman", Georgia, serif',
+      ];
+      for (const fontSpec of fonts) {
+        for (const ch of chars) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, 64, 64);
+          ctx.fillStyle = '#000000';
+          ctx.font = fontSpec;
+          ctx.textBaseline = 'top';
+          ctx.fillText(ch, 10, 8);
+          const imgData = ctx.getImageData(0, 0, 64, 64).data;
+          const mask = new Uint8Array(64 * 64);
+          let minX = 64;
+          let minY = 64;
+          let maxX = -1;
+          let maxY = -1;
+          for (let y = 0; y < 64; y++) {
+            for (let x = 0; x < 64; x++) {
+              const lum = imgData[(y * 64 + x) * 4];
+              if (lum < 160) {
+                mask[y * 64 + x] = 1;
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
               }
             }
-            if (maxX >= minX && maxY >= minY) {
-              const grid = normalizeBinaryPatchToGrid(
-                mask,
-                64,
-                minX,
-                minY,
-                maxX,
-                maxY
-              );
-              const upper = ch.toLocaleUpperCase('tr-TR');
-              templates.push({
-                char: upper,
-                isDigit: /^[0-9]$/.test(ch),
-                isUpper: ch === upper && !/^[0-9]$/.test(ch),
-                isLower: ch !== upper,
-                hasTopDiacritic: ['Ğ', 'İ', 'Ö', 'Ü', 'ğ', 'i', 'ö', 'ü'].includes(
-                  ch
-                ),
-                hasBottomDiacritic: ['Ç', 'Ş', 'ç', 'ş'].includes(ch),
-                aspectRatio: (maxX - minX + 1) / Math.max(1, maxY - minY + 1),
-                grid,
-                smoothGrid: smoothGrid16x24(grid),
-              });
-            }
+          }
+          if (maxX >= minX && maxY >= minY) {
+            const grid = normalizeBinaryPatchToGrid(
+              mask,
+              64,
+              minX,
+              minY,
+              maxX,
+              maxY
+            );
+            const upper = ch
+              .replace(/i/g, 'İ')
+              .replace(/ı/g, 'I')
+              .toLocaleUpperCase('tr-TR');
+            templates.push({
+              char: upper,
+              isDigit: /^[0-9]$/.test(ch),
+              isUpper: ch === upper && !/^[0-9]$/.test(ch),
+              isLower: ch !== upper,
+              hasTopDiacritic: [
+                'Ğ',
+                'İ',
+                'Ö',
+                'Ü',
+                'ğ',
+                'i',
+                'ö',
+                'ü',
+              ].includes(ch),
+              hasBottomDiacritic: ['Ç', 'Ş', 'ç', 'ş'].includes(ch),
+              aspectRatio: (maxX - minX + 1) / Math.max(1, maxY - minY + 1),
+              grid,
+              smoothGrid: smoothGrid16x24(grid),
+            });
           }
         }
       }
-    } catch {
-      // Ignore canvas creation errors in restricted environments
     }
+  } catch {
+    // Ignore canvas creation errors in restricted environments
   }
 
   return templates;
@@ -1237,6 +1484,19 @@ export function segmentWordsFromBinaryMask(
   const maxCharSpanX = Math.max(28, Math.floor(width * 0.16));
   const maxCharSpanY = Math.max(36, Math.floor(height * 0.22));
 
+  // Clear outer 1.5% camera border edge noise
+  const edgeMarginX = Math.min(8, Math.floor(width * 0.015));
+  const edgeMarginY = Math.min(8, Math.floor(height * 0.015));
+  for (let y = 0; y < height; y++) {
+    const rOff = y * width;
+    if (y < edgeMarginY || y >= height - edgeMarginY) {
+      for (let x = 0; x < width; x++) mask[rOff + x] = 0;
+    } else {
+      for (let x = 0; x < edgeMarginX; x++) mask[rOff + x] = 0;
+      for (let x = width - edgeMarginX; x < width; x++) mask[rOff + x] = 0;
+    }
+  }
+
   // Clear horizontal runs wider than maxCharSpanX
   for (let y = 0; y < height; y++) {
     const rOff = y * width;
@@ -1296,7 +1556,12 @@ export function segmentWordsFromBinaryMask(
         cnt++;
       }
     }
-    rowCounts[y] = cnt;
+    // Suppress residual full-width horizontal table rules
+    if (cnt > width * 0.42) {
+      rowCounts[y] = 0;
+    } else {
+      rowCounts[y] = cnt;
+    }
   }
 
   // Bridge small vertical gaps (<= 4px) so top dots/umlauts on İ, Ö, Ü, Ğ and bottom cedillas on Ç, Ş stay attached to the line
@@ -1320,7 +1585,7 @@ export function segmentWordsFromBinaryMask(
     }
   }
 
-  const lineBands: { y0: number; y1: number }[] = [];
+  const rawLineBands: { y0: number; y1: number }[] = [];
   let lineStart = -1;
   for (let y = 0; y <= height; y++) {
     const on = y < height ? activeY[y] : 0;
@@ -1329,9 +1594,44 @@ export function segmentWordsFromBinaryMask(
     } else if (!on && lineStart !== -1) {
       const h = y - lineStart;
       if (h >= 7) {
-        lineBands.push({ y0: lineStart, y1: y - 1 });
+        rawLineBands.push({ y0: lineStart, y1: y - 1 });
       }
       lineStart = -1;
+    }
+  }
+
+  // Split any overly tall lineBand (where residual vertical borders connected multiple rows) at local minima
+  const lineBands: { y0: number; y1: number }[] = [];
+  const maxSingleLineBandH = Math.max(72, Math.floor(height * 0.24));
+  for (const band of rawLineBands) {
+    const bh = band.y1 - band.y0 + 1;
+    if (bh <= maxSingleLineBandH) {
+      lineBands.push(band);
+    } else {
+      const numSubLines = Math.max(2, Math.round(bh / 34));
+      let curY0 = band.y0;
+      for (let s = 1; s < numSubLines; s++) {
+        const idealY = band.y0 + Math.round((s * bh) / numSubLines);
+        let bestY = idealY;
+        let minVal = Infinity;
+        for (
+          let y = Math.max(curY0 + 12, idealY - 10);
+          y <= Math.min(band.y1 - 12, idealY + 10);
+          y++
+        ) {
+          if (rowCounts[y] < minVal) {
+            minVal = rowCounts[y];
+            bestY = y;
+          }
+        }
+        if (bestY - curY0 >= 7) {
+          lineBands.push({ y0: curY0, y1: bestY - 1 });
+        }
+        curY0 = bestY + 1;
+      }
+      if (band.y1 - curY0 + 1 >= 7) {
+        lineBands.push({ y0: curY0, y1: band.y1 });
+      }
     }
   }
 

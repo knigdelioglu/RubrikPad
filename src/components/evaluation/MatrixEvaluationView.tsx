@@ -1,7 +1,8 @@
 import React from 'react';
-import { ArrowLeft, Check, Undo2, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, FileDown, Undo2, Zap } from 'lucide-react';
 import type { EvaluationSession, Rubric, Student } from '../../types.ts';
 import {
+  getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
   isScoreAssigned,
 } from '../../utils/rubricLogic.ts';
@@ -25,6 +26,9 @@ interface MatrixEvaluationViewProps {
     onlyUnscored: boolean
   ) => void;
   onUndoLastAction: () => void;
+  onExportPdf?: () => void;
+  allSessions?: EvaluationSession[];
+  rubricsById?: Record<string, Rubric>;
 }
 
 export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
@@ -38,7 +42,16 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
   onSetStudentCriterionScore,
   onBulkAssignCriterion,
   onUndoLastAction,
+  onExportPdf,
+  allSessions,
+  rubricsById,
 }) => {
+  const effectiveSessions =
+    allSessions && allSessions.length > 0 ? allSessions : [activeSession];
+  const effectiveRubricsMap =
+    rubricsById && Object.keys(rubricsById).length > 0
+      ? rubricsById
+      : { [activeRubric.id]: activeRubric };
   const safeCriterionIdx = Math.min(
     activeCriterionIndex,
     Math.max(0, activeRubric.criteria.length - 1)
@@ -105,6 +118,18 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
               <Undo2 className="w-3.5 h-3.5" />
               Geri Al {undoCount > 0 ? `(${undoCount})` : ''}
             </button>
+
+            {onExportPdf && (
+              <button
+                type="button"
+                onClick={onExportPdf}
+                data-testid="download-active-session-pdf-btn"
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                PDF İndir
+              </button>
+            )}
           </div>
         </div>
 
@@ -179,6 +204,26 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                           </span>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
+                          {getStudentConsecutiveLowScoreReminder(
+                            stu.id,
+                            activeSession,
+                            effectiveSessions,
+                            effectiveRubricsMap
+                          ).shouldRemind && (
+                            <span
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectCell(stu.id, safeCriterionIdx);
+                                onBackToFastCards();
+                              }}
+                              data-testid="low-score-observation-reminder"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-950 border border-amber-300 cursor-pointer"
+                              title="Üst üste 3 değerlendirmede düşük puan (1 veya 2) — Gözlem notu ekle"
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5 text-amber-700" />
+                              Gözlem notu ekle
+                            </span>
+                          )}
                           {activeSource === 'group' &&
                             calc.completedCriteriaCount > 0 && (
                               <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">

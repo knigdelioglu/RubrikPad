@@ -36,6 +36,7 @@ import {
   shouldTriggerAutoAdvance,
   getGroupLifecycleStatus,
   getStudentProgressHistory,
+  getStudentConsecutiveLowScoreReminder,
   sanitizeCsvFormulaInjection,
   generateSessionCsv,
 } from './rubricLogic.ts';
@@ -2027,10 +2028,12 @@ test('Audit #17: evaluateGroupAndTransferToMembers and transferAllCompletedGroup
   const baseSession: EvaluationSession = {
     id: 'sess-grp-transfer',
     title: 'Proje Grup Değerlendirmesi',
-    classroomId: 'cls-1',
+    classId: 'cls-1',
     rubricId: sampleRubric.id,
     rubricSnapshot: freezeRubricSnapshot(sampleRubric),
     mode: 'group',
+    status: 'in_progress',
+    generalSessionNote: '',
     date: '2026-10-19',
     evaluations: {
       // s1 has an older individual evaluation that should be preserved in history while group score becomes active
@@ -2156,6 +2159,7 @@ test('Audit #18.1 (P0): Original initial-v3 rpk- checksum algorithm (Turn 1 summ
         mode: 'group' as const,
         date: '2026-10-19',
         status: 'completed' as const,
+        generalSessionNote: '',
         evaluations: {
           'stu-1': {
             studentId: 'stu-1',
@@ -2171,6 +2175,7 @@ test('Audit #18.1 (P0): Original initial-v3 rpk- checksum algorithm (Turn 1 summ
             name: 'Grup 1',
             studentIds: ['stu-1'],
             criterionScores: { c1: 4, c2: 3 },
+            groupNote: '',
           },
         ],
       },
@@ -2405,5 +2410,111 @@ test('Audit #18.3 (P1 & P2): AndroidManifest disables auto-backup for KVKK stude
     'vite.config.ts must not expose GEMINI_API_KEY'
   );
 });
+
+test('Audit #19: getStudentConsecutiveLowScoreReminder triggers "Gözlem notu ekle" after 3 consecutive low scores (1 or 2) across criteria or sessions', () => {
+  const fourCriteriaRubric: Rubric = {
+    ...sampleRubric,
+    id: 'rub-4c',
+    criteria: [
+      { ...sampleRubric.criteria[0], id: 'c1', weight: 25 },
+      { ...sampleRubric.criteria[1], id: 'c2', weight: 25 },
+      { ...sampleRubric.criteria[0], id: 'c3', weight: 25 },
+      { ...sampleRubric.criteria[1], id: 'c4', weight: 25 },
+    ],
+  };
+
+  const sessionWith3LowCriteria: EvaluationSession = {
+    id: 'ses-low-crit',
+    title: 'Deney Değerlendirmesi',
+    date: '2026-10-20',
+    classId: 'cls-1',
+    rubricId: 'rub-4c',
+    rubricSnapshot: fourCriteriaRubric,
+    mode: 'individual',
+    status: 'in_progress',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      'stu-1': {
+        studentId: 'stu-1',
+        criterionScores: { c1: 2, c2: 1, c3: 2, c4: 4 },
+        note: '',
+        tags: [],
+        updatedAt: '2026-10-20T10:00:00Z',
+      },
+      'stu-2': {
+        studentId: 'stu-2',
+        criterionScores: { c1: 2, c2: 3, c3: 1, c4: 2 },
+        note: '',
+        tags: [],
+        updatedAt: '2026-10-20T10:00:00Z',
+      },
+    },
+  };
+
+  // stu-1 has 3 consecutive low criteria (2, 1, 2) -> shouldRemind = true
+  const reminderStu1 = getStudentConsecutiveLowScoreReminder(
+    'stu-1',
+    sessionWith3LowCriteria,
+    [sessionWith3LowCriteria],
+    { 'rub-4c': fourCriteriaRubric }
+  );
+  assert.equal(reminderStu1.shouldRemind, true);
+  assert.equal(reminderStu1.reminderLabel, 'Gözlem notu ekle');
+  assert.equal(reminderStu1.consecutiveCount, 3);
+  assert.equal(reminderStu1.triggerType, 'consecutive_criteria');
+
+  // stu-2 has low scores broken by level 3 (2, 3, 1, 2 -> max streak 2) -> shouldRemind = false
+  const reminderStu2 = getStudentConsecutiveLowScoreReminder(
+    'stu-2',
+    sessionWith3LowCriteria,
+    [sessionWith3LowCriteria],
+    { 'rub-4c': fourCriteriaRubric }
+  );
+  assert.equal(reminderStu2.shouldRemind, false);
+
+  // Test 3 consecutive sessions with low scores (1 or 2)
+  const makeSession = (
+    id: string,
+    date: string,
+    scores: Record<string, number>
+  ): EvaluationSession => ({
+    id,
+    title: `Oturum ${id}`,
+    date,
+    classId: 'cls-1',
+    rubricId: sampleRubric.id,
+    rubricSnapshot: sampleRubric,
+    mode: 'individual',
+    status: 'completed',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      'stu-3': {
+        studentId: 'stu-3',
+        criterionScores: scores,
+        note: '',
+        tags: [],
+        updatedAt: `${date}T10:00:00Z`,
+      },
+    },
+  });
+
+  const s1 = makeSession('s1', '2026-10-01', { c1: 1, c2: 2 });
+  const s2 = makeSession('s2', '2026-10-08', { c1: 2, c2: 2 });
+  const s3 = makeSession('s3', '2026-10-15', { c1: 1, c2: 1 });
+
+  const reminderStu3 = getStudentConsecutiveLowScoreReminder(
+    'stu-3',
+    s3,
+    [s1, s2, s3],
+    { [sampleRubric.id]: sampleRubric }
+  );
+  assert.equal(reminderStu3.shouldRemind, true);
+  assert.equal(reminderStu3.reminderLabel, 'Gözlem notu ekle');
+  assert.equal(reminderStu3.consecutiveCount, 3);
+  assert.equal(reminderStu3.triggerType, 'consecutive_sessions');
+});
+
 
 

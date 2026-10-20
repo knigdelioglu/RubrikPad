@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { OcrWordToken } from './ocrTypes.ts';
 import {
+  analyzeLiveScanFrameReadiness,
   applyPerspectiveHomography,
+  cropGrayImageRegion,
   downscaleGrayImageBilinear,
   MAX_OCR_FILE_SIZE_BYTES,
   MAX_OCR_IMAGE_DIMENSION_PX,
@@ -416,5 +418,52 @@ test('OCR #9: Oversized camera photos are bounded by validateAndPlanOcrImageDime
   assert.equal(asyncResult.verifiedRows[1].studentNumber, '246');
   assert.ok((asyncResult.performanceMetrics.downscaleFactor ?? 1) < 1);
 });
+
+test('OCR #10: Live camera scanner readiness analyzer and real-photo border frame / combined column resilience', async () => {
+  const cameraSample = createRealisticCameraSampleGrayImage();
+  const readiness = analyzeLiveScanFrameReadiness(cameraSample);
+
+  assert.equal(readiness.isReadyToScan, true);
+  assert.ok(readiness.contrastScore >= 28);
+  assert.ok(readiness.sharpnessScore >= 20);
+  assert.ok(readiness.estimatedRowCount >= 3);
+
+  const cropped = cropGrayImageRegion(
+    cameraSample,
+    10,
+    10,
+    cameraSample.width - 20,
+    cameraSample.height - 20
+  );
+  assert.equal(cropped.width, cameraSample.width - 20);
+  assert.equal(cropped.height, cameraSample.height - 20);
+
+  // Simulate a photo with dark desk/border margins along the left and right edges
+  const withDarkMargins = {
+    width: cameraSample.width,
+    height: cameraSample.height,
+    data: new Uint8Array(cameraSample.data),
+  };
+  for (let y = 0; y < withDarkMargins.height; y++) {
+    for (let x = 0; x < 6; x++) {
+      withDarkMargins.data[y * withDarkMargins.width + x] = 15;
+      withDarkMargins.data[
+        y * withDarkMargins.width + (withDarkMargins.width - 1 - x)
+      ] = 15;
+    }
+  }
+
+  const pipelineRes = await runLocalRosterOcrPipelineAsync(withDarkMargins, []);
+  assert.equal(
+    pipelineRes.verifiedRows.length,
+    4,
+    `Expected all 4 extracted rows from bordered camera photo, got ${pipelineRes.verifiedRows.length}`
+  );
+  assert.equal(pipelineRes.verifiedRows[0].studentNumber, '245');
+  assert.equal(pipelineRes.verifiedRows[0].firstName, 'AYŞE NUR');
+  assert.equal(pipelineRes.verifiedRows[0].lastName, 'ÇELİK');
+  assert.equal(pipelineRes.verifiedRows[3].studentNumber, '248');
+});
+
 
 

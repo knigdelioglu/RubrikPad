@@ -339,8 +339,8 @@ export function applyIndividualCriterionEdit(
   timestampIso = new Date().toISOString()
 ): {
   updatedEvaluation: StudentEvaluation;
-  prevCalc: ScoreCalculationResult;
-  newCalc: ScoreCalculationResult;
+  prevCalc: ReturnType<typeof getStudentEvaluationBreakdown>['effectiveCalc'];
+  newCalc: ReturnType<typeof getStudentEvaluationBreakdown>['effectiveCalc'];
   transitionedFromGroup: boolean;
 } {
   const breakdown = getStudentEvaluationBreakdown(rubric, existing);
@@ -2078,6 +2078,198 @@ export function getStudentProgressHistory(
   }
 
   return history;
+}
+
+export interface ConsecutiveLowScoreReminder {
+  shouldRemind: boolean;
+  consecutiveCount: number;
+  triggerType: 'consecutive_criteria' | 'consecutive_sessions' | null;
+  reminderLabel: 'Gözlem notu ekle';
+  message: string;
+  hasObservationNote: boolean;
+}
+
+/**
+ * Checks whether a student has received a low score (level 1 or 2, or direct score <= 50% of maxPoints)
+ * in 3 consecutive evaluations — either across 3 consecutive criteria in the active evaluation
+ * OR across 3 consecutive evaluation sessions — and returns a 'Gözlem notu ekle' reminder state.
+ */
+export function getStudentConsecutiveLowScoreReminder(
+  studentId: string,
+  activeSession: EvaluationSession | null | undefined,
+  allSessions: EvaluationSession[],
+  rubricsById: Record<string, Rubric>
+): ConsecutiveLowScoreReminder {
+  const defaultResult: ConsecutiveLowScoreReminder = {
+    shouldRemind: false,
+    consecutiveCount: 0,
+    triggerType: null,
+    reminderLabel: 'Gözlem notu ekle',
+    message: '',
+    hasObservationNote: false,
+  };
+
+  if (!studentId || !activeSession) {
+    return defaultResult;
+  }
+
+  const currentEval = activeSession.evaluations?.[studentId];
+  const hasObservationNote = Boolean(
+    (currentEval?.note && currentEval.note.trim().length > 0) ||
+      (currentEval?.groupNote && currentEval.groupNote.trim().length > 0)
+  );
+
+  const isLowCriterionScore = (
+    criterion: RubricCriterion,
+    levelScore: number | null | undefined,
+    directScore: number | null | undefined
+  ): 'low' | 'high_or_zero' | 'unscored' => {
+    if (isScoreAssigned(directScore)) {
+      const maxDirect = criterion.maxPoints ?? criterion.weight;
+      if (directScore === 1 || directScore === 2) return 'low';
+      if (directScore > 0 && maxDirect > 0 && directScore / maxDirect <= 0.5) {
+        return 'low';
+      }
+      return 'high_or_zero';
+    }
+    if (isScoreAssigned(levelScore)) {
+      if (levelScore === 1 || levelScore === 2) {
+        return 'low';
+      }
+      return 'high_or_zero';
+    }
+    return 'unscored';
+  };
+
+  // 1. Check 3 consecutive criteria with low scores (1 or 2) in the active session
+  const activeRubric = getEffectiveSessionRubric(activeSession, rubricsById);
+  let maxCriteriaStreak = 0;
+  let currentCriteriaStreak = 0;
+
+  if (activeRubric && currentEval) {
+    const breakdown = getStudentEvaluationBreakdown(activeRubric, currentEval);
+    const activeScores =
+      breakdown.activeSource === 'group'
+        ? currentEval.groupCriterionScores || {}
+        : currentEval.criterionScores || {};
+    const activeDirect =
+      breakdown.activeSource === 'group'
+        ? currentEval.groupDirectScores || {}
+        : currentEval.directCriterionScores || {};
+
+    for (const crit of activeRubric.criteria) {
+      const status = isLowCriterionScore(
+        crit,
+        activeScores[crit.id],
+        activeDirect[crit.id]
+      );
+      if (status === 'low') {
+        currentCriteriaStreak += 1;
+        if (currentCriteriaStreak > maxCriteriaStreak) {
+          maxCriteriaStreak = currentCriteriaStreak;
+        }
+      } else if (status === 'high_or_zero') {
+        currentCriteriaStreak = 0;
+      }
+    }
+  }
+
+  // 2. Check 3 consecutive evaluation sessions where the student received low scores (1 or 2)
+  const mergedSessions = [
+    ...allSessions.filter((s) => s.id !== activeSession.id),
+    activeSession,
+  ].sort((a, b) => a.date.localeCompare(b.date));
+
+  let maxSessionStreak = 0;
+  let currentSessionStreak = 0;
+
+  for (const ses of mergedSessions) {
+    const ev = ses.evaluations?.[studentId];
+    const rub = getEffectiveSessionRubric(ses, rubricsById);
+    if (!ev || !rub) continue;
+
+    const { effectiveCalc, activeSource } = getStudentEvaluationBreakdown(
+      rub,
+      ev
+    );
+    if (effectiveCalc.completedCriteriaCount === 0) continue;
+
+    const activeScores =
+      activeSource === 'group'
+        ? ev.groupCriterionScores || {}
+        : ev.criterionScores || {};
+    const activeDirect =
+      activeSource === 'group'
+        ? ev.groupDirectScores || {}
+        : ev.directCriterionScores || {};
+
+    let lowCount = 0;
+    let scoredCount = 0;
+    let sumLevels = 0;
+
+    for (const crit of rub.criteria) {
+      const st = isLowCriterionScore(
+        crit,
+        activeScores[crit.id],
+        activeDirect[crit.id]
+      );
+      if (st !== 'unscored') {
+        scoredCount += 1;
+        if (st === 'low') {
+          lowCount += 1;
+          sumLevels += isScoreAssigned(activeScores[crit.id])
+            ? (activeScores[crit.id] as number)
+            : 1.5;
+        } else {
+          const pts = isScoreAssigned(activeScores[crit.id])
+            ? (activeScores[crit.id] as number)
+            : 3;
+          sumLevels += pts;
+        }
+      }
+    }
+
+    const avgLevel = scoredCount > 0 ? sumLevels / scoredCount : 0;
+    const isLowSession =
+      scoredCount > 0 &&
+      (lowCount === scoredCount ||
+        (lowCount >= 1 && avgLevel >= 1 && avgLevel <= 2.25) ||
+        (effectiveCalc.provisionalScoreOutOf100 > 0 &&
+          effectiveCalc.provisionalScoreOutOf100 <= 50));
+
+    if (isLowSession) {
+      currentSessionStreak += 1;
+      if (currentSessionStreak > maxSessionStreak) {
+        maxSessionStreak = currentSessionStreak;
+      }
+    } else {
+      currentSessionStreak = 0;
+    }
+  }
+
+  if (maxCriteriaStreak >= 3) {
+    return {
+      shouldRemind: true,
+      consecutiveCount: maxCriteriaStreak,
+      triggerType: 'consecutive_criteria',
+      reminderLabel: 'Gözlem notu ekle',
+      message: `Üst üste ${maxCriteriaStreak} değerlendirmede düşük puan (1 veya 2) verildi`,
+      hasObservationNote,
+    };
+  }
+
+  if (maxSessionStreak >= 3) {
+    return {
+      shouldRemind: true,
+      consecutiveCount: maxSessionStreak,
+      triggerType: 'consecutive_sessions',
+      reminderLabel: 'Gözlem notu ekle',
+      message: `Üst üste ${maxSessionStreak} değerlendirme oturumunda düşük puan (1 veya 2) alındı`,
+      hasObservationNote,
+    };
+  }
+
+  return defaultResult;
 }
 
 /**

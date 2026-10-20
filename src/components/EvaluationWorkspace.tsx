@@ -765,6 +765,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             });
           }}
           onUndoLastAction={handleUndoLastAction}
+          onExportPdf={handleExportPdf}
+          allSessions={sessions}
+          rubricsById={rubricsById}
         />
       );
     }
@@ -802,6 +805,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         onCreateNewSessionWithRubric={handleCreateNewSessionWithRubric}
         onConfirmResetAndChangeRubric={handleConfirmResetAndChangeRubric}
         onCancelRubricChange={() => setPendingRubricChange(null)}
+        onExportPdf={handleExportPdf}
+        allSessions={sessions}
+        rubricsById={rubricsById}
       />
     );
   }
@@ -922,6 +928,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             <button
               type="button"
               onClick={handleExportPdf}
+              data-testid="download-active-session-pdf-btn"
+              title="Aktif oturum sonuçlarını yapılandırılmış bir tablo halinde PDF olarak indir"
               className="px-3 py-1.5 text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 flex items-center gap-1.5 cursor-pointer"
             >
               <FileDown className="w-3.5 h-3.5" />
@@ -1248,6 +1256,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           justCompletedBanner={justCompletedBanner}
           onDismissBanner={() => setJustCompletedBanner(null)}
           onUndoLastAction={handleUndoLastAction}
+          allSessions={sessions}
+          rubricsById={rubricsById}
         />
       )}
 

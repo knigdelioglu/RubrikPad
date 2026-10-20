@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   CheckCircle2,
@@ -21,7 +22,10 @@ import type {
   Student,
 } from '../../types.ts';
 import { QUICK_OBSERVATION_TAGS } from '../../data/seedData.ts';
-import { getStudentEvaluationBreakdown } from '../../utils/rubricLogic.ts';
+import {
+  getStudentConsecutiveLowScoreReminder,
+  getStudentEvaluationBreakdown,
+} from '../../utils/rubricLogic.ts';
 import {
   RubricCriterionCard,
   RubricViewModeToggle,
@@ -73,6 +77,8 @@ interface IndividualEvaluationViewProps {
   } | null;
   onDismissBanner: () => void;
   onUndoLastAction?: () => void;
+  allSessions?: EvaluationSession[];
+  rubricsById?: Record<string, Rubric>;
 }
 
 export const IndividualEvaluationView: React.FC<
@@ -102,14 +108,52 @@ export const IndividualEvaluationView: React.FC<
   justCompletedBanner,
   onDismissBanner,
   onUndoLastAction,
+  allSessions,
+  rubricsById,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showPortraitRosterDrawer, setShowPortraitRosterDrawer] =
     useState(false);
 
+  const effectiveSessions = useMemo(
+    () => (allSessions && allSessions.length > 0 ? allSessions : [activeSession]),
+    [allSessions, activeSession]
+  );
+
+  const effectiveRubricsMap = useMemo(
+    () =>
+      rubricsById && Object.keys(rubricsById).length > 0
+        ? rubricsById
+        : { [activeRubric.id]: activeRubric },
+    [rubricsById, activeRubric]
+  );
+
   const currentStudentEval = selectedStudent
     ? activeSession.evaluations[selectedStudent.id]
     : undefined;
+
+  const activeLowScoreReminder = useMemo(
+    () =>
+      selectedStudent
+        ? getStudentConsecutiveLowScoreReminder(
+            selectedStudent.id,
+            activeSession,
+            effectiveSessions,
+            effectiveRubricsMap
+          )
+        : null,
+    [selectedStudent, activeSession, effectiveSessions, effectiveRubricsMap]
+  );
+
+  const focusObservationNoteInput = () => {
+    const el = document.getElementById(
+      'student-obs-note'
+    ) as HTMLTextAreaElement | null;
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus();
+    }
+  };
 
   const breakdown = getStudentEvaluationBreakdown(
     activeRubric,
@@ -349,7 +393,7 @@ export const IndividualEvaluationView: React.FC<
                             {stu.fullName}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500">
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[11px] text-slate-500">
                           <span>
                             {calc.completedCriteriaCount}/
                             {calc.totalCriteriaCount} ölçüt
@@ -363,6 +407,20 @@ export const IndividualEvaluationView: React.FC<
                                 Bireysel + Grup
                               </span>
                             )}
+                          {getStudentConsecutiveLowScoreReminder(
+                            stu.id,
+                            activeSession,
+                            effectiveSessions,
+                            effectiveRubricsMap
+                          ).shouldRemind && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded"
+                              title="Üst üste 3 değerlendirmede düşük puan (1 veya 2) — Gözlem notu ekle"
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5 text-amber-700" />
+                              Gözlem notu ekle
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -527,6 +585,23 @@ export const IndividualEvaluationView: React.FC<
                           Henüz Puanlanmadı (0/{effectiveCalc.totalCriteriaCount}{' '}
                           Ölçüt)
                         </span>
+                      )}
+
+                      {activeLowScoreReminder?.shouldRemind && (
+                        <button
+                          type="button"
+                          onClick={focusObservationNoteInput}
+                          data-testid="low-score-observation-reminder"
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-400 transition-colors cursor-pointer shadow-2xs"
+                          title={`${activeLowScoreReminder.message}. Gözlem notu alanına gitmek için tıklayın.`}
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                          <span>
+                            Üst üste {activeLowScoreReminder.consecutiveCount}{' '}
+                            düşük puan (1-2) ·{' '}
+                            <span className="underline">Gözlem notu ekle</span>
+                          </span>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -719,21 +794,39 @@ export const IndividualEvaluationView: React.FC<
                 </div>
 
                 <div>
-                  <label
-                    htmlFor="student-obs-note"
-                    className="block text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5 text-slate-500" />
-                    Bireysel Öğretmen Gözlem Notu (Grup notundan bağımsız
-                    korunur)
-                  </label>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <label
+                      htmlFor="student-obs-note"
+                      className="text-xs font-bold text-slate-700 flex items-center gap-1.5"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-slate-500" />
+                      Bireysel Öğretmen Gözlem Notu (Grup notundan bağımsız
+                      korunur)
+                    </label>
+                    {activeLowScoreReminder?.shouldRemind && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300">
+                        <AlertTriangle className="w-3 h-3 text-amber-700" />
+                        Gözlem notu ekle (Üst üste{' '}
+                        {activeLowScoreReminder.consecutiveCount} düşük puan)
+                      </span>
+                    )}
+                  </div>
                   <textarea
                     id="student-obs-note"
                     rows={2}
                     value={currentStudentEval?.note || ''}
                     onChange={(e) => onUpdateStudentNote(e.target.value)}
-                    placeholder="Öğrencinin bireysel süreç becerisi ve gelişim notu..."
-                    className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    placeholder={
+                      activeLowScoreReminder?.shouldRemind
+                        ? 'Öğrenci üst üste 3 değerlendirmede düşük puan (1 veya 2) aldı. Destekleyici gözlem notu ekleyin...'
+                        : 'Öğrencinin bireysel süreç becerisi ve gelişim notu...'
+                    }
+                    className={`w-full p-3 text-xs rounded-xl focus:bg-white focus:outline-none focus:ring-2 ${
+                      activeLowScoreReminder?.shouldRemind &&
+                      !activeLowScoreReminder.hasObservationNote
+                        ? 'bg-amber-50/70 border-2 border-amber-400 focus:ring-amber-600'
+                        : 'bg-slate-50 border border-slate-300 focus:ring-teal-600'
+                    }`}
                   />
                 </div>
               </div>

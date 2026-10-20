@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
+  FileDown,
   RotateCcw,
   Sliders,
   Table,
@@ -14,7 +16,10 @@ import type {
   Rubric,
   Student,
 } from '../../types.ts';
-import { getStudentEvaluationBreakdown } from '../../utils/rubricLogic.ts';
+import {
+  getStudentConsecutiveLowScoreReminder,
+  getStudentEvaluationBreakdown,
+} from '../../utils/rubricLogic.ts';
 import {
   RubricCriterionCard,
   RubricViewModeToggle,
@@ -68,6 +73,9 @@ interface FastEvaluationViewProps {
   onCreateNewSessionWithRubric?: (targetRubric: Rubric) => void;
   onConfirmResetAndChangeRubric?: (targetRubric: Rubric) => void;
   onCancelRubricChange?: () => void;
+  onExportPdf?: () => void;
+  allSessions?: EvaluationSession[];
+  rubricsById?: Record<string, Rubric>;
 }
 
 export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
@@ -97,8 +105,17 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   onCreateNewSessionWithRubric,
   onConfirmResetAndChangeRubric,
   onCancelRubricChange,
+  onExportPdf,
+  allSessions,
+  rubricsById,
 }) => {
   const [viewMode, setViewMode] = useState<RubricCardViewMode>('compact');
+  const effectiveSessions =
+    allSessions && allSessions.length > 0 ? allSessions : [activeSession];
+  const effectiveRubricsMap =
+    rubricsById && Object.keys(rubricsById).length > 0
+      ? rubricsById
+      : { [activeRubric.id]: activeRubric };
 
   const currentStudentEval = selectedStudent
     ? activeSession.evaluations[selectedStudent.id]
@@ -208,6 +225,18 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               <Table className="w-3.5 h-3.5" />
               Toplu Matris Özeti
             </button>
+
+            {onExportPdf && (
+              <button
+                type="button"
+                onClick={onExportPdf}
+                data-testid="download-active-session-pdf-btn"
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+              >
+                <FileDown className="w-3.5 h-3.5" />
+                PDF İndir
+              </button>
+            )}
           </div>
         </div>
 
@@ -381,6 +410,24 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                         Henüz Puanlanmadı (0/
                         {currentScoreCalc.totalCriteriaCount})
                       </span>
+                    )}
+
+                    {getStudentConsecutiveLowScoreReminder(
+                      selectedStudent.id,
+                      activeSession,
+                      effectiveSessions,
+                      effectiveRubricsMap
+                    ).shouldRemind && (
+                      <button
+                        type="button"
+                        onClick={onExitFastMode}
+                        data-testid="low-score-observation-reminder"
+                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 cursor-pointer"
+                        title="Üst üste 3 değerlendirmede düşük puan (1 veya 2) — Gözlem notu eklemek için tıklayın"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                        <span>Gözlem notu ekle</span>
+                      </button>
                     )}
                   </div>
 

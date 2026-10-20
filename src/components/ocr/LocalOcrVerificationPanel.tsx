@@ -10,12 +10,14 @@ import {
   Loader2,
   RefreshCw,
   RotateCw,
+  ScanLine,
   ShieldCheck,
   Sparkles,
   Trash2,
   ZoomIn,
 } from 'lucide-react';
 import type { Student } from '../../types.ts';
+import { LiveCameraScanner } from './LiveCameraScanner.tsx';
 import type {
   ColumnRole,
   GeometricTableAnalysisResult,
@@ -103,6 +105,7 @@ export const LocalOcrVerificationPanel: React.FC<
   const [inspectedRowId, setInspectedRowId] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState<number>(1.35);
   const [showFullPhotoOverlay, setShowFullPhotoOverlay] = useState(false);
+  const [showLiveCameraScanner, setShowLiveCameraScanner] = useState(false);
 
   const rowCropCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fullPhotoCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -532,12 +535,35 @@ export const LocalOcrVerificationPanel: React.FC<
         </p>
       </div>
 
-      {/* Upload & Built-in Verification Sample Buttons */}
+      {/* Camera Scanner, Photo Upload & Built-in Verification Sample Buttons */}
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-        <label className="sm:col-span-6 border-2 border-dashed border-slate-300 hover:border-teal-600 rounded-xl p-3.5 text-center transition-colors cursor-pointer bg-slate-50/70 flex flex-col items-center justify-center gap-1">
+        <button
+          type="button"
+          onClick={() => setShowLiveCameraScanner((prev) => !prev)}
+          disabled={ocrLoading}
+          data-testid="open-live-camera-scanner-btn"
+          className={`sm:col-span-4 rounded-xl p-3.5 text-center transition-colors cursor-pointer flex flex-col items-center justify-center gap-1 border-2 ${
+            showLiveCameraScanner
+              ? 'bg-teal-900 text-white border-teal-700 shadow-xs'
+              : 'bg-teal-700 hover:bg-teal-800 text-white border-teal-700 shadow-xs'
+          }`}
+        >
+          <ScanLine className="w-5 h-5 text-teal-200" />
+          <span className="text-xs font-bold">
+            {showLiveCameraScanner
+              ? 'Canlı Kamera Tarayıcıyı Kapat'
+              : 'Kamerayı Aç ve Listeyi Tara'}
+          </span>
+          <span className="text-[11px] text-teal-100">
+            Uygulama içi canlı kamera ve otomatik tablo hizalama
+          </span>
+        </button>
+
+        <label className="sm:col-span-4 border-2 border-dashed border-slate-300 hover:border-teal-600 rounded-xl p-3.5 text-center transition-colors cursor-pointer bg-slate-50/70 flex flex-col items-center justify-center gap-1">
           <input
             type="file"
             accept="image/jpeg,image/png,image/webp"
+            capture="environment"
             onChange={handleFileUpload}
             className="hidden"
             disabled={ocrLoading}
@@ -550,14 +576,14 @@ export const LocalOcrVerificationPanel: React.FC<
           <span className="text-xs font-bold text-slate-900">
             {ocrLoading
               ? 'Tablo Geometrisi Çözümleniyor...'
-              : 'Sınıf Listesi Fotoğrafı Seç (PNG / JPEG)'}
+              : 'Fotoğraf Çek / Dosya Seç (PNG / JPEG)'}
           </span>
           <span className="text-[11px] text-slate-500">
             Sütun ve satır koordinatları yerel olarak analiz edilir
           </span>
         </label>
 
-        <div className="sm:col-span-6 flex flex-col justify-between gap-2">
+        <div className="sm:col-span-4 flex flex-col justify-between gap-2">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
               type="button"
@@ -566,7 +592,7 @@ export const LocalOcrVerificationPanel: React.FC<
               className="w-full py-2 px-2.5 rounded-xl border border-teal-300 bg-teal-50/60 hover:bg-teal-100/70 text-teal-950 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-              Referans Tablo (245/246)
+              Referans Tablo
             </button>
 
             <button
@@ -576,7 +602,7 @@ export const LocalOcrVerificationPanel: React.FC<
               className="w-full py-2 px-2.5 rounded-xl border border-teal-400 bg-teal-100/60 hover:bg-teal-200/70 text-teal-950 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             >
               <Camera className="w-3.5 h-3.5 text-teal-800 shrink-0" />
-              Gerçek Kamera Fotoğrafı
+              Gerçek Fotoğraf
             </button>
           </div>
 
@@ -588,7 +614,7 @@ export const LocalOcrVerificationPanel: React.FC<
               className="w-full py-2 px-2.5 rounded-xl border border-amber-300 bg-amber-50/60 hover:bg-amber-100/70 text-amber-950 text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-              Eğik / Eksik Satırlı Liste
+              Eğik / Eksik Liste
             </button>
 
             <button
@@ -602,11 +628,24 @@ export const LocalOcrVerificationPanel: React.FC<
               ) : (
                 <CheckCircle2 className="w-3.5 h-3.5 text-teal-700 shrink-0" />
               )}
-              Doğruluk & Performans Testi
+              Doğruluk Testi
             </button>
           </div>
         </div>
       </div>
+
+      {/* In-App Live Camera & Document Scanner */}
+      {showLiveCameraScanner && (
+        <LiveCameraScanner
+          disabled={ocrLoading}
+          onClose={() => setShowLiveCameraScanner(false)}
+          onCaptureScannedImage={async (capturedGray) => {
+            setShowLiveCameraScanner(false);
+            setManualRotation(0);
+            await executePipelineOnGrayImage(capturedGray, 0);
+          }}
+        />
+      )}
 
       {/* Real Photo OCR Accuracy & Performance Benchmark Suite Report */}
       {benchmarkSummary && (

@@ -848,14 +848,14 @@ export function preprocessRosterImage(
     );
   }
 
-  // 4. Initial binarization + skew detection & deskew
-  let binary = adaptiveLocalBinarize(working);
+  // 4. Initial binarization + outer photo frame/desk shadow cleanup + skew detection & deskew
+  let binary = clearOuterPhotoBorderFrames(adaptiveLocalBinarize(working));
   let detectedSkewDeg = 0;
   if (options.autoDeskew !== false) {
     detectedSkewDeg = estimateSkewAngleDeg(binary);
     if (Math.abs(detectedSkewDeg) >= 0.4) {
       working = deskewGrayImage(working, detectedSkewDeg);
-      binary = adaptiveLocalBinarize(working);
+      binary = clearOuterPhotoBorderFrames(adaptiveLocalBinarize(working));
       if (Math.abs(detectedSkewDeg) >= 1.5) {
         qualityWarnings.push(
           `Fotoğrafta ${detectedSkewDeg > 0 ? '+' : ''}${detectedSkewDeg}° eğim tespit edildi ve otomatik olarak yatay hizalandı.`
@@ -900,6 +900,90 @@ export function preprocessRosterImage(
       qualityWarnings,
     },
   };
+}
+
+/**
+ * Clears connected dark regions that touch the outer 1.5% boundary of a camera photo
+ * (such as a dark desk surface, notebook binding, or phone shadow at the frame edge)
+ * without touching interior table characters.
+ */
+export function clearOuterPhotoBorderFrames(
+  binary: RawBinaryImage
+): RawBinaryImage {
+  const { width, height, mask } = binary;
+  if (width < 40 || height < 40) return binary;
+
+  const out = new Uint8Array(mask);
+  const visited = new Uint8Array(width * height);
+  const borderX = Math.max(2, Math.floor(width * 0.015));
+  const borderY = Math.max(2, Math.floor(height * 0.015));
+  const queue = new Int32Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    const isTopBottom = y < borderY || y >= height - borderY;
+    for (let x = 0; x < width; x++) {
+      if (!isTopBottom && x >= borderX && x < width - borderX) {
+        continue;
+      }
+      const startIdx = y * width + x;
+      if (!out[startIdx] || visited[startIdx]) continue;
+
+      let head = 0;
+      let tail = 0;
+      queue[tail++] = startIdx;
+      visited[startIdx] = 1;
+
+      let minX = x;
+      let maxX = x;
+      let minY = y;
+      let maxY = y;
+
+      while (head < tail) {
+        const cur = queue[head++];
+        const cy = Math.floor(cur / width);
+        const cx = cur - cy * width;
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+
+        const yLo = cy > 0 ? cy - 1 : 0;
+        const yHi = cy + 1 < height ? cy + 1 : height - 1;
+        const xLo = cx > 0 ? cx - 1 : 0;
+        const xHi = cx + 1 < width ? cx + 1 : width - 1;
+
+        for (let ny = yLo; ny <= yHi; ny++) {
+          const rOff = ny * width;
+          for (let nx = xLo; nx <= xHi; nx++) {
+            const nIdx = rOff + nx;
+            if (out[nIdx] && !visited[nIdx]) {
+              visited[nIdx] = 1;
+              queue[tail++] = nIdx;
+            }
+          }
+        }
+      }
+
+      const spanW = maxX - minX + 1;
+      const spanH = maxY - minY + 1;
+      // If a border-touching component is either a margin speck or a large desk/border frame, erase it
+      if (
+        tail >= 90 ||
+        spanW >= width * 0.12 ||
+        spanH >= height * 0.12 ||
+        maxX < borderX * 2 ||
+        minX >= width - borderX * 2 ||
+        maxY < borderY * 2 ||
+        minY >= height - borderY * 2
+      ) {
+        for (let i = 0; i < tail; i++) {
+          out[queue[i]] = 0;
+        }
+      }
+    }
+  }
+
+  return { width, height, mask: out };
 }
 
 /**
@@ -961,3 +1045,167 @@ export function despeckleBinaryMask(binary: RawBinaryImage): RawBinaryImage {
 
   return { width, height, mask: out };
 }
+
+export interface LiveScanFrameReadiness {
+  contrastScore: number;
+  sharpnessScore: number;
+  estimatedRowCount: number;
+  isReadyToScan: boolean;
+  statusLabel: string;
+}
+
+/**
+ * Crops a rectangular sub-region from a RawGrayImage (used by the Live Camera Document Scanner
+ * to extract the aligned table region inside the viewfinder frame).
+ */
+export function cropGrayImageRegion(
+  source: RawGrayImage,
+  cropX0: number,
+  cropY0: number,
+  cropWidth: number,
+  cropHeight: number
+): RawGrayImage {
+  const x0 = Math.max(0, Math.min(source.width - 1, Math.round(cropX0)));
+  const y0 = Math.max(0, Math.min(source.height - 1, Math.round(cropY0)));
+  const w = Math.max(1, Math.min(source.width - x0, Math.round(cropWidth)));
+  const h = Math.max(1, Math.min(source.height - y0, Math.round(cropHeight)));
+
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const srcOff = (y0 + y) * source.width + x0;
+    const dstOff = y * w;
+    for (let x = 0; x < w; x++) {
+      out[dstOff + x] = source.data[srcOff + x];
+    }
+  }
+  return { width: w, height: h, data: out };
+}
+
+/**
+ * Fast real-time frame quality and table-line detector for the Live Camera Scanner.
+ * Evaluates contrast, edge sharpness, and horizontal text row bands inside the camera viewfinder.
+ */
+export function analyzeLiveScanFrameReadiness(
+  frame: RawGrayImage
+): LiveScanFrameReadiness {
+  const { width, height, data } = frame;
+  if (width < 32 || height < 32) {
+    return {
+      contrastScore: 0,
+      sharpnessScore: 0,
+      estimatedRowCount: 0,
+      isReadyToScan: false,
+      statusLabel: 'Kamera görüntüsü bekleniyor...',
+    };
+  }
+
+  const contrastScore = computeContrastScore(frame);
+
+  // Compute average edge sharpness at active ink/table transitions so white paper background doesn't dilute focus measurement
+  let edgeGradSum = 0;
+  let edgeCount = 0;
+  let minLum = 255;
+  let maxLum = 0;
+  const stepY = Math.max(1, Math.min(2, Math.floor(height / 180)));
+  const stepX = Math.max(1, Math.min(2, Math.floor(width / 320)));
+  for (let y = 2; y < height - 2; y += stepY) {
+    const rOff = y * width;
+    for (let x = 2; x < width - 2; x += stepX) {
+      const lum = data[rOff + x];
+      if (lum < minLum) minLum = lum;
+      if (lum > maxLum) maxLum = lum;
+      const gx = Math.abs(data[rOff + x + 1] - data[rOff + x - 1]);
+      const gy = Math.abs(data[(y + 1) * width + x] - data[(y - 1) * width + x]);
+      const mag = gx + gy;
+      if (mag >= 12) {
+        edgeGradSum += mag;
+        edgeCount++;
+      }
+    }
+  }
+  const meanEdgeGrad = edgeCount > 0 ? edgeGradSum / edgeCount : 0;
+  const sharpnessScore =
+    edgeCount >= 8
+      ? Math.max(0, Math.min(100, Math.round(meanEdgeGrad * 0.65)))
+      : 0;
+  const dynamicRangeScore = Math.round(((maxLum - minLum) / 255) * 100);
+  const effectiveContrastScore = Math.max(
+    contrastScore,
+    Math.round(dynamicRangeScore * 0.75)
+  );
+
+  // Estimate horizontal text row bands via fast row-wise dark transition count
+  let meanLum = 0;
+  for (let i = 0; i < data.length; i += 4) meanLum += data[i];
+  meanLum /= Math.max(1, Math.ceil(data.length / 4));
+  const darkThresh = Math.max(30, meanLum * 0.85);
+
+  const rowTransitions = new Int32Array(height);
+  for (let y = 4; y < height - 4; y++) {
+    const rOff = y * width;
+    let trans = 0;
+    let prevDark = data[rOff + 4] < darkThresh;
+    for (let x = 5; x < width - 4; x += 2) {
+      const curDark = data[rOff + x] < darkThresh;
+      if (curDark !== prevDark) {
+        trans++;
+        prevDark = curDark;
+      }
+    }
+    rowTransitions[y] = trans;
+  }
+
+  // Subtract vertical grid-line baseline transitions so tables with vertical column borders don't merge all rows into 1 band
+  const sortedTrans = Array.from(rowTransitions.subarray(4, height - 4)).sort(
+    (a, b) => a - b
+  );
+  const p25Trans =
+    sortedTrans.length > 0
+      ? sortedTrans[Math.floor(sortedTrans.length * 0.25)]
+      : 0;
+  const activeTransThresh = Math.max(4, p25Trans + 4);
+
+  let estimatedRowCount = 0;
+  let inRow = false;
+  let rowStart = 0;
+  for (let y = 4; y < height - 4; y++) {
+    const active = rowTransitions[y] >= activeTransThresh;
+    if (active && !inRow) {
+      inRow = true;
+      rowStart = y;
+    } else if (!active && inRow) {
+      if (y - rowStart >= 3) {
+        estimatedRowCount++;
+      }
+      inRow = false;
+    }
+  }
+  if (inRow && height - 4 - rowStart >= 3) {
+    estimatedRowCount++;
+  }
+
+  const isReadyToScan =
+    effectiveContrastScore >= 20 &&
+    sharpnessScore >= 18 &&
+    estimatedRowCount >= 2;
+
+  let statusLabel = 'Sınıf listesini tarama çerçevesine hizalayın';
+  if (isReadyToScan) {
+    statusLabel = `Tablo Algılandı (~${estimatedRowCount} satır) · Taramaya Hazır`;
+  } else if (effectiveContrastScore < 20) {
+    statusLabel = 'Kontrast düşük — listeyi aydınlık bir alana tutun';
+  } else if (sharpnessScore < 18) {
+    statusLabel = 'Görüntü bulanık — kamerayı sabit tutarak netleyin';
+  } else if (estimatedRowCount < 2) {
+    statusLabel = 'Tablo satırları aranıyor — listeyi çerçeveye yaklaştırın';
+  }
+
+  return {
+    contrastScore: effectiveContrastScore,
+    sharpnessScore,
+    estimatedRowCount,
+    isReadyToScan,
+    statusLabel,
+  };
+}
+

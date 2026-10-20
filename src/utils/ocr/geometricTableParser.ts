@@ -903,7 +903,12 @@ export function analyzeRosterTableGeometry(
     const sortedFull = sortLR(fullNameTokens);
     const sortedGender = sortLR(genderTokens);
 
-    // If table used a single combined "Adı Soyadı" column, split rightmost word as surname
+    // If table used a single combined "Adı Soyadı" column, or if no separate lastName column exists and firstTokens has 2+ words, split rightmost word as surname
+    const hasDedicatedLastCol = columns.some((c) => c.role === 'lastName');
+    const hasDedicatedStuNumCol = columns.some(
+      (c) => c.role === 'studentNumber'
+    );
+
     if (
       sortedFull.length > 0 &&
       sortedFirst.length === 0 &&
@@ -925,13 +930,23 @@ export function analyzeRosterTableGeometry(
           uncertaintyFlags.add('COMBINED_NAME_SPLIT');
         }
       }
+    } else if (
+      !hasDedicatedLastCol &&
+      sortedLast.length === 0 &&
+      sortedFirst.length >= 2
+    ) {
+      sortedLast = [sortedFirst[sortedFirst.length - 1]];
+      sortedFirst = sortedFirst.slice(0, -1);
     }
 
     const rawSeqText = sortedSeq.map((t) => t.text).join('').trim();
     const parsedSeq = /^\d+$/.test(rawSeqText) ? Number(rawSeqText) : null;
 
     // Never borrow from adjacent rows! If stuNumTokens or lastTokens is empty in this row, it stays ""
-    const studentNumber = sortedStuNum.map((t) => t.text).join('').trim();
+    // Only if the table has NO studentNumber column at all (1 numeric column mapped as sequence), use rawSeqText
+    const rawStuNum = sortedStuNum.map((t) => t.text).join('').trim();
+    const studentNumber =
+      rawStuNum || (!hasDedicatedStuNumCol && /^\d+$/.test(rawSeqText) ? rawSeqText : '');
     const firstName = sortedFirst.map((t) => t.text).join(' ').trim();
     const lastName = sortedLast.map((t) => t.text).join(' ').trim();
     const gender = sortedGender.map((t) => t.text).join(' ').trim();
