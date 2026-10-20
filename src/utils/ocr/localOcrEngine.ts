@@ -15,6 +15,7 @@ import {
   preprocessRosterImage,
   upscaleGrayImageBilinear,
 } from './imagePreprocessor.ts';
+import { CapacitorMlKitOcrEngine } from './mlKitOcrEngine.ts';
 
 const NORM_W = 16;
 const NORM_H = 24;
@@ -471,7 +472,7 @@ const BUILTIN_BITMAP_FONT: Record<string, string[]> = {
  * Common Turkish roster vocabulary (headers + frequent Turkish names & surnames)
  * used strictly to boost confidence or provide ranked alternatives when OCR characters are noisy.
  */
-const TURKISH_ROSTER_LEXICON = [
+export const TURKISH_ROSTER_LEXICON = [
   'SIRA',
   'OKUL',
   'NO',
@@ -2230,15 +2231,22 @@ export class SelfContainedTurkishOcrEngine implements OcrEngineAdapter {
 
 /**
  * Pluggable Local OCR Engine Registry so the application is never locked to a single OCR library.
+ * Registers both the Android Google ML Kit Text Recognition v2 engine and the Browser Local Turkish OCR engine,
+ * automatically selecting ML Kit on native Android and the browser engine in Web/PWA environments.
  * Rejects any adapter that does not declare `isLocalOnly: true`.
  */
 export class LocalOcrEngineRegistry {
   private adapters = new Map<string, OcrEngineAdapter>();
   private activeEngineId: string;
 
-  constructor(defaultAdapter: OcrEngineAdapter = new SelfContainedTurkishOcrEngine()) {
-    this.registerAdapter(defaultAdapter);
-    this.activeEngineId = defaultAdapter.engineId;
+  constructor(defaultAdapter?: OcrEngineAdapter) {
+    const browserEngine = defaultAdapter ?? new SelfContainedTurkishOcrEngine();
+    const mlKitEngine = new CapacitorMlKitOcrEngine(browserEngine);
+    this.registerAdapter(browserEngine);
+    this.registerAdapter(mlKitEngine);
+    this.activeEngineId = mlKitEngine.isNativeAndroidAvailable()
+      ? mlKitEngine.engineId
+      : browserEngine.engineId;
   }
 
   public registerAdapter(adapter: OcrEngineAdapter): void {
@@ -2265,9 +2273,14 @@ export class LocalOcrEngineRegistry {
     return adapter;
   }
 
+  public getAdapterById(engineId: string): OcrEngineAdapter | undefined {
+    return this.adapters.get(engineId);
+  }
+
   public listAdapters(): OcrEngineAdapter[] {
     return Array.from(this.adapters.values());
   }
 }
 
 export const defaultLocalOcrRegistry = new LocalOcrEngineRegistry();
+

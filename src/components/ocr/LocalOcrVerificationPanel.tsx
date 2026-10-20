@@ -37,10 +37,13 @@ import {
   createChallengingSkewedSampleGrayImage,
   createRealisticCameraSampleGrayImage,
   createReferenceSampleGrayImage,
+  evaluateRosterOcrAccuracyMetrics,
+  parseGroundTruthRosterText,
   reparseOcrWithColumnRoles,
   runLocalRosterOcrPipelineAsync,
   runRealisticCameraOcrBenchmarkSuite,
   type RealisticCameraBenchmarkSuiteSummary,
+  type RosterOcrAccuracyMetrics,
   type RosterOcrPerformanceMetrics,
 } from '../../utils/ocr/rosterOcrPipeline.ts';
 import {
@@ -106,6 +109,17 @@ export const LocalOcrVerificationPanel: React.FC<
   const [zoomScale, setZoomScale] = useState<number>(1.35);
   const [showFullPhotoOverlay, setShowFullPhotoOverlay] = useState(false);
   const [showLiveCameraScanner, setShowLiveCameraScanner] = useState(false);
+
+  // Active OCR engine selector & Real Photo Ground-Truth Verification Harness
+  const [activeEngineId, setActiveEngineId] = useState<string>(
+    () => defaultLocalOcrRegistry.getActiveEngine().engineId
+  );
+  const [showGroundTruthHarness, setShowGroundTruthHarness] = useState(false);
+  const [groundTruthInput, setGroundTruthInput] = useState<string>(
+    '245 | AYŞE NUR | ÇELİK | K\n246 | MEHMET | DEMİR | E\n247 | ÖMER FARUK | ŞAHİN | E\n248 | ZEYNEP | GÜNEŞ | K'
+  );
+  const [customPhotoAccuracy, setCustomPhotoAccuracy] =
+    useState<RosterOcrAccuracyMetrics | null>(null);
 
   const rowCropCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fullPhotoCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -515,25 +529,144 @@ export const LocalOcrVerificationPanel: React.FC<
     invalidRowCount === 0 &&
     approvedCount === rows.length;
 
+  const handleEngineChange = async (newEngineId: string) => {
+    defaultLocalOcrRegistry.setActiveEngine(newEngineId);
+    setActiveEngineId(newEngineId);
+    if (sourceGrayImage) {
+      await executePipelineOnGrayImage(sourceGrayImage, manualRotation);
+    }
+  };
+
+  const handleEvaluateUploadedPhotoGroundTruth = () => {
+    const parsedGt = parseGroundTruthRosterText(groundTruthInput);
+    if (parsedGt.length === 0) {
+      setOcrError(
+        'Doğrulama için en az 1 beklenen öğrenci satırı girin (Örn: 245 | AYŞE NUR | ÇELİK).'
+      );
+      return;
+    }
+    setOcrError(null);
+    const metrics = evaluateRosterOcrAccuracyMetrics(rows, parsedGt);
+    setCustomPhotoAccuracy(metrics);
+  };
+
   return (
     <div className="space-y-4">
-      {/* 100% Local & Offline Privacy Guarantee */}
-      <div className="bg-teal-50/80 border border-teal-200 rounded-xl p-3.5 text-xs text-teal-950 space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
+      {/* 100% Local & Offline Privacy Guarantee + Engine Selector (Android ML Kit v2 / Browser Local) */}
+      <div className="bg-teal-50/80 border border-teal-200 rounded-xl p-3.5 text-xs text-teal-950 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-bold flex items-center gap-1.5 text-teal-900">
             <ShieldCheck className="w-4 h-4 text-teal-700 shrink-0" />
-            %100 Yerel Cihaz İçi OCR ve Geometrik Tablo Çözümleyici
+            %100 Yerel Cihaz İçi OCR (Google ML Kit Android & Tarayıcı Motoru)
           </span>
-          <span className="font-mono-num text-[11px] font-semibold text-teal-800">
-            Harici Sunucu Yok · Çevrimdışı Çalışır
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <label
+              htmlFor="ocr-engine-selector"
+              className="text-[11px] font-bold text-teal-900"
+            >
+              Aktif Motor:
+            </label>
+            <select
+              id="ocr-engine-selector"
+              aria-label="Aktif Yerel OCR Motoru"
+              value={activeEngineId}
+              onChange={(e) => handleEngineChange(e.target.value)}
+              disabled={ocrLoading}
+              className="px-2 py-1 rounded-lg border border-teal-300 bg-white text-[11px] font-semibold text-teal-950 focus:outline-none focus:ring-2 focus:ring-teal-600"
+            >
+              {defaultLocalOcrRegistry.listAdapters().map((adapter) => (
+                <option key={adapter.engineId} value={adapter.engineId}>
+                  {adapter.engineName}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setShowGroundTruthHarness((prev) => !prev)}
+              data-testid="toggle-ground-truth-harness-btn"
+              className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold cursor-pointer transition-colors ${
+                showGroundTruthHarness
+                  ? 'bg-teal-800 text-white border-teal-800'
+                  : 'bg-white text-teal-900 border-teal-300 hover:bg-teal-100/70'
+              }`}
+            >
+              Gerçek Fotoğraf Doğrulama Laboratuvarı
+            </button>
+          </div>
         </div>
         <p className="text-[11px] text-teal-900 leading-relaxed">
-          Fotoğraflar ve öğrenci bilgileri hiçbir bulut servisine gönderilmez.
-          Eğim düzeltme, perspektif dengeleme, sütun/satır koordinat eşleştirme
-          ve eksik öğrenci tespiti tamamen tarayıcı içinde çalışır.
+          KVKK Güvencesi: Fotoğraflar ve öğrenci bilgileri hiçbir sunucuya gönderilmez.
+          Android cihazlarda Capacitor üzerinden yerel{' '}
+          <strong>Google ML Kit Text Recognition v2</strong> motoru, tarayıcıda ise
+          yerel Türkçe OCR motoru yüksek çözünürlükte (3200px) çalışır; komşu satır ve
+          sütunların birbirine karışması geometrik koordinat sınırlarıyla engellenir.
         </p>
       </div>
+
+      {/* Real Photo Ground-Truth Verification Harness (Gerçek Fotoğraf Doğrulama Altyapısı) */}
+      {showGroundTruthHarness && (
+        <div
+          data-testid="ground-truth-harness-panel"
+          className="border border-teal-300 bg-white rounded-xl p-3.5 space-y-2.5 shadow-2xs"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="text-xs font-bold text-slate-900">
+                Gerçek Sınıf Listesi Fotoğrafı — Beklenen Liste (Ground-Truth) Doğrulama Altyapısı
+              </h4>
+              <p className="text-[11px] text-slate-600">
+                Kamerayla çektiğiniz veya yüklediğiniz gerçek sınıf listesi fotoğrafının beklenen
+                öğrenci satırlarını aşağıya girerek karakter doğruluğu (CER), ad-soyad eşleşmesi ve
+                komşu öğrenci karışmazlığını (0 Cross-Row Contamination) canlı olarak ölçün.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleEvaluateUploadedPhotoGroundTruth}
+              disabled={rows.length === 0}
+              data-testid="run-ground-truth-eval-btn"
+              className="px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 disabled:opacity-40 text-white text-xs font-bold cursor-pointer shrink-0"
+            >
+              Mevcut OCR Sonucunu Doğrula ({rows.length} Satır)
+            </button>
+          </div>
+
+          <textarea
+            aria-label="Beklenen Gerçek Sınıf Listesi Satırları"
+            rows={4}
+            value={groundTruthInput}
+            onChange={(e) => setGroundTruthInput(e.target.value)}
+            placeholder="Her satıra: OkulNo | Adı | Soyadı | Cinsiyet (Örn: 245 | AYŞE NUR | ÇELİK | K)"
+            className="w-full p-2.5 text-xs font-mono-num border border-slate-300 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600"
+          />
+
+          {customPhotoAccuracy && (
+            <div className="bg-teal-50/80 border border-teal-200 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono-num">
+              <span className="font-bold text-teal-950">
+                Karakter Doğruluğu: %{customPhotoAccuracy.characterAccuracyPercent} (CER: {customPhotoAccuracy.characterErrorRate})
+              </span>
+              <span className="font-semibold text-slate-800">
+                Okul No Eşleşmesi: %{customPhotoAccuracy.studentNumberExactMatchRate}
+              </span>
+              <span className="font-semibold text-slate-800">
+                Ad/Soyad Tam Eşleşme: %{customPhotoAccuracy.rowIdentityMatchRate}
+              </span>
+              <span
+                className={`font-bold ${
+                  customPhotoAccuracy.zeroCrossRowContamination
+                    ? 'text-emerald-800'
+                    : 'text-red-700'
+                }`}
+              >
+                Komşu Öğrenci Karışması:{' '}
+                {customPhotoAccuracy.zeroCrossRowContamination
+                  ? '0 (Karışma Yok)'
+                  : 'Tespit Edildi!'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Camera Scanner, Photo Upload & Built-in Verification Sample Buttons */}
       <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">

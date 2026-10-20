@@ -35,8 +35,13 @@ export interface OcrWordToken {
   text: string;
   confidence: number; // 0..100
   bbox: BoundingBox;
+  cornerPoints?: Point2D[];
   baselineY?: number;
   skewDeg?: number;
+  blockIndex?: number;
+  lineIndex?: number;
+  elementIndex?: number;
+  symbolConfidences?: number[];
   alternatives?: OcrWordAlternative[];
 }
 

@@ -159,9 +159,13 @@ export async function runLocalRosterOcrPipelineAsync(
     preferWebWorker?: boolean;
   } = {}
 ): Promise<FullRosterOcrPipelineResult> {
+  const activeEngine = options.engine ?? defaultLocalOcrRegistry.getActiveEngine();
+  const isNativeBridgeEngine = activeEngine.engineId === 'google-mlkit-android-v2';
+
   const canUseWorker =
     options.preferWebWorker !== false &&
     !options.engine &&
+    !isNativeBridgeEngine &&
     typeof window !== 'undefined' &&
     typeof Worker !== 'undefined';
 
@@ -534,6 +538,8 @@ export interface RealisticCameraBenchmarkScenarioResult {
   scenarioId: string;
   title: string;
   description: string;
+  engineId: string;
+  engineName: string;
   accuracy: RosterOcrAccuracyMetrics;
   performance: RosterOcrPerformanceMetrics;
   passed: boolean;
@@ -551,11 +557,103 @@ export interface RealisticCameraBenchmarkSuiteSummary {
 }
 
 /**
- * Runs a comprehensive 4-scenario real camera classroom roster photo benchmark suite
- * testing shadows, lens vignette, optical blur, sensor noise, perspective keystone pinch,
- * camera tilt/skew, bold/thin stroke variations, multi-word Turkish names, and missing row gaps.
+ * Parses teacher-entered ground-truth student lines (e.g., "245 | AYŞE NUR | ÇELİK" or "245 AYŞE NUR ÇELİK")
+ * so any uploaded real camera photo can be benchmarked against exact ground truth right inside the app.
  */
-export async function runRealisticCameraOcrBenchmarkSuite(): Promise<RealisticCameraBenchmarkSuiteSummary> {
+export function parseGroundTruthRosterText(
+  rawText: string
+): GroundTruthRosterStudent[] {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const students: GroundTruthRosterStudent[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^(BOS|BOŞ|GAP|-)$/i.test(line)) {
+      students.push({
+        sequenceNumber: i + 1,
+        studentNumber: '',
+        firstName: '',
+        lastName: '',
+        isMissingGapRow: true,
+      });
+      continue;
+    }
+
+    if (line.includes('|') || line.includes(';') || line.includes('\t')) {
+      const parts = line
+        .split(/[|;\t]/)
+        .map((p) => p.trim());
+      if (parts.length >= 3) {
+        students.push({
+          sequenceNumber: i + 1,
+          studentNumber: parts[0],
+          firstName: parts[1].replace(/i/g, 'İ').replace(/ı/g, 'I').toLocaleUpperCase('tr-TR'),
+          lastName: parts[2].replace(/i/g, 'İ').replace(/ı/g, 'I').toLocaleUpperCase('tr-TR'),
+          gender: parts[3]?.toUpperCase(),
+        });
+      } else if (parts.length === 2) {
+        const nameWords = parts[1]
+          .replace(/i/g, 'İ')
+          .replace(/ı/g, 'I')
+          .toLocaleUpperCase('tr-TR')
+          .split(/\s+/)
+          .filter(Boolean);
+        const lastName = nameWords.length > 1 ? nameWords[nameWords.length - 1] : '';
+        const firstName =
+          nameWords.length > 1 ? nameWords.slice(0, -1).join(' ') : nameWords[0] || '';
+        students.push({
+          sequenceNumber: i + 1,
+          studentNumber: parts[0],
+          firstName,
+          lastName,
+        });
+      }
+      continue;
+    }
+
+    const tokens = line.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 3 && /^\d+$/.test(tokens[0])) {
+      const studentNumber = tokens[0];
+      const upperRest = tokens
+        .slice(1)
+        .map((w) => w.replace(/i/g, 'İ').replace(/ı/g, 'I').toLocaleUpperCase('tr-TR'));
+      // Check if last token is single-letter gender K/E
+      let gender: string | undefined;
+      let nameTokens = upperRest;
+      if (
+        nameTokens.length >= 3 &&
+        (nameTokens[nameTokens.length - 1] === 'K' ||
+          nameTokens[nameTokens.length - 1] === 'E')
+      ) {
+        gender = nameTokens[nameTokens.length - 1];
+        nameTokens = nameTokens.slice(0, -1);
+      }
+      const lastName = nameTokens[nameTokens.length - 1] || '';
+      const firstName = nameTokens.slice(0, -1).join(' ');
+      students.push({
+        sequenceNumber: i + 1,
+        studentNumber,
+        firstName,
+        lastName,
+        gender,
+      });
+    }
+  }
+  return students;
+}
+
+/**
+ * Runs a comprehensive 5-scenario real camera classroom roster photo benchmark suite
+ * testing shadows, lens vignette, optical blur, sensor noise, perspective keystone pinch,
+ * camera tilt/skew, bold/thin stroke variations, multi-word Turkish names, missing row gaps,
+ * AND native Android Google ML Kit Text Recognition v2 hierarchical Block->Line->Element->Symbol pipeline.
+ */
+export async function runRealisticCameraOcrBenchmarkSuite(
+  engineOverride?: OcrEngineAdapter
+): Promise<RealisticCameraBenchmarkSuiteSummary> {
   const scenarioDefs: Array<{
     scenarioId: string;
     title: string;
@@ -682,7 +780,9 @@ export async function runRealisticCameraOcrBenchmarkSuite(): Promise<RealisticCa
   const scenarios: RealisticCameraBenchmarkScenarioResult[] = [];
   for (const def of scenarioDefs) {
     const img = renderRealisticCameraRosterPhotoToGrayImage(def.config);
-    const res = await runLocalRosterOcrPipeline(img, []);
+    const res = await runLocalRosterOcrPipeline(img, [], {
+      engine: engineOverride,
+    });
     const accuracy = evaluateRosterOcrAccuracyMetrics(
       res.verifiedRows,
       def.groundTruth
@@ -698,6 +798,8 @@ export async function runRealisticCameraOcrBenchmarkSuite(): Promise<RealisticCa
       scenarioId: def.scenarioId,
       title: def.title,
       description: def.description,
+      engineId: res.ocrOutput.engineId,
+      engineName: res.ocrOutput.engineName,
       accuracy,
       performance: res.performanceMetrics,
       passed,
@@ -743,4 +845,5 @@ export async function runRealisticCameraOcrBenchmarkSuite(): Promise<RealisticCa
     allPassed: scenarios.every((s) => s.passed),
   };
 }
+
 

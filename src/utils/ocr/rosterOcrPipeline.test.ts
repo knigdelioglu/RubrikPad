@@ -388,16 +388,16 @@ test('OCR #9: Oversized camera photos are bounded by validateAndPlanOcrImageDime
   assert.equal(overMpLimit.valid, false);
   assert.ok(overMpLimit.error?.includes('MP'));
 
-  // 3. Large 12MP tablet photo (4000x3000) is proportionally planned to max 1800x1350
+  // 3. Large 12MP tablet photo (4000x3000) is proportionally planned to max MAX_OCR_IMAGE_DIMENSION_PX (3200x2400) so high-res roster detail is preserved
   const plan12Mp = validateAndPlanOcrImageDimensions(4000, 3000, 3 * 1024 * 1024);
   assert.equal(plan12Mp.valid, true);
   assert.equal(plan12Mp.wasDownscaled, true);
   assert.equal(plan12Mp.targetWidth, MAX_OCR_IMAGE_DIMENSION_PX);
-  assert.equal(plan12Mp.targetHeight, 1350);
+  assert.equal(plan12Mp.targetHeight, 2400);
 
-  // 4. Preprocessing an oversized gray image automatically caps dimensions at MAX_OCR_IMAGE_DIMENSION_PX
+  // 4. Preprocessing an oversized gray image (>3200px) automatically caps dimensions at MAX_OCR_IMAGE_DIMENSION_PX
   const baseRef = createReferenceSampleGrayImage();
-  const oversizedImage = upscaleGrayImageBilinear(baseRef, 2.4); // > 2100px wide
+  const oversizedImage = upscaleGrayImageBilinear(baseRef, 3.6); // > 3300px wide
   assert.ok(oversizedImage.width > MAX_OCR_IMAGE_DIMENSION_PX);
 
   const prepped = preprocessRosterImage(oversizedImage);
@@ -464,6 +464,188 @@ test('OCR #10: Live camera scanner readiness analyzer and real-photo border fram
   assert.equal(pipelineRes.verifiedRows[0].lastName, 'ÇELİK');
   assert.equal(pipelineRes.verifiedRows[3].studentNumber, '248');
 });
+
+test('OCR #11: Android Google ML Kit Text Recognition v2 Capacitor adapter processes hierarchical Blocks/Lines/Elements/Symbols, normalizes Turkish characters, splits border-glued tokens, and prevents neighbor student row contamination', async () => {
+  const {
+    CapacitorMlKitOcrEngine,
+    convertMlKitResponseToWordTokens,
+    encodeGrayImageToPngBase64,
+    normalizeMlKitTurkishToken,
+  } = await import('./mlKitOcrEngine.ts');
+  const { SelfContainedTurkishOcrEngine } = await import('./localOcrEngine.ts');
+  const { parseGroundTruthRosterText } = await import('./rosterOcrPipeline.ts');
+
+  // 1. Verify PNG Base64 encoder preserves valid PNG signature and exact dimensions
+  const sampleImg = createReferenceSampleGrayImage();
+  const b64 = encodeGrayImageToPngBase64(sampleImg);
+  assert.ok(b64.startsWith('iVBORw0KGgo'), 'Encoded Base64 must start with PNG magic header');
+
+  // 2. Verify Turkish token normalizer repairs Latin diacritic drops and border artifacts
+  const normCelik = normalizeMlKitTurkishToken('|CELIK|', 0.94);
+  assert.equal(normCelik.text, 'ÇELİK');
+  assert.ok(normCelik.alternatives.some((a) => a.text === 'CELIK'));
+
+  const normAyse = normalizeMlKitTurkishToken('AYSE', 0.91);
+  assert.equal(normAyse.text, 'AYŞE');
+
+  const normNum = normalizeMlKitTurkishToken('24S', 0.89, 'studentNumber');
+  assert.equal(normNum.text, '245');
+
+  // 3. Simulate a realistic Android Google ML Kit v2 native payload with:
+  //    - Pipe-glued tokens ("1|245")
+  //    - Dropped Turkish diacritics ("AYSE", "CELIK", "OMER", "SAHIN", "GUNES")
+  //    - Tightly spaced neighbor rows (Row 1 at y=92..116, Row 2 at y=126..150, Row 3 at y=160..184)
+  //    - Row 2 missing surname (must NOT borrow SAHIN from Row 3!)
+  const mockMlKitBridge = {
+    getCapabilities: async () => ({
+      available: true,
+      engineId: 'google-mlkit-text-recognition-v2-latin',
+      engineName: 'Google ML Kit Text Recognition v2 (Android Yerel / Cihaz İçi)',
+      isLocalOnly: true,
+      script: 'latin-turkish',
+    }),
+    recognizeText: async () => ({
+      text: 'SIRA OKUL NO ADI SOYADI CINSIYET\n1|245 AYSE NUR CELIK K\n2 246 MEHMET E\n3 247 OMER FARUK SAHIN E',
+      imageWidth: sampleImg.width,
+      imageHeight: sampleImg.height,
+      elapsedMs: 18.4,
+      isLocalOnly: true as const,
+      blocks: [
+        {
+          blockIndex: 0,
+          text: 'SIRA OKUL NO ADI SOYADI CINSIYET',
+          bbox: { x0: 40, y0: 30, x1: 820, y1: 60 },
+          lines: [
+            {
+              lineIndex: 0,
+              text: 'SIRA OKUL NO ADI SOYADI CINSIYET',
+              confidence: 98,
+              angle: 0.4,
+              bbox: { x0: 40, y0: 30, x1: 820, y1: 60 },
+              elements: [
+                { elementIndex: 0, text: 'SIRA', confidence: 99, angle: 0.4, bbox: { x0: 45, y0: 32, x1: 100, y1: 58 } },
+                { elementIndex: 1, text: 'OKUL', confidence: 98, angle: 0.4, bbox: { x0: 150, y0: 32, x1: 205, y1: 58 } },
+                { elementIndex: 2, text: 'NO', confidence: 98, angle: 0.4, bbox: { x0: 215, y0: 32, x1: 250, y1: 58 } },
+                { elementIndex: 3, text: 'ADI', confidence: 99, angle: 0.4, bbox: { x0: 340, y0: 32, x1: 395, y1: 58 } },
+                { elementIndex: 4, text: 'SOYADI', confidence: 99, angle: 0.4, bbox: { x0: 570, y0: 32, x1: 665, y1: 58 } },
+                { elementIndex: 5, text: 'CINSIYET', confidence: 98, angle: 0.4, bbox: { x0: 750, y0: 32, x1: 835, y1: 58 } },
+              ],
+            },
+          ],
+        },
+        {
+          blockIndex: 1,
+          text: 'Body rows',
+          bbox: { x0: 40, y0: 90, x1: 820, y1: 200 },
+          lines: [
+            {
+              lineIndex: 0,
+              text: '1|245 AYSE NUR CELIK K',
+              confidence: 95,
+              angle: 0.4,
+              bbox: { x0: 45, y0: 92, x1: 800, y1: 116 },
+              elements: [
+                // Element 0 has '1|245' glued by table border pipe; symbols split it!
+                {
+                  elementIndex: 0,
+                  text: '1|245',
+                  confidence: 94,
+                  angle: 0.4,
+                  bbox: { x0: 55, y0: 92, x1: 225, y1: 116 },
+                  symbols: [
+                    { symbolIndex: 0, text: '1', confidence: 97, angle: 0.4, bbox: { x0: 55, y0: 92, x1: 72, y1: 116 } },
+                    { symbolIndex: 1, text: '|', confidence: 70, angle: 0.4, bbox: { x0: 132, y0: 90, x1: 135, y1: 118 } },
+                    { symbolIndex: 2, text: '2', confidence: 96, angle: 0.4, bbox: { x0: 165, y0: 92, x1: 182, y1: 116 } },
+                    { symbolIndex: 3, text: '4', confidence: 96, angle: 0.4, bbox: { x0: 185, y0: 92, x1: 202, y1: 116 } },
+                    { symbolIndex: 4, text: '5', confidence: 95, angle: 0.4, bbox: { x0: 205, y0: 92, x1: 225, y1: 116 } },
+                  ],
+                },
+                { elementIndex: 1, text: 'AYSE', confidence: 94, angle: 0.4, bbox: { x0: 325, y0: 92, x1: 390, y1: 116 } },
+                { elementIndex: 2, text: 'NUR', confidence: 96, angle: 0.4, bbox: { x0: 405, y0: 92, x1: 460, y1: 116 } },
+                { elementIndex: 3, text: 'CELIK', confidence: 93, angle: 0.4, bbox: { x0: 575, y0: 92, x1: 655, y1: 116 } },
+                { elementIndex: 4, text: 'K', confidence: 97, angle: 0.4, bbox: { x0: 775, y0: 92, x1: 795, y1: 116 } },
+              ],
+            },
+            {
+              lineIndex: 1,
+              text: '2 246 MEHMET E',
+              confidence: 95,
+              angle: 0.4,
+              bbox: { x0: 55, y0: 126, x1: 795, y1: 150 },
+              elements: [
+                { elementIndex: 0, text: '2', confidence: 98, angle: 0.4, bbox: { x0: 55, y0: 126, x1: 72, y1: 150 } },
+                { elementIndex: 1, text: '246', confidence: 98, angle: 0.4, bbox: { x0: 165, y0: 126, x1: 225, y1: 150 } },
+                { elementIndex: 2, text: 'MEHMET', confidence: 96, angle: 0.4, bbox: { x0: 330, y0: 126, x1: 440, y1: 150 } },
+                // Notice: NO surname on Row 2!
+                { elementIndex: 3, text: 'E', confidence: 97, angle: 0.4, bbox: { x0: 775, y0: 126, x1: 795, y1: 150 } },
+              ],
+            },
+            {
+              lineIndex: 2,
+              text: '3 247 OMER FARUK SAHIN E',
+              confidence: 95,
+              angle: 0.4,
+              bbox: { x0: 55, y0: 160, x1: 795, y1: 184 },
+              elements: [
+                { elementIndex: 0, text: '3', confidence: 98, angle: 0.4, bbox: { x0: 55, y0: 160, x1: 72, y1: 184 } },
+                { elementIndex: 1, text: '247', confidence: 98, angle: 0.4, bbox: { x0: 165, y0: 160, x1: 225, y1: 184 } },
+                { elementIndex: 2, text: 'OMER', confidence: 94, angle: 0.4, bbox: { x0: 325, y0: 160, x1: 390, y1: 184 } },
+                { elementIndex: 3, text: 'FARUK', confidence: 96, angle: 0.4, bbox: { x0: 405, y0: 160, x1: 485, y1: 184 } },
+                { elementIndex: 4, text: 'SAHIN', confidence: 93, angle: 0.4, bbox: { x0: 575, y0: 160, x1: 655, y1: 184 } },
+                { elementIndex: 5, text: 'E', confidence: 97, angle: 0.4, bbox: { x0: 775, y0: 160, x1: 795, y1: 184 } },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  };
+
+  const mlkitAdapter = new CapacitorMlKitOcrEngine(
+    new SelfContainedTurkishOcrEngine(),
+    mockMlKitBridge
+  );
+  assert.equal(mlkitAdapter.isLocalOnly, true);
+  assert.equal(mlkitAdapter.isNativeAndroidAvailable(), true);
+
+  const pipelineRes = await runLocalRosterOcrPipeline(sampleImg, [], {
+    engine: mlkitAdapter,
+  });
+
+  assert.equal(pipelineRes.ocrOutput.engineId, 'google-mlkit-android-v2');
+  assert.equal(pipelineRes.verifiedRows.length, 3);
+
+  // Row 1: "1|245" was cleanly split into sequence=1 and studentNumber="245", "AYSE NUR" -> "AYŞE NUR", "CELIK" -> "ÇELİK"
+  assert.equal(pipelineRes.verifiedRows[0].sequenceNumber, 1);
+  assert.equal(pipelineRes.verifiedRows[0].studentNumber, '245');
+  assert.equal(pipelineRes.verifiedRows[0].firstName, 'AYŞE NUR');
+  assert.equal(pipelineRes.verifiedRows[0].lastName, 'ÇELİK');
+
+  // Row 2: Missing surname stays empty "" and NEVER steals ÇELİK (Row 1) or ŞAHİN (Row 3)
+  assert.equal(pipelineRes.verifiedRows[1].sequenceNumber, 2);
+  assert.equal(pipelineRes.verifiedRows[1].studentNumber, '246');
+  assert.equal(pipelineRes.verifiedRows[1].firstName, 'MEHMET');
+  assert.equal(pipelineRes.verifiedRows[1].lastName, '');
+  assert.ok(pipelineRes.verifiedRows[1].uncertaintyFlags.includes('MISSING_LAST_NAME'));
+
+  // Row 3: "OMER FARUK" -> "ÖMER FARUK", "SAHIN" -> "ŞAHİN"
+  assert.equal(pipelineRes.verifiedRows[2].sequenceNumber, 3);
+  assert.equal(pipelineRes.verifiedRows[2].studentNumber, '247');
+  assert.equal(pipelineRes.verifiedRows[2].firstName, 'ÖMER FARUK');
+  assert.equal(pipelineRes.verifiedRows[2].lastName, 'ŞAHİN');
+
+  // Verify Ground-Truth text parser & accuracy evaluator against this ML Kit run
+  const gtList = parseGroundTruthRosterText(
+    '245 | AYŞE NUR | ÇELİK | K\n246 | MEHMET |  | E\n247 | ÖMER FARUK | ŞAHİN | E'
+  );
+  assert.equal(gtList.length, 3);
+  const acc = evaluateRosterOcrAccuracyMetrics(pipelineRes.verifiedRows, gtList);
+  assert.equal(acc.studentNumberExactMatchRate, 100);
+  assert.equal(acc.rowIdentityMatchRate, 100);
+  assert.equal(acc.zeroCrossRowContamination, true);
+  assert.equal(acc.characterAccuracyPercent, 100);
+});
+
 
 
 

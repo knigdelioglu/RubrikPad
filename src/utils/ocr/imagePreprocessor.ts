@@ -7,7 +7,7 @@ import type {
 } from './ocrTypes.ts';
 
 export const MAX_OCR_FILE_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB max file upload guard
-export const MAX_OCR_IMAGE_DIMENSION_PX = 1800; // Default max width/height cap for tablet performance
+export const MAX_OCR_IMAGE_DIMENSION_PX = 3200; // High-resolution cap (3200px) so 30-40 row classroom rosters retain crisp Turkish diacritics (Ç, Ğ, İ, Ö, Ş, Ü) for ML Kit & local OCR
 export const MAX_OCR_RAW_MEGAPIXELS = 25; // 25 MP hard safety guard against tablet memory exhaustion
 
 export interface OcrImageDimensionPlan {

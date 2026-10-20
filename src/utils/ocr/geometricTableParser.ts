@@ -194,7 +194,8 @@ interface PhysicalRowCluster {
 }
 
 /**
- * Groups tokens into physical horizontal rows using slant-corrected Y centers and horizontal grid lines.
+ * Groups tokens into physical horizontal rows using slant-corrected Y centers, horizontal grid lines,
+ * vertical bounding-box overlap ratio, and native ML Kit line indices so adjacent students never merge into a single row.
  */
 function clusterTokensIntoPhysicalRows(
   items: InternalTokenWithCorrectedY[],
@@ -203,7 +204,7 @@ function clusterTokensIntoPhysicalRows(
 ): PhysicalRowCluster[] {
   if (items.length === 0) return [];
   const sorted = [...items].sort((a, b) => a.correctedY - b.correctedY);
-  const maxRowDeltaY = Math.max(8, medianH * 0.62);
+  const maxRowDeltaY = Math.max(7, medianH * 0.56);
 
   const sortedHorizLines = [...horizontalGridLinesY].sort((a, b) => a - b);
   const hasGridDividerBetween = (yA: number, yB: number): boolean => {
@@ -228,7 +229,33 @@ function clusterTokensIntoPhysicalRows(
     const separatedByGridLine = hasGridDividerBetween(clusterMeanRawY, item.cy);
     const verticalDist = Math.abs(item.correctedY - clusterMeanCorrY);
 
-    if (!separatedByGridLine && verticalDist <= maxRowDeltaY) {
+    // Check if an existing token in currentCluster occupies the same horizontal X column span (which means item is on the next physical row!)
+    const overlapsHorizontallyWithSameColumnToken = currentCluster.some(
+      (existing) => {
+        const xOverlap =
+          Math.min(existing.token.bbox.x1, item.token.bbox.x1) -
+          Math.max(existing.token.bbox.x0, item.token.bbox.x0);
+        const minW = Math.min(existing.width, item.width);
+        const yGap = Math.abs(item.correctedY - existing.correctedY);
+        const differentMlKitLine =
+          existing.token.blockIndex !== undefined &&
+          item.token.blockIndex !== undefined &&
+          existing.token.blockIndex === item.token.blockIndex &&
+          existing.token.lineIndex !== undefined &&
+          item.token.lineIndex !== undefined &&
+          existing.token.lineIndex !== item.token.lineIndex;
+        return (
+          xOverlap >= Math.max(4, minW * 0.35) &&
+          (yGap >= medianH * 0.38 || differentMlKitLine)
+        );
+      }
+    );
+
+    if (
+      !separatedByGridLine &&
+      !overlapsHorizontallyWithSameColumnToken &&
+      verticalDist <= maxRowDeltaY
+    ) {
       currentCluster.push(item);
     } else {
       rawClusters.push([item]);
@@ -833,9 +860,9 @@ export function analyzeRosterTableGeometry(
         }
       }
 
-      // Find matching column at this vertical position (accounting for column drift slope)
+      // Find matching column at this vertical position (accounting for column drift slope and horizontal bbox overlap)
       let matchedCol: DetectedColumnBand | null = null;
-      let minColDist = Infinity;
+      let bestColScore = -Infinity;
 
       for (const col of columns) {
         const driftX = col.driftSlopeXPerY * dyFromTop;
@@ -843,23 +870,36 @@ export function analyzeRosterTableGeometry(
         const effX1 = col.x1 + driftX;
         const effCenter = col.centerX + driftX;
 
-        if (item.cx >= effX0 && item.cx <= effX1) {
-          // Check if token straddles the boundary with an adjacent column
-          const distToEdge = Math.min(
-            Math.abs(item.token.bbox.x0 - effX0),
-            Math.abs(item.token.bbox.x1 - effX1)
-          );
-          if (distToEdge < 3 && columns.length > 1) {
-            uncertaintyFlags.add('COLUMN_BOUNDARY_OVERLAP');
-          }
-          matchedCol = col;
-          break;
-        }
+        const overlapW = Math.max(
+          0,
+          Math.min(item.token.bbox.x1, effX1) -
+            Math.max(item.token.bbox.x0, effX0)
+        );
+        const overlapRatio = overlapW / Math.max(1, item.width);
+        const centerInside = item.cx >= effX0 && item.cx <= effX1;
+        const distToCenter = Math.abs(item.cx - effCenter);
 
-        const d = Math.abs(item.cx - effCenter);
-        if (d < minColDist) {
-          minColDist = d;
+        const score =
+          overlapRatio * 120 +
+          (centerInside ? 50 : 0) -
+          distToCenter * 0.25;
+
+        if (score > bestColScore) {
+          bestColScore = score;
           matchedCol = col;
+        }
+      }
+
+      if (matchedCol && columns.length > 1) {
+        const driftX = matchedCol.driftSlopeXPerY * dyFromTop;
+        const effX0 = matchedCol.x0 + driftX;
+        const effX1 = matchedCol.x1 + driftX;
+        const distToEdge = Math.min(
+          Math.abs(item.token.bbox.x0 - effX0),
+          Math.abs(item.token.bbox.x1 - effX1)
+        );
+        if (distToEdge < 3) {
+          uncertaintyFlags.add('COLUMN_BOUNDARY_OVERLAP');
         }
       }
 
