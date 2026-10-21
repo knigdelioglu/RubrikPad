@@ -2,31 +2,105 @@ name: RubrikPad CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
   test-and-build:
+    name: Typecheck, tests and web build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
 
-      - name: Typecheck (Lint)
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
         run: npm run lint
 
-      - name: Run Unit Tests (Scoring, Storage, Roster OCR, CSV/PDF Security)
+      - name: Unit tests
         run: npm test
 
-      - name: Build Production Bundle
+      - name: Build web application
         run: npm run build
+
+  android-apk:
+    name: Build Android APK and publish prerelease
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 16 SDK
+        run: sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Synchronize Capacitor Android project
+        run: npx cap sync android
+
+      - name: Build installable debug APK
+        working-directory: android
+        run: bash ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Prepare APK and checksum
+        run: |
+          mkdir -p release
+          cp android/app/build/outputs/apk/debug/app-debug.apk release/RubrikPad-debug.apk
+          cd release
+          sha256sum RubrikPad-debug.apk > SHA256SUMS.txt
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RubrikPad-Android-debug
+          path: release/
+          if-no-files-found: error
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "snapshot-${GITHUB_RUN_NUMBER}" \
+            release/RubrikPad-debug.apk release/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title "RubrikPad snapshot ${GITHUB_RUN_NUMBER}" \
+            --notes "Automated CI build from commit ${GITHUB_SHA}. Debug-signed APK for Android 16 (API 36); not a production-signed release." \
+            --prerelease
