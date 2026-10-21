@@ -139,7 +139,8 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
       const csv = generateSessionCsv(
         activeReportSession,
         activeReportRubric,
-        students
+        students,
+        activeClassroom?.id
       );
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);

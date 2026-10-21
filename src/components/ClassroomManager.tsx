@@ -23,10 +23,14 @@ import type {
   ParsedRosterRow,
 } from '../types.ts';
 import {
-  parseStudentRosterText,
-  validateStudentRecord,
+  appendStudentAuditLog,
+  checkClassroomDeletionImpact,
   checkStudentDeletionImpact,
+  createUniqueEntityId,
+  parseStudentRosterText,
   splitTurkishFullName,
+  validateClassroomRecord,
+  validateStudentRecord,
 } from '../utils/rubricLogic.ts';
 import { LocalOcrVerificationPanel } from './ocr/LocalOcrVerificationPanel.tsx';
 
@@ -37,6 +41,8 @@ interface ClassroomManagerProps {
   activeClassId: string;
   onSelectClass: (id: string) => void;
   onAddClassroom: (cls: Classroom) => void;
+  onUpdateClassroom?: (cls: Classroom) => void;
+  onDeleteClassroom?: (classroomId: string) => void;
   onAddStudents: (newStudents: Student[]) => void;
   onUpdateStudent?: (updated: Student) => void;
   onDeleteStudent: (studentId: string) => void;
@@ -49,6 +55,8 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
   activeClassId,
   onSelectClass,
   onAddClassroom,
+  onUpdateClassroom,
+  onDeleteClassroom,
   onAddStudents,
   onUpdateStudent,
   onDeleteStudent,
@@ -88,6 +96,8 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
   const [newClassName, setNewClassName] = useState('');
   const [newClassGrade, setNewClassGrade] = useState('7. Sınıf');
   const [newClassSubject, setNewClassSubject] = useState('Fen Bilimleri');
+  const [newClassError, setNewClassError] = useState<string | null>(null);
+  const [confirmDeleteClassId, setConfirmDeleteClassId] = useState<string | null>(null);
 
   // Single Student Add Form (Separate Ad & Soyad, P1 #3 & #4)
   const [singleStudentNum, setSingleStudentNum] = useState('');
@@ -170,9 +180,22 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
 
   const handleCreateClassroom = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newClassName.trim()) return;
+    setNewClassError(null);
+    const validation = validateClassroomRecord(
+      {
+        name: newClassName,
+        gradeLevel: newClassGrade,
+        subject: newClassSubject,
+        academicYear: '2026-2027',
+      },
+      classrooms
+    );
+    if (!validation.isValid) {
+      setNewClassError(validation.error || 'Geçersiz sınıf bilgisi.');
+      return;
+    }
     const newCls: Classroom = {
-      id: `cls-${Date.now()}`,
+      id: createUniqueEntityId('cls'),
       name: newClassName.trim(),
       gradeLevel: newClassGrade.trim() || 'Genel',
       subject: newClassSubject.trim() || 'Genel Ders',
@@ -181,6 +204,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
     onAddClassroom(newCls);
     onSelectClass(newCls.id);
     setNewClassName('');
+    setNewClassError(null);
     setShowNewClassForm(false);
   };
 
@@ -207,7 +231,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
     const first = singleFirstName.trim();
     const last = singleLastName.trim();
     const newStu: Student = {
-      id: `stu-${Date.now()}`,
+      id: createUniqueEntityId('stu'),
       studentNumber: singleStudentNum.trim(),
       firstName: first,
       lastName: last,
@@ -266,14 +290,11 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
       lastName: last,
       fullName: full,
       updatedAt: nowIso,
-      auditLog: [
-        {
-          timestamp: nowIso,
-          action: 'updated',
-          details: `Kayıt güncellendi: #${stu.studentNumber} ${stu.fullName} -> #${editNum.trim()} ${full}`,
-        },
-        ...(stu.auditLog || []),
-      ],
+      auditLog: appendStudentAuditLog(stu.auditLog, {
+        timestamp: nowIso,
+        action: 'updated',
+        details: `Kayıt güncellendi: #${stu.studentNumber} ${stu.fullName} -> #${editNum.trim()} ${full}`,
+      }),
     };
     onUpdateStudent(updated);
     setEditingStudentId(null);
@@ -303,8 +324,8 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
     }
 
     const nowIso = new Date().toISOString();
-    const created: Student[] = validRows.map((item, idx) => ({
-      id: `stu-${Date.now()}-${idx}`,
+    const created: Student[] = validRows.map((item) => ({
+      id: createUniqueEntityId('stu'),
       studentNumber: item.studentNumber.trim(),
       firstName: item.firstName.trim(),
       lastName: item.lastName.trim(),
@@ -420,12 +441,24 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setShowNewClassForm(false)}
+              onClick={() => {
+                setShowNewClassForm(false);
+                setNewClassError(null);
+              }}
               className="px-3 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 cursor-pointer"
             >
               İptal
             </button>
           </div>
+          {newClassError && (
+            <div
+              role="alert"
+              className="sm:col-span-4 text-xs text-red-700 font-semibold flex items-center gap-1.5"
+            >
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {newClassError}
+            </div>
+          )}
         </form>
       )}
 
@@ -437,33 +470,102 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
             (s) => s.classId === cls.id && !s.archived
           ).length;
           return (
-            <button
+            <div
               key={cls.id}
-              type="button"
-              onClick={() => onSelectClass(cls.id)}
-              className={`text-left p-4 rounded-xl border transition-all cursor-pointer ${
+              className={`relative p-4 rounded-xl border transition-all ${
                 isSelected
                   ? 'bg-teal-50/90 border-teal-700 ring-1 ring-teal-700'
                   : 'bg-white border-slate-200 hover:border-slate-300'
               }`}
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800">
-                  <School className="w-3.5 h-3.5" />
-                  {cls.gradeLevel}
-                </span>
-                <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                  {count} Öğrenci
-                </span>
-              </div>
-              <div className="text-lg font-bold text-slate-900">{cls.name}</div>
-              <div className="text-xs text-slate-600 mt-0.5">
-                {cls.subject} · {cls.academicYear}
-              </div>
-            </button>
+              <button
+                type="button"
+                onClick={() => onSelectClass(cls.id)}
+                className="w-full text-left cursor-pointer"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800">
+                    <School className="w-3.5 h-3.5" />
+                    {cls.gradeLevel}
+                  </span>
+                  <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                    {count} Öğrenci
+                  </span>
+                </div>
+                <div className="text-lg font-bold text-slate-900">{cls.name}</div>
+                <div className="text-xs text-slate-600 mt-0.5 pr-7">
+                  {cls.subject} · {cls.academicYear}
+                </div>
+              </button>
+              {onDeleteClassroom && classrooms.length > 1 && isSelected && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfirmDeleteClassId(
+                      confirmDeleteClassId === cls.id ? null : cls.id
+                    )
+                  }
+                  aria-label={`${cls.name} sınıfını sil`}
+                  className="absolute bottom-3 right-3 p-1.5 text-slate-400 hover:text-red-600 rounded cursor-pointer"
+                  title="Sınıf silme kontrolü"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
+
+      {confirmDeleteClassId &&
+        activeClassroom &&
+        confirmDeleteClassId === activeClassroom.id &&
+        (() => {
+          const clsImpact = checkClassroomDeletionImpact(
+            activeClassroom.id,
+            classrooms,
+            students,
+            sessions
+          );
+          return (
+            <div
+              role="alert"
+              className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950"
+            >
+              <div>
+                <div className="font-bold">
+                  &ldquo;{activeClassroom.name}&rdquo; Sınıf Silme Kontrolü
+                </div>
+                <div className="mt-0.5">
+                  {clsImpact.canDelete
+                    ? 'Bu sınıfa bağlı öğrenci veya değerlendirme oturumu bulunmuyor. Sınıfı güvenli bir şekilde silebilirsiniz.'
+                    : clsImpact.reason}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {clsImpact.canDelete && onDeleteClassroom && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDeleteClassroom(activeClassroom.id);
+                      setConfirmDeleteClassId(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold cursor-pointer"
+                  >
+                    Sınıfı Sil
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteClassId(null)}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 font-semibold cursor-pointer"
+                >
+                  Kapat
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
       {importSuccessBanner && (
         <div
@@ -679,14 +781,14 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                                       ...stu,
                                       archived: false,
                                       updatedAt: nowIso,
-                                      auditLog: [
+                                      auditLog: appendStudentAuditLog(
+                                        stu.auditLog,
                                         {
                                           timestamp: nowIso,
                                           action: 'restored',
                                           details: 'Öğrenci arşivden geri yüklendi.',
-                                        },
-                                        ...(stu.auditLog || []),
-                                      ],
+                                        }
+                                      ),
                                     });
                                   }}
                                   aria-label={`${stu.fullName} kaydını arşivden çıkar`}

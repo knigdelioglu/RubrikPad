@@ -10,7 +10,11 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import type { Rubric, RubricCriterion, EvaluationSession } from '../types.ts';
-import { validateRubric, checkRubricDeletionImpact } from '../utils/rubricLogic.ts';
+import {
+  validateRubric,
+  checkRubricDeletionImpact,
+  createUniqueEntityId,
+} from '../utils/rubricLogic.ts';
 
 interface RubricBuilderProps {
   rubrics: Rubric[];
@@ -81,7 +85,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
 
   const handleStartCreateNew = () => {
     const newRubric: Rubric = {
-      id: `rub-${Date.now()}`,
+      id: createUniqueEntityId('rub'),
       title: 'Yeni Değerlendirme Rubriği',
       subject: 'Genel Değerlendirme',
       description: 'Öğrencilerin süreç ve ürün performanslarını ölçüt temelli değerlendirir.',
@@ -90,7 +94,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       version: 1,
       criteria: [
         {
-          id: `crit-${Date.now()}-1`,
+          id: createUniqueEntityId('crit'),
           title: 'Hazırlık ve Planlama',
           category: 'Süreç',
           weight: 50,
@@ -99,7 +103,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
           levels: JSON.parse(JSON.stringify(DEFAULT_LEVELS)),
         },
         {
-          id: `crit-${Date.now()}-2`,
+          id: createUniqueEntityId('crit'),
           title: 'Uygulama ve Sonuç Üretimi',
           category: 'Uygulama',
           weight: 50,
@@ -117,7 +121,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   const handleDuplicateRubric = (rubric: Rubric) => {
     const cloned: Rubric = {
       ...JSON.parse(JSON.stringify(rubric)),
-      id: `rub-${Date.now()}`,
+      id: createUniqueEntityId('rub'),
       title: `${rubric.title} (Kopya)`,
       createdAt: new Date().toISOString().slice(0, 10),
       version: 1,
@@ -131,7 +135,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   const handleAddCriterionToDraft = () => {
     if (!draftRubric) return;
     const newCrit: RubricCriterion = {
-      id: `crit-${Date.now()}`,
+      id: createUniqueEntityId('crit'),
       title: `Yeni Ölçüt ${draftRubric.criteria.length + 1}`,
       category: 'Değerlendirme Boyutu',
       weight: 20,
@@ -734,7 +738,13 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                       <button
                         type="button"
                         onClick={() => {
+                          const nextRub = rubrics.find(
+                            (r) => r.id !== activeRubric.id
+                          );
                           onDeleteRubric(activeRubric.id);
+                          if (nextRub) {
+                            setSelectedRubricId(nextRub.id);
+                          }
                           setConfirmDeleteRubricId(null);
                         }}
                         className="px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg cursor-pointer"

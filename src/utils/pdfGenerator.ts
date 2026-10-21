@@ -146,12 +146,14 @@ function getEmbeddedFonts() {
 }
 
 /**
- * Normalizes typography punctuation while keeping 100% of Turkish characters
- * (`ğ, Ğ, ü, Ü, ş, Ş, ı, İ, ö, Ö, ç, Ç`) intact.
+ * Normalizes typography punctuation and strips control characters / bare CR/LF/Line-Separators
+ * so user text can never break out of PDF comment lines (`% UTF8: ...`) or corrupt PDF content streams,
+ * while keeping 100% of Turkish characters (`ğ, Ğ, ü, Ü, ş, Ş, ı, İ, ö, Ö, ç, Ç`) intact.
  */
-function normalizePdfTextLine(text: string): string {
+export function normalizePdfTextLine(text: string): string {
   return String(text ?? '')
-    .replace(/\r?\n/g, ' ')
+    .replace(/[\r\n\u2028\u2029\t]+/g, ' ')
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
     .replace(/[—–]/g, '-')
     .replace(/[·•]/g, '|')
     .replace(/[“”"]/g, "'");
@@ -304,8 +306,9 @@ export function generatePaginatedSessionPdfBytes(
   const criteriaPerBand = 8;
   const criterionBands = chunkArray(allCriteria, criteriaPerBand);
 
+  // Strictly isolate students to the requested `classroom.id` so multi-class sessions never leak another class's roster into this classroom's official PDF report
   const sessionStudents = students
-    .filter((s) => allowedClassIds.has(s.classId) && !s.archived)
+    .filter((s) => s.classId === classroom.id && !s.archived)
     .sort((a, b) =>
       a.studentNumber.localeCompare(b.studentNumber, undefined, {
         numeric: true,
@@ -719,9 +722,12 @@ export function downloadSessionPdfFile(
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  const safeTitle = session.title
-    .toLowerCase()
-    .replace(/[^a-z0-9ğüşıöç]/gi, '_');
+  const safeTitle =
+    session.title
+      .toLowerCase()
+      .replace(/[^a-z0-9ğüşıöç]+/gi, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 64) || 'oturum';
   link.href = url;
   link.setAttribute('download', `degerlendirme_raporu_${safeTitle}.pdf`);
   document.body.appendChild(link);

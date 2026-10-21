@@ -646,6 +646,254 @@ test('OCR #11: Android Google ML Kit Text Recognition v2 Capacitor adapter proce
   assert.equal(acc.characterAccuracyPercent, 100);
 });
 
+test('OCR #12: Confidence scores are never artificially inflated when OCR confidence is 0 or when words match the Turkish lexicon, preventing erroneous names from appearing reliable', async () => {
+  const { normalizeMlKitTurkishToken } = await import('./mlKitOcrEngine.ts');
+
+  // 1. OCR confidence 0 must remain 0 (never inflated to 92!)
+  const zeroConfWord = normalizeMlKitTurkishToken('AYŞE', 0);
+  assert.equal(zeroConfWord.text, 'AYŞE');
+  assert.equal(zeroConfWord.confidence, 0);
+
+  const zeroConfDiacritic = normalizeMlKitTurkishToken('CELIK', 0);
+  assert.equal(zeroConfDiacritic.text, 'ÇELİK');
+  assert.equal(zeroConfDiacritic.confidence, 0);
+
+  const zeroConfNum = normalizeMlKitTurkishToken('245', 0, 'studentNumber');
+  assert.equal(zeroConfNum.text, '245');
+  assert.equal(zeroConfNum.confidence, 0);
+
+  // 2. Lexicon words with low confidence (e.g. 58%) must keep 58% (never boosted to 95%!)
+  const lowConfLexiconExact = normalizeMlKitTurkishToken('MEHMET', 0.58);
+  assert.equal(lowConfLexiconExact.text, 'MEHMET');
+  assert.equal(lowConfLexiconExact.confidence, 58);
+
+  const lowConfLexiconDiacritic = normalizeMlKitTurkishToken('SAHIN', 0.62);
+  assert.equal(lowConfLexiconDiacritic.text, 'ŞAHİN');
+  assert.ok(
+    lowConfLexiconDiacritic.confidence <= 62,
+    `Expected confidence <= 62, got ${lowConfLexiconDiacritic.confidence}`
+  );
+
+  // 3. A row containing a 0% or 58% confidence dictionary name must be flagged as LOW_CONFIDENCE_OCR ('review_required') and skipped by bulkApproveReliableOcrRows
+  const tokensWithLowConfName: OcrWordToken[] = [
+    { id: 'h1', text: 'SIRA', confidence: 99, bbox: { x0: 40, y0: 20, x1: 90, y1: 45 } },
+    { id: 'h2', text: 'OKUL NO', confidence: 99, bbox: { x0: 140, y0: 20, x1: 230, y1: 45 } },
+    { id: 'h3', text: 'ADI', confidence: 99, bbox: { x0: 310, y0: 20, x1: 370, y1: 45 } },
+    { id: 'h4', text: 'SOYADI', confidence: 99, bbox: { x0: 520, y0: 20, x1: 610, y1: 45 } },
+
+    // Row 1: "MEHMET" has 0% confidence even though it's in the dictionary
+    { id: 'r1-s', text: '1', confidence: 99, bbox: { x0: 45, y0: 85, x1: 65, y1: 110 } },
+    { id: 'r1-n', text: '245', confidence: 99, bbox: { x0: 150, y0: 85, x1: 200, y1: 110 } },
+    { id: 'r1-f', text: 'MEHMET', confidence: 0, bbox: { x0: 310, y0: 85, x1: 410, y1: 110 } },
+    { id: 'r1-l', text: 'DEMİR', confidence: 96, bbox: { x0: 520, y0: 85, x1: 605, y1: 110 } },
+
+    // Row 2: "AYŞE" has 58% confidence even though it's in the dictionary
+    { id: 'r2-s', text: '2', confidence: 99, bbox: { x0: 45, y0: 145, x1: 65, y1: 170 } },
+    { id: 'r2-n', text: '246', confidence: 99, bbox: { x0: 150, y0: 145, x1: 200, y1: 170 } },
+    { id: 'r2-f', text: 'AYŞE', confidence: 58, bbox: { x0: 310, y0: 145, x1: 390, y1: 170 } },
+    { id: 'r2-l', text: 'ÇELİK', confidence: 96, bbox: { x0: 520, y0: 145, x1: 605, y1: 170 } },
+  ];
+
+  const geo = analyzeRosterTableGeometry(tokensWithLowConfName);
+  const evaluated = evaluateRosterReliability(geo.rows, tokensWithLowConfName, []);
+
+  assert.equal(evaluated.length, 2);
+  assert.equal(evaluated[0].confidence, 0);
+  assert.ok(evaluated[0].uncertaintyFlags.includes('LOW_CONFIDENCE_OCR'));
+  assert.equal(evaluated[0].reliabilityLevel, 'review_required');
+
+  assert.ok(evaluated[1].confidence <= 66);
+  assert.ok(evaluated[1].uncertaintyFlags.includes('LOW_CONFIDENCE_OCR'));
+  assert.equal(evaluated[1].reliabilityLevel, 'review_required');
+
+  // Bulk approval must NOT auto-approve either row!
+  const bulk = bulkApproveReliableOcrRows(evaluated, tokensWithLowConfName, []);
+  assert.equal(bulk.newlyApprovedCount, 0);
+  assert.equal(bulk.skippedUncertainCount, 2);
+});
+
+test('OCR #13: ML Kit native bridge errors are never silently hidden; failure cause and actual executed fallback engine are transparently reported', async () => {
+  const { CapacitorMlKitOcrEngine } = await import('./mlKitOcrEngine.ts');
+  const { SelfContainedTurkishOcrEngine } = await import('./localOcrEngine.ts');
+
+  const sampleImg = createReferenceSampleGrayImage();
+  const browserFallback = new SelfContainedTurkishOcrEngine();
+
+  // Case 1: Native Android bridge throws an exception during recognition
+  const failingBridge = {
+    getCapabilities: async () => ({
+      available: true,
+      engineId: 'google-mlkit-text-recognition-v2-latin',
+      engineName: 'Google ML Kit Text Recognition v2',
+      isLocalOnly: true,
+      script: 'latin-turkish',
+    }),
+    recognizeText: async () => {
+      throw new Error('ML Kit yerel modeli başlatılamadı (DynamiteModule hatası)');
+    },
+  };
+
+  const engineWithFailingBridge = new CapacitorMlKitOcrEngine(
+    browserFallback,
+    failingBridge
+  );
+  const res1 = await runLocalRosterOcrPipeline(sampleImg, [], {
+    engine: engineWithFailingBridge,
+  });
+
+  // Must explicitly report that fallback occurred, why it occurred, which engine was requested, and which engine actually ran!
+  assert.equal(res1.ocrOutput.fallbackOccurred, true);
+  assert.equal(res1.ocrOutput.requestedEngineId, 'google-mlkit-android-v2');
+  assert.equal(res1.ocrOutput.engineId, 'rubrikpad-local-tur-v1');
+  assert.ok(
+    res1.ocrOutput.fallbackReason?.includes('DynamiteModule hatası'),
+    `Expected fallbackReason to include exact error cause, got: ${res1.ocrOutput.fallbackReason}`
+  );
+  assert.ok(
+    res1.ocrOutput.preprocessing.diagnostics.qualityWarnings.some((w) =>
+      w.includes('DynamiteModule hatası')
+    )
+  );
+  assert.equal(res1.verifiedRows.length, 2);
+
+  // Case 2: Running in Web/Browser where native Android Capacitor bridge is inactive
+  const engineWithoutNativeBridge = new CapacitorMlKitOcrEngine(browserFallback);
+  const res2 = await runLocalRosterOcrPipeline(sampleImg, [], {
+    engine: engineWithoutNativeBridge,
+  });
+  assert.equal(res2.ocrOutput.fallbackOccurred, true);
+  assert.equal(res2.ocrOutput.requestedEngineId, 'google-mlkit-android-v2');
+  assert.equal(res2.ocrOutput.engineId, 'rubrikpad-local-tur-v1');
+  assert.ok(res2.ocrOutput.fallbackReason?.includes('aktif değil'));
+});
+
+test('OCR #14: Puanla order-preserving 1-to-1 surname matching algorithm resolves severe vertical surname column shift (+24px) without neighbor surname stealing', async () => {
+  const { matchSurnamesOrderPreservingOneToOne } = await import(
+    './geometricTableParser.ts'
+  );
+
+  // 4 student anchor rows at y = 102, 142, 182, 222 (40px row step)
+  // Right-hand Soyadı column is shifted down by +24px due to page curl / perspective:
+  // - Row 1 surname "ÇELİK" is at y=126 (which is 24px below Row 1=102, and only 16px above Row 2=142!)
+  // - Row 2 ("246 MEHMET") has NO surname on the page!
+  // - Row 3 surname "ŞAHİN" is at y=206 (closer in raw Y to Row 4=222 than Row 3=182!)
+  // - Row 4 surname "GÜNEŞ" is at y=246
+  const curledTableTokens: OcrWordToken[] = [
+    { id: 'h-seq', text: 'SIRA', confidence: 99, bbox: { x0: 40, y0: 30, x1: 90, y1: 54 } },
+    { id: 'h-num', text: 'OKUL NO', confidence: 99, bbox: { x0: 140, y0: 30, x1: 230, y1: 54 } },
+    { id: 'h-first', text: 'ADI', confidence: 99, bbox: { x0: 310, y0: 30, x1: 375, y1: 54 } },
+    { id: 'h-last', text: 'SOYADI', confidence: 99, bbox: { x0: 560, y0: 30, x1: 650, y1: 54 } },
+    { id: 'h-gen', text: 'CİNSİYET', confidence: 99, bbox: { x0: 740, y0: 30, x1: 830, y1: 54 } },
+
+    // Row 1 anchor at y=90..114 (center 102), Surname "ÇELİK" shifted down to y=114..138 (center 126)
+    { id: 'r1-seq', text: '1', confidence: 98, bbox: { x0: 50, y0: 90, x1: 68, y1: 114 } },
+    { id: 'r1-num', text: '245', confidence: 98, bbox: { x0: 155, y0: 90, x1: 205, y1: 114 } },
+    { id: 'r1-f1', text: 'AYŞE', confidence: 96, bbox: { x0: 310, y0: 90, x1: 375, y1: 114 } },
+    { id: 'r1-f2', text: 'NUR', confidence: 96, bbox: { x0: 385, y0: 90, x1: 440, y1: 114 } },
+    { id: 'r1-last', text: 'ÇELİK', confidence: 95, bbox: { x0: 565, y0: 114, x1: 645, y1: 138 } },
+    { id: 'r1-gen', text: 'K', confidence: 97, bbox: { x0: 765, y0: 114, x1: 785, y1: 138 } },
+
+    // Row 2 anchor at y=130..154 (center 142), Surname is BLANK!
+    { id: 'r2-seq', text: '2', confidence: 98, bbox: { x0: 50, y0: 130, x1: 68, y1: 154 } },
+    { id: 'r2-num', text: '246', confidence: 98, bbox: { x0: 155, y0: 130, x1: 205, y1: 154 } },
+    { id: 'r2-f1', text: 'MEHMET', confidence: 96, bbox: { x0: 310, y0: 130, x1: 415, y1: 154 } },
+    { id: 'r2-gen', text: 'E', confidence: 97, bbox: { x0: 765, y0: 154, x1: 785, y1: 178 } },
+
+    // Row 3 anchor at y=170..194 (center 182), Surname "ŞAHİN" shifted down to y=194..218 (center 206)
+    { id: 'r3-seq', text: '3', confidence: 98, bbox: { x0: 50, y0: 170, x1: 68, y1: 194 } },
+    { id: 'r3-num', text: '247', confidence: 98, bbox: { x0: 155, y0: 170, x1: 205, y1: 194 } },
+    { id: 'r3-f1', text: 'ÖMER', confidence: 96, bbox: { x0: 310, y0: 170, x1: 375, y1: 194 } },
+    { id: 'r3-f2', text: 'FARUK', confidence: 96, bbox: { x0: 385, y0: 170, x1: 465, y1: 194 } },
+    { id: 'r3-last', text: 'ŞAHİN', confidence: 95, bbox: { x0: 565, y0: 194, x1: 645, y1: 218 } },
+    { id: 'r3-gen', text: 'E', confidence: 97, bbox: { x0: 765, y0: 194, x1: 785, y1: 218 } },
+
+    // Row 4 anchor at y=210..234 (center 222), Surname "GÜNEŞ" shifted down to y=234..258 (center 246)
+    { id: 'r4-seq', text: '4', confidence: 98, bbox: { x0: 50, y0: 210, x1: 68, y1: 234 } },
+    { id: 'r4-num', text: '248', confidence: 98, bbox: { x0: 155, y0: 210, x1: 205, y1: 234 } },
+    { id: 'r4-f1', text: 'ZEYNEP', confidence: 96, bbox: { x0: 310, y0: 210, x1: 410, y1: 234 } },
+    { id: 'r4-last', text: 'GÜNEŞ', confidence: 95, bbox: { x0: 565, y0: 234, x1: 645, y1: 258 } },
+    { id: 'r4-gen', text: 'K', confidence: 97, bbox: { x0: 765, y0: 234, x1: 785, y1: 258 } },
+  ];
+
+  const analysis = analyzeRosterTableGeometry(curledTableTokens);
+  assert.equal(analysis.surnameOrderAlignmentApplied, true);
+  assert.equal(analysis.rows.length, 4);
+
+  // Row 1 gets "ÇELİK"
+  assert.equal(analysis.rows[0].studentNumber, '245');
+  assert.equal(analysis.rows[0].firstName, 'AYŞE NUR');
+  assert.equal(analysis.rows[0].lastName, 'ÇELİK');
+  assert.equal(analysis.rows[0].gender, 'K');
+
+  // Row 2 MUST stay empty "" and NOT steal "ÇELİK" even though "ÇELİK" (y=126) is only 16px from Row 2 (y=142)!
+  assert.equal(analysis.rows[1].studentNumber, '246');
+  assert.equal(analysis.rows[1].firstName, 'MEHMET');
+  assert.equal(analysis.rows[1].lastName, '');
+  assert.equal(analysis.rows[1].gender, 'E');
+
+  // Row 3 gets "ŞAHİN"
+  assert.equal(analysis.rows[2].studentNumber, '247');
+  assert.equal(analysis.rows[2].firstName, 'ÖMER FARUK');
+  assert.equal(analysis.rows[2].lastName, 'ŞAHİN');
+  assert.equal(analysis.rows[2].gender, 'E');
+
+  // Row 4 gets "GÜNEŞ"
+  assert.equal(analysis.rows[3].studentNumber, '248');
+  assert.equal(analysis.rows[3].firstName, 'ZEYNEP');
+  assert.equal(analysis.rows[3].lastName, 'GÜNEŞ');
+  assert.equal(analysis.rows[3].gender, 'K');
+
+  // Verify direct call to matchSurnamesOrderPreservingOneToOne preserves strict monotonic order
+  const directMatch = matchSurnamesOrderPreservingOneToOne(
+    [
+      { rowIndex: 0, anchorCorrectedY: 102, anchorRawY: 102 },
+      { rowIndex: 1, anchorCorrectedY: 142, anchorRawY: 142 },
+      { rowIndex: 2, anchorCorrectedY: 182, anchorRawY: 182 },
+      { rowIndex: 3, anchorCorrectedY: 222, anchorRawY: 222 },
+    ],
+    [
+      {
+        candidateIndex: 0,
+        tokens: [curledTableTokens[9]],
+        text: 'ÇELİK',
+        bbox: curledTableTokens[9].bbox,
+        correctedY: 126,
+        rawCenterY: 126,
+      },
+      {
+        candidateIndex: 1,
+        tokens: [curledTableTokens[19]],
+        text: 'ŞAHİN',
+        bbox: curledTableTokens[19].bbox,
+        correctedY: 206,
+        rawCenterY: 206,
+      },
+      {
+        candidateIndex: 2,
+        tokens: [curledTableTokens[24]],
+        text: 'GÜNEŞ',
+        bbox: curledTableTokens[24].bbox,
+        correctedY: 246,
+        rawCenterY: 246,
+      },
+    ],
+    24,
+    40
+  );
+
+  assert.equal(directMatch.estimatedColumnVerticalOffsetPx, 24);
+  assert.equal(directMatch.alignmentPairs.length, 3);
+  assert.deepEqual(
+    directMatch.alignmentPairs.map((p) => p.rowIndex),
+    [1, 3, 4]
+  );
+  assert.deepEqual(
+    directMatch.alignmentPairs.map((p) => p.surnameText),
+    ['ÇELİK', 'ŞAHİN', 'GÜNEŞ']
+  );
+});
+
+
 
 
 

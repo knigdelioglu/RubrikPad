@@ -19,9 +19,11 @@ export const CURRENT_SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'rubrikpad_state_v3';
 export const LEGACY_V3_ROLLBACK_KEY = 'rubrikpad_state_v3_rollback_backup';
 export const STORAGE_CONFLICT_BACKUP_KEY = 'rubrikpad_state_v3_conflict_backup';
+export const PRE_RESET_ROLLBACK_KEY = 'rubrikpad_state_v3_pre_reset_backup';
 export const LOCALSTORAGE_QUARANTINE_KEY = 'rubrikpad_quarantine_v3_backup';
 export const INDEXEDDB_QUARANTINE_KEY = 'rubrikpad_quarantine_idb_backup';
 export const LEGACY_V2_BUNDLE_KEY = 'rubrikpad_state_v2';
+export const MAX_BACKUP_JSON_BYTES = 15 * 1024 * 1024; // 15 MB upper bound against OOM / DoS
 export const LEGACY_V2_KEYS = {
   classrooms: ['rubrikpad_classrooms_v2', 'rubrikpad_classrooms_v1', 'rubrikpad_classrooms'],
   students: ['rubrikpad_students_v2', 'rubrikpad_students_v1', 'rubrikpad_students'],
@@ -36,6 +38,7 @@ const IDB_STORE = 'app_state_tx';
 let memoryIndexedDbSnapshot: string | null = null;
 let memoryV3RollbackSnapshot: string | null = null;
 let memoryConflictBackupSnapshot: string | null = null;
+let memoryPreResetBackupSnapshot: string | null = null;
 let memoryIndexedDbQuarantineSnapshot: string | null = null;
 let storageWriteLockedDueToCorruption = false;
 let simulateIndexedDbFailure = false;
@@ -48,6 +51,7 @@ export function __clearMemoryIndexedDbForTests(): void {
   memoryIndexedDbSnapshot = null;
   memoryV3RollbackSnapshot = null;
   memoryConflictBackupSnapshot = null;
+  memoryPreResetBackupSnapshot = null;
   memoryIndexedDbQuarantineSnapshot = null;
   storageWriteLockedDueToCorruption = false;
 }
@@ -92,6 +96,18 @@ export function getStorageConflictBackup(): string | null {
   return memoryConflictBackupSnapshot;
 }
 
+export function getPreResetRollbackBackup(): string | null {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const fromLs = localStorage.getItem(PRE_RESET_ROLLBACK_KEY);
+      if (fromLs) return fromLs;
+    } catch {
+      // ignore
+    }
+  }
+  return memoryPreResetBackupSnapshot;
+}
+
 export function getQuarantinedIndexedDbBackup(): string | null {
   if (typeof localStorage !== 'undefined') {
     try {
@@ -102,6 +118,20 @@ export function getQuarantinedIndexedDbBackup(): string | null {
     }
   }
   return memoryIndexedDbQuarantineSnapshot;
+}
+
+/**
+ * Safely parses JSON while stripping dangerous prototype-pollution keys (`__proto__`, `constructor`, `prototype`).
+ */
+export function parseJsonSafelyWithoutPrototypePollution<T = unknown>(
+  jsonString: string
+): T {
+  return JSON.parse(jsonString, (key, value) => {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      return undefined;
+    }
+    return value;
+  }) as T;
 }
 
 export interface AppDataState {
@@ -116,6 +146,9 @@ export interface TransactionalSaveResult {
   localStorageSaved: boolean;
   indexedDbSaved: boolean;
   checksum: string;
+  conflictDetected?: boolean;
+  conflictBackupKey?: string;
+  quotaHealedByEviction?: boolean;
   errors: string[];
   errorMessage: string | null;
 }
@@ -1233,6 +1266,35 @@ export function validateFullAppDataStructure(payload: unknown): {
     };
   }
 
+  if (
+    p.classrooms.length > 500 ||
+    p.students.length > 20000 ||
+    p.rubrics.length > 1000 ||
+    p.sessions.length > 5000
+  ) {
+    return {
+      isValid: false,
+      error: 'Yedek dosyasındaki kayıt sayısı güvenli sınırları aşıyor.',
+    };
+  }
+
+  const isValidScoreMap = (map: unknown): boolean => {
+    if (map === undefined || map === null) return true;
+    if (typeof map !== 'object' || Array.isArray(map)) return false;
+    for (const val of Object.values(map as Record<string, unknown>)) {
+      if (val === null || val === undefined) continue;
+      if (
+        typeof val !== 'number' ||
+        !Number.isFinite(val) ||
+        val < 0 ||
+        val > 1000
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+
   for (const cls of p.classrooms) {
     if (!cls || typeof cls !== 'object' || typeof (cls as Classroom).id !== 'string' || typeof (cls as Classroom).name !== 'string') {
       return { isValid: false, error: 'Sınıf kayıtlarından biri geçersiz veya eksik alan içeriyor.' };
@@ -1287,9 +1349,29 @@ export function validateFullAppDataStructure(payload: unknown): {
         typeof crit.id !== 'string' ||
         typeof crit.title !== 'string' ||
         typeof crit.weight !== 'number' ||
+        !Number.isFinite(crit.weight) ||
+        crit.weight < 0 ||
+        crit.weight > 1000 ||
+        (crit.maxPoints !== undefined &&
+          (typeof crit.maxPoints !== 'number' ||
+            !Number.isFinite(crit.maxPoints) ||
+            crit.maxPoints <= 0 ||
+            crit.maxPoints > 1000)) ||
         !Array.isArray(crit.levels)
       ) {
-        return { isValid: false, error: 'Rubrik ölçüt yapısı geçersiz.' };
+        return { isValid: false, error: 'Rubrik ölçüt yapısı veya ağırlık/puan sınırları geçersiz.' };
+      }
+      for (const lvl of crit.levels) {
+        if (
+          !lvl ||
+          typeof lvl !== 'object' ||
+          typeof lvl.points !== 'number' ||
+          !Number.isFinite(lvl.points) ||
+          lvl.points < 0 ||
+          lvl.points > 1000
+        ) {
+          return { isValid: false, error: 'Rubrik seviye puanı geçersiz veya negatif.' };
+        }
       }
     }
   }
@@ -1307,6 +1389,35 @@ export function validateFullAppDataStructure(payload: unknown): {
       (ses as EvaluationSession).evaluations === null
     ) {
       return { isValid: false, error: 'Değerlendirme oturumu kayıtlarından biri bozuk veya eksik.' };
+    }
+    for (const grp of (ses as EvaluationSession).groups) {
+      if (
+        !grp ||
+        typeof grp !== 'object' ||
+        typeof grp.id !== 'string' ||
+        typeof grp.name !== 'string' ||
+        !Array.isArray(grp.studentIds) ||
+        !isValidScoreMap(grp.criterionScores) ||
+        !isValidScoreMap(grp.directCriterionScores)
+      ) {
+        return { isValid: false, error: 'Oturum grup kaydı veya grup puan değerleri geçersiz.' };
+      }
+    }
+    for (const ev of Object.values((ses as EvaluationSession).evaluations)) {
+      if (!ev || typeof ev !== 'object') {
+        return { isValid: false, error: 'Öğrenci değerlendirme kaydı geçersiz.' };
+      }
+      if (
+        !isValidScoreMap(ev.criterionScores) ||
+        !isValidScoreMap(ev.directCriterionScores) ||
+        !isValidScoreMap(ev.groupCriterionScores) ||
+        !isValidScoreMap(ev.groupDirectScores)
+      ) {
+        return {
+          isValid: false,
+          error: 'Değerlendirme puan haritasında geçersiz (NaN, negatif veya sınır dışı) puan tespit edildi.',
+        };
+      }
     }
     const undoHistory = (ses as EvaluationSession).undoHistory;
     if (undoHistory !== undefined) {
@@ -1612,9 +1723,26 @@ export function verifyAndParseBackupBundle(jsonString: string): {
   requiresLegacyImport?: boolean;
   upgradedFromRpkChecksum?: boolean;
 } {
+  if (typeof jsonString !== 'string' || !jsonString.trim()) {
+    return {
+      isValid: false,
+      error: 'Yedek dosyası boş veya geçersiz.',
+    };
+  }
+
+  if (jsonString.length > MAX_BACKUP_JSON_BYTES) {
+    return {
+      isValid: false,
+      error: `Yedek dosyası boyutu güvenli sınırı (${Math.round(
+        MAX_BACKUP_JSON_BYTES / (1024 * 1024)
+      )} MB) aşıyor.`,
+    };
+  }
+
   try {
-    const parsed = JSON.parse(jsonString) as Partial<VerifiedBackupBundle> &
-      Partial<AppDataState>;
+    const parsed = parseJsonSafelyWithoutPrototypePollution<
+      Partial<VerifiedBackupBundle> & Partial<AppDataState>
+    >(jsonString);
     if (!parsed || typeof parsed !== 'object') {
       return {
         isValid: false,
@@ -1713,9 +1841,28 @@ export function importLegacyBackupBundle(jsonString: string): {
   migratedFromV2: boolean;
   newChecksum?: string;
 } {
+  if (typeof jsonString !== 'string' || !jsonString.trim()) {
+    return {
+      isValid: false,
+      migratedFromV2: false,
+      error: 'Eski sürüm yedek dosyası boş veya geçersiz.',
+    };
+  }
+
+  if (jsonString.length > MAX_BACKUP_JSON_BYTES) {
+    return {
+      isValid: false,
+      migratedFromV2: false,
+      error: `Yedek dosyası boyutu güvenli sınırı (${Math.round(
+        MAX_BACKUP_JSON_BYTES / (1024 * 1024)
+      )} MB) aşıyor.`,
+    };
+  }
+
   try {
-    const parsed = JSON.parse(jsonString) as Partial<VerifiedBackupBundle> &
-      Partial<AppDataState>;
+    const parsed = parseJsonSafelyWithoutPrototypePollution<
+      Partial<VerifiedBackupBundle> & Partial<AppDataState>
+    >(jsonString);
     if (!parsed || typeof parsed !== 'object') {
       return {
         isValid: false,
@@ -1865,7 +2012,51 @@ function saveOriginalV3RollbackCopy(rawOriginalJson: string): boolean {
 }
 
 /**
- * Archives the non-winning bundle during a localStorage <-> IndexedDB version conflict
+ * Saves an automatic pre-reset rollback backup of the current state before resetting to demo seed data.
+ */
+export function savePreResetRollbackBackup(state: AppDataState): string {
+  const bundle = createVerifiedBackupBundle(state);
+  const rawJson = JSON.stringify(bundle);
+  memoryPreResetBackupSnapshot = rawJson;
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(PRE_RESET_ROLLBACK_KEY, rawJson);
+    } catch {
+      // ignore quota error; memory & IndexedDB copies still protect the backup
+    }
+  }
+
+  if (typeof indexedDB !== 'undefined' && !simulateIndexedDbFailure) {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        if (db.objectStoreNames.contains(IDB_STORE)) {
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put(rawJson, 'pre_reset_backup');
+          tx.oncomplete = () => db.close();
+          tx.onerror = () => db.close();
+        } else {
+          db.close();
+        }
+      };
+    } catch {
+      // ignore
+    }
+  }
+
+  return bundle.checksum;
+}
+
+/**
+ * Archives the non-winning bundle during a localStorage <-> IndexedDB or multi-tab version conflict
  * so neither version is ever lost.
  */
 function saveConflictBackupCopy(rawLoserJson: string): void {
@@ -1943,14 +2134,21 @@ function quarantineCorruptedIndexedDbRecord(rawCorruptedJson: string): void {
 
 /**
  * Saves state transactionally into IndexedDB + verified localStorage snapshot.
- * P0: Refuses to overwrite corrupted localStorage/IndexedDB records with fallback seed data
- * while `storageWriteLockedDueToCorruption` is active, unless `forceUnlockCorruptionLock: true` is passed.
+ * - P0: Refuses to overwrite corrupted localStorage/IndexedDB records with fallback seed data
+ *   while `storageWriteLockedDueToCorruption` is active, unless `forceUnlockCorruptionLock: true` is passed.
+ * - Multi-tab / Concurrent Write Guard: If `expectedPreviousChecksum` is provided and `localStorage`
+ *   contains a valid v3 state with a different checksum, archives the external state to `STORAGE_CONFLICT_BACKUP_KEY`
+ *   and (when `strictOptimisticLock: true`) aborts the overwrite so concurrent tab changes are never lost.
+ * - Quota Auto-Healing: If `localStorage.setItem` fails due to quota limits, evicts auxiliary backup keys
+ *   from `localStorage` (while keeping them in IndexedDB/memory) and retries saving the primary state.
  */
 export async function saveTransactionalState(
   state: AppDataState,
   options?: {
     onSaveError?: (errorMessage: string, errors: string[]) => void;
     forceUnlockCorruptionLock?: boolean;
+    expectedPreviousChecksum?: string;
+    strictOptimisticLock?: boolean;
   }
 ): Promise<TransactionalSaveResult> {
   if (options?.forceUnlockCorruptionLock) {
@@ -1976,21 +2174,91 @@ export async function saveTransactionalState(
     };
   }
 
+  let conflictDetected = false;
+  let conflictBackupKey: string | undefined;
+
+  // Multi-tab / optimistic concurrency check before overwriting localStorage
+  if (
+    options?.expectedPreviousChecksum &&
+    typeof localStorage !== 'undefined'
+  ) {
+    try {
+      const currentRaw = localStorage.getItem(STORAGE_KEY);
+      if (currentRaw) {
+        const parsedCurrent = parseJsonSafelyWithoutPrototypePollution<{
+          checksum?: string;
+        }>(currentRaw);
+        const diskChecksum =
+          typeof parsedCurrent?.checksum === 'string'
+            ? parsedCurrent.checksum.trim()
+            : '';
+        if (
+          diskChecksum &&
+          diskChecksum !== options.expectedPreviousChecksum &&
+          diskChecksum !== bundle.checksum
+        ) {
+          const verifiedDisk = verifyAndParseBackupBundle(currentRaw);
+          if (verifiedDisk.isValid) {
+            conflictDetected = true;
+            conflictBackupKey = STORAGE_CONFLICT_BACKUP_KEY;
+            saveConflictBackupCopy(currentRaw);
+            if (options.strictOptimisticLock) {
+              const conflictMsg =
+                'Başka bir sekmede veya pencerede daha yeni bir değişiklik algılandı. Veri kaybını önlemek için önceki sürüm çakışma yedeğine (rubrikpad_state_v3_conflict_backup) alındı ve üzerine yazma engellendi.';
+              const errors = [conflictMsg];
+              if (options.onSaveError) {
+                options.onSaveError(conflictMsg, errors);
+              }
+              return {
+                ok: false,
+                localStorageSaved: false,
+                indexedDbSaved: false,
+                checksum: bundle.checksum,
+                conflictDetected: true,
+                conflictBackupKey,
+                errors,
+                errorMessage: conflictMsg,
+              };
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore read errors during optimistic check
+    }
+  }
+
   const serialized = JSON.stringify(bundle);
   const errors: string[] = [];
   let localStorageSaved = false;
   let indexedDbSaved = false;
+  let quotaHealedByEviction = false;
 
-  // 1. Save to localStorage
+  // 1. Save to localStorage (with automatic auxiliary-key eviction retry on QuotaExceededError)
   if (typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(STORAGE_KEY, serialized);
       localStorageSaved = true;
     } catch (err) {
-      const detail = err instanceof Error ? err.message : 'Kota veya erişim hatası';
-      errors.push(
-        `Yerel depolama (localStorage) kaydı başarısız oldu (${detail}).`
-      );
+      // Attempt to free localStorage quota by evicting non-primary backup keys (preserved in memory/IndexedDB)
+      try {
+        localStorage.removeItem(LEGACY_V3_ROLLBACK_KEY);
+        localStorage.removeItem(STORAGE_CONFLICT_BACKUP_KEY);
+        localStorage.removeItem(PRE_RESET_ROLLBACK_KEY);
+        localStorage.setItem(STORAGE_KEY, serialized);
+        localStorageSaved = true;
+        quotaHealedByEviction = true;
+      } catch (retryErr) {
+        const detail =
+          retryErr instanceof Error
+            ? retryErr.message
+            : err instanceof Error
+            ? err.message
+            : 'Kota veya erişim hatası';
+        errors.push(
+          `Yerel depolama (localStorage) kaydı başarısız oldu (${detail}).`
+        );
+      }
     }
   } else {
     errors.push('Tarayıcı yerel depolama alanı (localStorage) kullanılamıyor.');
@@ -2064,6 +2332,9 @@ export async function saveTransactionalState(
     localStorageSaved,
     indexedDbSaved,
     checksum: bundle.checksum,
+    conflictDetected,
+    conflictBackupKey,
+    quotaHealedByEviction,
     errors,
     errorMessage,
   };

@@ -143,6 +143,23 @@ export async function runLocalRosterOcrPipeline(
   };
 }
 
+let activeOcrWorkerCleanup: (() => void) | null = null;
+
+/**
+ * Terminates any currently running background OCR Web Worker so superseded photo uploads
+ * or unmounted OCR panels never leak background CPU/memory.
+ */
+export function terminateActiveOcrWorker(): void {
+  if (activeOcrWorkerCleanup) {
+    try {
+      activeOcrWorkerCleanup();
+    } catch {
+      // ignore
+    }
+    activeOcrWorkerCleanup = null;
+  }
+}
+
 /**
  * Offloads heavy pixel preprocessing, Sauvola thresholding, local OCR, and geometric table parsing
  * to a dedicated Web Worker in browser/tablet environments so the main UI thread never freezes on large photos.
@@ -171,6 +188,9 @@ export async function runLocalRosterOcrPipelineAsync(
 
   if (canUseWorker) {
     try {
+      // Terminate any previous in-flight OCR worker before spawning a new one
+      terminateActiveOcrWorker();
+
       const workerResult = await new Promise<FullRosterOcrPipelineResult>(
         (resolve, reject) => {
           const worker = new Worker(
@@ -185,7 +205,12 @@ export async function runLocalRosterOcrPipelineAsync(
             worker.onmessage = null;
             worker.onerror = null;
             worker.terminate();
+            if (activeOcrWorkerCleanup === cleanup) {
+              activeOcrWorkerCleanup = null;
+            }
           };
+
+          activeOcrWorkerCleanup = cleanup;
 
           worker.onmessage = (event) => {
             const msg = event.data;

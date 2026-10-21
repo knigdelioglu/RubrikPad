@@ -13,7 +13,20 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
+
+  // Defensive HTTP security headers (iframe-compatible for AI Studio preview)
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-XSS-Protection', '0');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader(
+      'Permissions-Policy',
+      'geolocation=(), microphone=(), payment=(), usb=()'
+    );
+    next();
+  });
 
   // Health check endpoint (100% local architecture; no student data or images are processed on external servers)
   app.get('/api/health', (_req, res) => {

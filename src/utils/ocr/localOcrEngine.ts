@@ -2065,7 +2065,7 @@ function recognizeWordFromCharacterBoxes(
     if (bestLexWord && bestDist === 0) {
       return {
         text: bestLexWord,
-        confidence: Math.min(99, Math.round(Math.max(avgScore * 100, 94))),
+        confidence: Math.min(99, Math.max(35, Math.round(avgScore * 100))),
         alternatives,
       };
     }

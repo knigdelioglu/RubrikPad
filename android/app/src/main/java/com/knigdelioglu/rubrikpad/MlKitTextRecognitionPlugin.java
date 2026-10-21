@@ -29,6 +29,9 @@ import java.util.List;
 @CapacitorPlugin(name = "MlKitTextRecognition")
 public class MlKitTextRecognitionPlugin extends Plugin {
 
+    private static final int MAX_BASE64_LENGTH = 20 * 1024 * 1024; // ~15 MB raw image cap
+    private static final int MAX_BITMAP_DIMENSION_PX = 3200;
+
     private TextRecognizer recognizer;
 
     @Override
@@ -58,6 +61,12 @@ public class MlKitTextRecognitionPlugin extends Plugin {
             return;
         }
 
+        if (base64Image.length() > MAX_BASE64_LENGTH) {
+            call.reject("Görsel verisi güvenli bellek sınırını (15 MB) aşıyor.");
+            return;
+        }
+
+        Bitmap bitmap = null;
         try {
             String cleanBase64 = base64Image;
             int commaIdx = cleanBase64.indexOf(',');
@@ -66,18 +75,40 @@ public class MlKitTextRecognitionPlugin extends Plugin {
             }
 
             byte[] decodedBytes = Base64.decode(cleanBase64, Base64.DEFAULT);
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
-            opts.inScaled = false;
 
-            Bitmap bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.length, opts);
-            if (bitmap == null) {
-                call.reject("Görsel बा이트 dizisi Bitmap olarak çözümlenemedi.");
+            // Pass 1: Decode image bounds without allocating pixel memory
+            BitmapFactory.Options boundsOpts = new BitmapFactory.Options();
+            boundsOpts.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.length, boundsOpts);
+
+            final int origWidth = boundsOpts.outWidth;
+            final int origHeight = boundsOpts.outHeight;
+            if (origWidth <= 0 || origHeight <= 0) {
+                call.reject("Görsel bayt dizisi geçerli bir görüntü olarak çözümlenemedi.");
                 return;
             }
 
-            final int imageWidth = bitmap.getWidth();
-            final int imageHeight = bitmap.getHeight();
+            int sampleSize = 1;
+            while ((origWidth / sampleSize) > MAX_BITMAP_DIMENSION_PX
+                    || (origHeight / sampleSize) > MAX_BITMAP_DIMENSION_PX) {
+                sampleSize *= 2;
+            }
+
+            // Pass 2: Decode bounded Bitmap
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            opts.inScaled = false;
+            opts.inSampleSize = sampleSize;
+
+            bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.length, opts);
+            if (bitmap == null) {
+                call.reject("Görsel bayt dizisi Bitmap olarak çözümlenemedi.");
+                return;
+            }
+
+            final Bitmap finalBitmap = bitmap;
+            final int imageWidth = finalBitmap.getWidth();
+            final int imageHeight = finalBitmap.getHeight();
             final int safeRotation = (rotationDegrees != null && (rotationDegrees == 90 || rotationDegrees == 180 || rotationDegrees == 270))
                     ? rotationDegrees
                     : 0;
@@ -86,22 +117,43 @@ public class MlKitTextRecognitionPlugin extends Plugin {
                 recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
             }
 
-            InputImage inputImage = InputImage.fromBitmap(bitmap, safeRotation);
+            InputImage inputImage = InputImage.fromBitmap(finalBitmap, safeRotation);
             final long startNs = System.nanoTime();
 
             recognizer.process(inputImage)
                     .addOnSuccessListener(visionText -> {
-                        double elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0;
-                        JSObject response = serializeVisionText(visionText, imageWidth, imageHeight, elapsedMs);
-                        bitmap.recycle();
-                        call.resolve(response);
+                        try {
+                            double elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0;
+                            JSObject response = serializeVisionText(visionText, imageWidth, imageHeight, elapsedMs);
+                            if (!finalBitmap.isRecycled()) {
+                                finalBitmap.recycle();
+                            }
+                            call.resolve(response);
+                        } catch (OutOfMemoryError oom) {
+                            if (!finalBitmap.isRecycled()) {
+                                finalBitmap.recycle();
+                            }
+                            System.gc();
+                            call.reject("Cihaz belleği (RAM) yetersiz kaldı. Lütfen daha düşük çözünürlüklü bir fotoğraf deneyin.");
+                        }
                     })
                     .addOnFailureListener(e -> {
-                        bitmap.recycle();
+                        if (!finalBitmap.isRecycled()) {
+                            finalBitmap.recycle();
+                        }
                         call.reject("ML Kit yerel metin tanıma hatası: " + e.getMessage(), e);
                     });
 
+        } catch (OutOfMemoryError oom) {
+            if (bitmap != null && !bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
+            System.gc();
+            call.reject("Görsel işlenirken cihaz belleği (OutOfMemoryError) sınırına ulaşıldı. Lütfen daha küçük bir görsel seçin.");
         } catch (Exception ex) {
+            if (bitmap != null && !bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
             call.reject("ML Kit görüntü işleme hatası: " + ex.getMessage(), ex);
         }
     }

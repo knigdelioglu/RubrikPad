@@ -172,6 +172,15 @@ export interface VerifiedOcrRosterRow {
   reReadAttempted?: boolean;
 }
 
+export interface SurnameOrderAlignmentPair {
+  rowIndex: number;
+  rowAnchorY: number;
+  surnameTokenId: string;
+  surnameText: string;
+  surnameCorrectedY: number;
+  verticalCostPx: number;
+}
+
 export interface GeometricTableAnalysisResult {
   headerDetected: boolean;
   headerRowYBand: { y0: number; y1: number } | null;
@@ -182,6 +191,8 @@ export interface GeometricTableAnalysisResult {
   unassignedTokens: OcrWordToken[];
   medianRowHeight: number;
   medianRowStepY: number;
+  surnameOrderAlignmentApplied?: boolean;
+  surnameOrderAlignmentPairs?: SurnameOrderAlignmentPair[];
 }
 
 export interface OcrEngineOptions {
@@ -192,6 +203,10 @@ export interface OcrEngineOptions {
 export interface OcrEngineOutput {
   engineId: string;
   engineName: string;
+  requestedEngineId?: string;
+  requestedEngineName?: string;
+  fallbackOccurred?: boolean;
+  fallbackReason?: string;
   isLocalOnly: true;
   words: OcrWordToken[];
   preprocessing: PreprocessingResult;

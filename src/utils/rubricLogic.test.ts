@@ -39,12 +39,19 @@ import {
   getStudentConsecutiveLowScoreReminder,
   sanitizeCsvFormulaInjection,
   generateSessionCsv,
+  MAX_STUDENT_AUDIT_LOG_ENTRIES,
+  createUniqueEntityId,
+  appendStudentAuditLog,
+  validateClassroomRecord,
+  checkClassroomDeletionImpact,
 } from './rubricLogic.ts';
 import {
   STORAGE_KEY,
   LEGACY_V3_ROLLBACK_KEY,
   STORAGE_CONFLICT_BACKUP_KEY,
+  PRE_RESET_ROLLBACK_KEY,
   INDEXEDDB_QUARANTINE_KEY,
+  MAX_BACKUP_JSON_BYTES,
   sha256Hex,
   computePayloadChecksum,
   computeLegacyRpkChecksum,
@@ -52,11 +59,15 @@ import {
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
   importLegacyBackupBundle,
+  validateFullAppDataStructure,
+  parseJsonSafelyWithoutPrototypePollution,
   migrateV2ToV3,
   loadVerifiedInitialState,
   loadVerifiedInitialStateWithMeta,
   loadInitialStateWithRecovery,
   saveTransactionalState,
+  savePreResetRollbackBackup,
+  getPreResetRollbackBackup,
   getV3RollbackBackup,
   getStorageConflictBackup,
   getQuarantinedIndexedDbBackup,
@@ -70,8 +81,15 @@ import {
 import {
   generatePaginatedSessionPdfBytes,
   decodePdfTextWithToUnicode,
+  normalizePdfTextLine,
 } from './pdfGenerator.ts';
-import type { Rubric, Student, EvaluationSession, StudentGroup } from '../types.ts';
+import type {
+  Classroom,
+  Rubric,
+  Student,
+  EvaluationSession,
+  StudentGroup,
+} from '../types.ts';
 
 const sampleRubric: Rubric = {
   id: 'rub-test',
@@ -2515,6 +2533,381 @@ test('Audit #19: getStudentConsecutiveLowScoreReminder triggers "Gözlem notu ek
   assert.equal(reminderStu3.consecutiveCount, 3);
   assert.equal(reminderStu3.triggerType, 'consecutive_sessions');
 });
+
+test('Data Security Audit Fix: Backup size cap, prototype pollution guard, and strict score/entity validation', () => {
+  // 1. Prototype pollution keys (__proto__, constructor, prototype) are stripped during JSON parsing
+  const pollutedRaw =
+    '{"__proto__":{"isAdmin":true},"constructor":{"prototype":{"polluted":true}},"safeKey":"ok"}';
+  const parsedSafe = parseJsonSafelyWithoutPrototypePollution<Record<string, unknown>>(
+    pollutedRaw
+  );
+  assert.equal(parsedSafe.safeKey, 'ok');
+  assert.equal(({} as Record<string, unknown>).isAdmin, undefined);
+  assert.equal(({} as Record<string, unknown>).polluted, undefined);
+
+  // 2. Oversized backup strings (> MAX_BACKUP_JSON_BYTES) are rejected before JSON.parse
+  const oversizedStr = 'x'.repeat(MAX_BACKUP_JSON_BYTES + 128);
+  const v3OversizedRes = verifyAndParseBackupBundle(oversizedStr);
+  assert.equal(v3OversizedRes.isValid, false);
+  assert.ok(v3OversizedRes.error?.includes('güvenli sınırı'));
+
+  const legacyOversizedRes = importLegacyBackupBundle(oversizedStr);
+  assert.equal(legacyOversizedRes.isValid, false);
+  assert.ok(legacyOversizedRes.error?.includes('güvenli sınırı'));
+
+  // 3. Negative or out-of-range scores in evaluations or criteria are rejected by validateFullAppDataStructure
+  const baseState = {
+    classrooms: [
+      {
+        id: 'cls-1',
+        name: '7/A',
+        gradeLevel: '7. Sınıf',
+        subject: 'Fen',
+        academicYear: '2026-2027',
+      },
+    ],
+    students: [
+      {
+        id: 'stu-1',
+        studentNumber: '101',
+        firstName: 'Ayşe',
+        lastName: 'Yılmaz',
+        fullName: 'Ayşe Yılmaz',
+        classId: 'cls-1',
+      },
+    ],
+    rubrics: [sampleRubric],
+    sessions: [
+      {
+        id: 'ses-1',
+        title: 'Deney 1',
+        date: '2026-10-20',
+        classId: 'cls-1',
+        rubricId: sampleRubric.id,
+        mode: 'individual' as const,
+        status: 'in_progress' as const,
+        groups: [],
+        evaluations: {
+          'stu-1': {
+            studentId: 'stu-1',
+            criterionScores: { c1: -50 }, // invalid negative score!
+            note: '',
+            tags: [],
+            updatedAt: '2026-10-20T10:00:00Z',
+          },
+        },
+      },
+    ],
+  };
+
+  const invalidScoreCheck = validateFullAppDataStructure(baseState);
+  assert.equal(invalidScoreCheck.isValid, false);
+  assert.ok(invalidScoreCheck.error?.includes('geçersiz'));
+});
+
+test('Data Security Audit Fix: Multi-tab optimistic concurrency lock, pre-reset backup, and quota auto-healing', async () => {
+  __clearMemoryIndexedDbForTests();
+  const mockStore = new Map<string, string>();
+  let failSetItemUntilAuxiliaryEvicted = false;
+
+  const originalLocalStorage = (globalThis as Record<string, unknown>).localStorage;
+  (globalThis as Record<string, unknown>).localStorage = {
+    getItem: (k: string) => mockStore.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      if (
+        failSetItemUntilAuxiliaryEvicted &&
+        k === STORAGE_KEY &&
+        (mockStore.has(LEGACY_V3_ROLLBACK_KEY) ||
+          mockStore.has(STORAGE_CONFLICT_BACKUP_KEY) ||
+          mockStore.has(PRE_RESET_ROLLBACK_KEY))
+      ) {
+        throw new Error('QuotaExceededError');
+      }
+      mockStore.set(k, v);
+    },
+    removeItem: (k: string) => {
+      mockStore.delete(k);
+    },
+    clear: () => mockStore.clear(),
+  };
+
+  try {
+    const tabAState = {
+      classrooms: [
+        {
+          id: 'cls-7a',
+          name: '7/A',
+          gradeLevel: '7. Sınıf',
+          subject: 'Fen',
+          academicYear: '2026-2027',
+        },
+      ],
+      students: [
+        {
+          id: 'stu-1',
+          studentNumber: '101',
+          firstName: 'Elif',
+          lastName: 'Demir',
+          fullName: 'Elif Demir',
+          classId: 'cls-7a',
+        },
+      ],
+      rubrics: [sampleRubric],
+      sessions: [],
+    };
+
+    const resInitial = await saveTransactionalState(tabAState);
+    assert.equal(resInitial.ok, true);
+    const initialChecksum = resInitial.checksum;
+
+    // Simulate Tab B saving a newer state into localStorage
+    const tabBState = {
+      ...tabAState,
+      students: [
+        ...tabAState.students,
+        {
+          id: 'stu-2',
+          studentNumber: '102',
+          firstName: 'Kerem',
+          lastName: 'Kaya',
+          fullName: 'Kerem Kaya',
+          classId: 'cls-7a',
+        },
+      ],
+    };
+    const resTabB = await saveTransactionalState(tabBState);
+    assert.equal(resTabB.ok, true);
+
+    // Now Tab A attempts to save with stale `expectedPreviousChecksum: initialChecksum` and `strictOptimisticLock: true`
+    const tabAStaleModified = {
+      ...tabAState,
+      classrooms: [
+        {
+          ...tabAState.classrooms[0],
+          name: '7/A Stale Edit',
+        },
+      ],
+    };
+    const resStale = await saveTransactionalState(tabAStaleModified, {
+      expectedPreviousChecksum: initialChecksum,
+      strictOptimisticLock: true,
+    });
+    assert.equal(resStale.ok, false);
+    assert.equal(resStale.conflictDetected, true);
+    assert.equal(resStale.conflictBackupKey, STORAGE_CONFLICT_BACKUP_KEY);
+    assert.ok(getStorageConflictBackup()?.includes('Kerem'));
+
+    // Test pre-reset rollback backup
+    const preResetChecksum = savePreResetRollbackBackup(tabBState);
+    assert.ok(preResetChecksum.startsWith('sha256-'));
+    const savedPreReset = getPreResetRollbackBackup();
+    assert.ok(savedPreReset && savedPreReset.includes('Kerem'));
+
+    // Test quota auto-healing: when auxiliary keys fill localStorage, saveTransactionalState evicts them and succeeds
+    failSetItemUntilAuxiliaryEvicted = true;
+    const resQuotaHealed = await saveTransactionalState(tabBState);
+    assert.equal(resQuotaHealed.ok, true);
+    assert.equal(resQuotaHealed.quotaHealedByEviction, true);
+  } finally {
+    (globalThis as Record<string, unknown>).localStorage = originalLocalStorage;
+    __clearMemoryIndexedDbForTests();
+  }
+});
+
+test('Data Security Audit Fix: Multi-class session isolation in PDF & CSV and whitespace/pipe formula sanitization', () => {
+  // 1. Leading whitespace, newline, and pipe formula injection vectors are neutralized
+  assert.equal(sanitizeCsvFormulaInjection('  =SUM(A1:A5)'), "'  =SUM(A1:A5)");
+  assert.equal(sanitizeCsvFormulaInjection('\n=CMD|calc'), "'\n=CMD|calc");
+  assert.equal(sanitizeCsvFormulaInjection('|calc.exe'), "'|calc.exe");
+  assert.equal(sanitizeCsvFormulaInjection('-'), '-');
+
+  // 2. Multi-class session strictly isolates students by target classroom in both PDF and CSV exports
+  const cls7A = {
+    id: 'cls-7a',
+    name: '7/A',
+    gradeLevel: '7. Sınıf',
+    subject: 'Fen',
+    academicYear: '2026-2027',
+  };
+  const cls7B = {
+    id: 'cls-7b',
+    name: '7/B',
+    gradeLevel: '7. Sınıf',
+    subject: 'Fen',
+    academicYear: '2026-2027',
+  };
+  const stu7A: Student = {
+    id: 'stu-7a-1',
+    studentNumber: '201',
+    firstName: 'Zeynep',
+    lastName: 'Aydın',
+    fullName: 'Zeynep Aydın',
+    classId: 'cls-7a',
+  };
+  const stu7B: Student = {
+    id: 'stu-7b-1',
+    studentNumber: '301',
+    firstName: 'Burak',
+    lastName: 'Polat',
+    fullName: 'Burak Polat',
+    classId: 'cls-7b',
+  };
+
+  const sharedSession: EvaluationSession = {
+    id: 'ses-shared',
+    title: 'Ortak Fen Uygulaması',
+    date: '2026-10-20',
+    classId: 'cls-7a',
+    classIds: ['cls-7a', 'cls-7b'],
+    rubricId: sampleRubric.id,
+    rubricSnapshot: sampleRubric,
+    mode: 'individual',
+    status: 'completed',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      'stu-7a-1': {
+        studentId: 'stu-7a-1',
+        criterionScores: { c1: 4, c2: 4 },
+        note: '7A öğrencisi',
+        tags: [],
+        updatedAt: '2026-10-20T10:00:00Z',
+      },
+      'stu-7b-1': {
+        studentId: 'stu-7b-1',
+        criterionScores: { c1: 3, c2: 3 },
+        note: '7B öğrencisi',
+        tags: [],
+        updatedAt: '2026-10-20T10:00:00Z',
+      },
+    },
+  };
+
+  // PDF for 7/A must contain Zeynep Aydın (7/A) and MUST NOT leak Burak Polat (7/B)
+  const pdf7ABytes = generatePaginatedSessionPdfBytes(
+    sharedSession,
+    sampleRubric,
+    cls7A,
+    [stu7A, stu7B]
+  );
+  const decodedPdf7A = decodePdfTextWithToUnicode(pdf7ABytes);
+  assert.ok(decodedPdf7A.includes('Zeynep Aydın'));
+  assert.equal(decodedPdf7A.includes('Burak Polat'), false);
+
+  // CSV for 7/A with targetClassId='cls-7a' must contain Zeynep Aydın and MUST NOT leak Burak Polat
+  const csv7A = generateSessionCsv(
+    sharedSession,
+    sampleRubric,
+    [stu7A, stu7B],
+    'cls-7a'
+  );
+  assert.ok(csv7A.includes('Zeynep Aydın'));
+  assert.equal(csv7A.includes('Burak Polat'), false);
+});
+
+test('Medium-Priority Data Security & Integrity Fixes: PDF control-char sanitization, collision-proof IDs, bounded audit logs, and classroom relational guards', () => {
+  // 1. PDF text line normalization strips standalone CR, Unicode line/paragraph separators, and control chars while preserving Turkish chars
+  const maliciousNote = 'Başarılı öğrenci\r100 100 Td <0041> Tj\u2028Satır\u0000Kontrol — ŞĞÜİÖÇşığüöç';
+  const sanitizedPdfLine = normalizePdfTextLine(maliciousNote);
+  assert.equal(sanitizedPdfLine.includes('\r'), false);
+  assert.equal(sanitizedPdfLine.includes('\n'), false);
+  assert.equal(sanitizedPdfLine.includes('\u2028'), false);
+  assert.equal(sanitizedPdfLine.includes('\u0000'), false);
+  assert.ok(sanitizedPdfLine.includes('ŞĞÜİÖÇşığüöç'));
+
+  // 2. Collision-proof entity ID generation produces unique IDs across 200 rapid same-millisecond calls
+  const generatedIds = new Set<string>();
+  for (let i = 0; i < 200; i++) {
+    generatedIds.add(createUniqueEntityId('stu'));
+  }
+  assert.equal(generatedIds.size, 200);
+
+  // 3. Student audit log is bounded to MAX_STUDENT_AUDIT_LOG_ENTRIES (50) with newest entry first
+  let log = undefined;
+  for (let i = 1; i <= 65; i++) {
+    log = appendStudentAuditLog(log, {
+      timestamp: `2026-10-21T10:00:${String(i).padStart(2, '0')}Z`,
+      action: 'updated',
+      details: `Güncelleme #${i}`,
+    });
+  }
+  assert.ok(Array.isArray(log));
+  assert.equal(log!.length, MAX_STUDENT_AUDIT_LOG_ENTRIES);
+  assert.equal(log![0].details, 'Güncelleme #65');
+  assert.equal(log![MAX_STUDENT_AUDIT_LOG_ENTRIES - 1].details, 'Güncelleme #16');
+
+  // 4. Classroom duplicate name validation (case-insensitive Turkish locale) and length bounds
+  const existingClasses: Classroom[] = [
+    {
+      id: 'cls-1',
+      name: '6/A Sınıfı',
+      gradeLevel: '6. Sınıf',
+      subject: 'Fen Bilimleri',
+      academicYear: '2026-2027',
+    },
+    {
+      id: 'cls-2',
+      name: '7/B Sınıfı',
+      gradeLevel: '7. Sınıf',
+      subject: 'Fen Bilimleri',
+      academicYear: '2026-2027',
+    },
+  ];
+  assert.equal(
+    validateClassroomRecord({ name: '6/a sınıfı' }, existingClasses).isValid,
+    false
+  );
+  assert.equal(
+    validateClassroomRecord({ name: '6/a sınıfı' }, existingClasses, 'cls-1').isValid,
+    true
+  );
+  assert.equal(
+    validateClassroomRecord({ name: '8/C Sınıfı' }, existingClasses).isValid,
+    true
+  );
+
+  // 5. Classroom relational deletion impact guard blocks deleting classrooms with students/sessions or the last classroom
+  const singleClassImpact = checkClassroomDeletionImpact(
+    'cls-1',
+    [existingClasses[0]],
+    [],
+    []
+  );
+  assert.equal(singleClassImpact.canDelete, false);
+
+  const populatedClassImpact = checkClassroomDeletionImpact(
+    'cls-1',
+    existingClasses,
+    [
+      {
+        id: 'stu-1',
+        studentNumber: '101',
+        fullName: 'Elif Yılmaz',
+        classId: 'cls-1',
+      },
+    ],
+    []
+  );
+  assert.equal(populatedClassImpact.canDelete, false);
+  assert.equal(populatedClassImpact.studentCount, 1);
+
+  const emptyClassImpact = checkClassroomDeletionImpact(
+    'cls-2',
+    existingClasses,
+    [
+      {
+        id: 'stu-1',
+        studentNumber: '101',
+        fullName: 'Elif Yılmaz',
+        classId: 'cls-1',
+      },
+    ],
+    []
+  );
+  assert.equal(emptyClassImpact.canDelete, true);
+});
+
+
 
 
 

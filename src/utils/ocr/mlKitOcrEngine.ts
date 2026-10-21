@@ -269,12 +269,16 @@ export function normalizeMlKitTurkishToken(
     .toLocaleUpperCase('tr-TR')
     .replace(/I\u0307/g, 'İ');
 
+  // 2. Preserve true OCR confidence without artificial inflation:
+  //    - If rawConfidence is 0 or negative/missing, keep it at 0 (never inflate to 92!)
+  //    - If rawConfidence is in (0, 1], scale to 1..100 percentage
+  //    - If rawConfidence is in (1, 100], clamp to 1..100
   const baseConf =
-    rawConfidence > 0 && rawConfidence <= 1
+    !Number.isFinite(rawConfidence) || rawConfidence <= 0
+      ? 0
+      : rawConfidence <= 1
       ? Math.round(rawConfidence * 100)
-      : rawConfidence > 1
-      ? Math.round(Math.min(99, rawConfidence))
-      : 92;
+      : Math.round(Math.min(100, rawConfidence));
 
   // 3. Check if token is numeric or near-numeric (e.g. school number or sequence number)
   const digitCount = (upper.match(/[0-9]/g) || []).length;
@@ -300,19 +304,23 @@ export function normalizeMlKitTurkishToken(
       if (convertedDigits !== upper) {
         alternatives.push({
           text: upper,
-          confidence: Math.max(55, baseConf - 8),
+          confidence: Math.max(0, baseConf - 8),
           reason: 'Ham ML Kit okuması (harf/rakam benzerliği)',
         });
       }
+      // Never artificially raise confidence above raw baseConf; slightly penalize if character conversion occurred
+      const adjustedConf =
+        convertedDigits !== upper ? Math.max(0, baseConf - 3) : baseConf;
       return {
         text: convertedDigits,
-        confidence: convertedDigits !== upper ? Math.min(96, baseConf) : baseConf,
+        confidence: adjustedConf,
         alternatives,
       };
     }
   }
 
   // 4. Turkish lexicon & diacritic normalization for alphabetic words (headers, first names, surnames)
+  //    IMPORTANT: Lexicon matching NEVER inflates confidence (e.g. a low-confidence 60% reading stays 60%!).
   if (upper.length >= 2 && /[A-ZÇĞİÖŞÜ]/.test(upper)) {
     const asciiFold = (s: string) =>
       s
@@ -325,11 +333,11 @@ export function normalizeMlKitTurkishToken(
 
     const foldedUpper = asciiFold(upper);
 
-    // Exact match in Turkish lexicon
+    // Exact match in Turkish lexicon: keep original baseConf without boosting to 95%
     if (TURKISH_ROSTER_LEXICON.includes(upper)) {
       return {
         text: upper,
-        confidence: Math.max(baseConf, 95),
+        confidence: baseConf,
         alternatives,
       };
     }
@@ -341,12 +349,14 @@ export function normalizeMlKitTurkishToken(
     if (diacriticMatch && diacriticMatch !== upper) {
       alternatives.push({
         text: upper,
-        confidence: Math.max(68, baseConf - 5),
+        confidence: baseConf,
         reason: 'Ham ML Kit Latin okuması',
       });
+      // Never boost confidence above baseConf; slightly penalize automatic diacritic repair so low-confidence words stay low
+      const repairedConf = baseConf > 0 ? Math.max(1, baseConf - 2) : 0;
       return {
         text: diacriticMatch,
-        confidence: Math.min(98, Math.max(baseConf, 93)),
+        confidence: repairedConf,
         alternatives,
       };
     }
@@ -383,6 +393,12 @@ export function convertMlKitResponseToWordTokens(
     for (const line of block.lines || []) {
       for (const elem of line.elements || []) {
         const symbols = elem.symbols || [];
+        const rawElemConf =
+          !Number.isFinite(elem.confidence) || elem.confidence <= 0
+            ? 0
+            : elem.confidence <= 1
+            ? Math.round(elem.confidence * 100)
+            : Math.round(Math.min(100, elem.confidence));
 
         // Check if this element contains a pipe '|' separator, digit-to-letter transition ("245AYŞE"), or straddles a vertical grid line
         const subElements: Array<{
@@ -402,14 +418,24 @@ export function convertMlKitResponseToWordTokens(
             const x1 = Math.max(...curSyms.map((s) => s.bbox.x1));
             const y1 = Math.max(...curSyms.map((s) => s.bbox.y1));
             const symConfs = curSyms.map((s) =>
-              s.confidence <= 1 ? Math.round(s.confidence * 100) : Math.round(s.confidence)
+              !Number.isFinite(s.confidence) || s.confidence <= 0
+                ? 0
+                : s.confidence <= 1
+                ? Math.round(s.confidence * 100)
+                : Math.round(Math.min(100, s.confidence))
             );
-            const avgConf =
+            const avgSymConf =
               symConfs.reduce((a, b) => a + b, 0) / symConfs.length;
+            const effectiveConf =
+              rawElemConf > 0 && avgSymConf > 0
+                ? Math.min(rawElemConf, avgSymConf)
+                : avgSymConf > 0
+                ? avgSymConf
+                : rawElemConf;
             subElements.push({
               text: rawSubText,
               bbox: { x0, y0, x1, y1 },
-              confidence: avgConf,
+              confidence: effectiveConf,
               symbolConfidences: symConfs,
             });
             curSyms = [];
@@ -505,8 +531,10 @@ export function convertMlKitResponseToWordTokens(
 
 /**
  * Google ML Kit Text Recognition v2 (Android Native via Capacitor) Adapter.
- * Executes 100% on-device (KVKK compliant) on Android tablets/phones, while delegating
- * high-resolution preprocessing, grid line detection, and fallback browser execution cleanly.
+ * Executes 100% on-device (KVKK compliant) on Android tablets/phones.
+ * When native Android ML Kit is unavailable or returns an error, it NEVER hides the failure:
+ * it records the exact failure cause (`fallbackReason`) and transparently reports the actual fallback engine
+ * (`engineId`, `engineName`, `requestedEngineId`, `fallbackOccurred: true`) to the user.
  */
 export class CapacitorMlKitOcrEngine implements OcrEngineAdapter {
   public readonly engineId = 'google-mlkit-android-v2';
@@ -547,7 +575,28 @@ export class CapacitorMlKitOcrEngine implements OcrEngineAdapter {
     options: OcrEngineOptions = {}
   ): Promise<OcrEngineOutput> {
     if (!this.isNativeAndroidAvailable()) {
-      return this.fallbackEngine.recognizeImage(image, options);
+      const reason =
+        'Google ML Kit yerel Android köprüsü bu ortamda (Web/Tarayıcı) aktif değil; işlem alternatif yerel tarayıcı OCR motoruyla gerçekleştirildi.';
+      const fallbackRes = await this.fallbackEngine.recognizeImage(image, options);
+      return {
+        ...fallbackRes,
+        engineId: fallbackRes.engineId,
+        engineName: fallbackRes.engineName,
+        requestedEngineId: this.engineId,
+        requestedEngineName: this.engineName,
+        fallbackOccurred: true,
+        fallbackReason: reason,
+        preprocessing: {
+          ...fallbackRes.preprocessing,
+          diagnostics: {
+            ...fallbackRes.preprocessing.diagnostics,
+            qualityWarnings: [
+              `[Motor Bilgilendirmesi] ${reason}`,
+              ...fallbackRes.preprocessing.diagnostics.qualityWarnings,
+            ],
+          },
+        },
+      };
     }
 
     // Preserve high resolution (up to 3200px) so ML Kit gets crisp Turkish diacritics & small digits
@@ -572,13 +621,37 @@ export class CapacitorMlKitOcrEngine implements OcrEngineAdapter {
       return {
         engineId: this.engineId,
         engineName: this.engineName,
+        requestedEngineId: this.engineId,
+        requestedEngineName: this.engineName,
+        fallbackOccurred: false,
         isLocalOnly: true,
         words,
         preprocessing,
       };
-    } catch {
-      // If native bridge fails for any unexpected reason, fall back seamlessly to local TypeScript OCR engine
-      return this.fallbackEngine.recognizeImage(image, options);
+    } catch (err) {
+      const errDetail =
+        err instanceof Error ? err.message : String(err || 'Bilinmeyen Capacitor köprü hatası');
+      const reason = `Google ML Kit yerel OCR köprüsü başarısız oldu (${errDetail}). İşlem kesintisiz devam etmesi için '${this.fallbackEngine.engineName}' motoruna devredildi.`;
+      const fallbackRes = await this.fallbackEngine.recognizeImage(image, options);
+      return {
+        ...fallbackRes,
+        engineId: fallbackRes.engineId,
+        engineName: fallbackRes.engineName,
+        requestedEngineId: this.engineId,
+        requestedEngineName: this.engineName,
+        fallbackOccurred: true,
+        fallbackReason: reason,
+        preprocessing: {
+          ...fallbackRes.preprocessing,
+          diagnostics: {
+            ...fallbackRes.preprocessing.diagnostics,
+            qualityWarnings: [
+              `[ML Kit Hatası — Yedek Motora Geçildi] ${reason}`,
+              ...fallbackRes.preprocessing.diagnostics.qualityWarnings,
+            ],
+          },
+        },
+      };
     }
   }
 

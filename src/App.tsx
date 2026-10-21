@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ClipboardCheck,
   Users,
@@ -25,15 +25,21 @@ import {
   INITIAL_SESSIONS,
 } from './data/seedData.ts';
 import {
+  STORAGE_KEY,
+  MAX_BACKUP_JSON_BYTES,
   loadVerifiedInitialStateWithMeta,
   loadInitialStateWithRecovery,
   saveTransactionalState,
+  savePreResetRollbackBackup,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
   importLegacyBackupBundle,
   unlockStorageWriteLock,
+  computePayloadChecksum,
 } from './utils/storageLayer.ts';
 import {
+  appendStudentAuditLog,
+  checkClassroomDeletionImpact,
   checkStudentDeletionImpact,
   freezeRubricSnapshot,
 } from './utils/rubricLogic.ts';
@@ -90,10 +96,13 @@ export function App() {
 
   // Transactional Backup & Restore Modal State (P0 #6)
   const [showDataModal, setShowDataModal] = useState(false);
+  const [confirmResetDemoData, setConfirmResetDemoData] = useState(false);
   const [backupBanner, setBackupBanner] = useState<{
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+
+  const lastSyncedChecksumRef = useRef<string>('');
 
   // Cross-layer verification, conflict resolution, and IndexedDB recovery on startup
   useEffect(() => {
@@ -113,6 +122,7 @@ export function App() {
           result.source === 'migrated_v2' ||
           result.source === 'localStorage_v3'
         ) {
+          lastSyncedChecksumRef.current = computePayloadChecksum(result.state);
           setClassrooms(result.state.classrooms);
           setStudents(result.state.students);
           setRubrics(result.state.rubrics);
@@ -143,6 +153,7 @@ export function App() {
               : 'Yerel depolamadaki (localStorage / IndexedDB) kayıtlar doğrulanamadı ve geçerli yedek bulunamadı. Mevcut verilerinizin üzerine örnek verilerin yazılmaması için otomatik kayıt duraklatıldı.'
           );
         } else {
+          lastSyncedChecksumRef.current = computePayloadChecksum(result.state);
           setIsStorageHydrated(true);
         }
       })
@@ -157,7 +168,7 @@ export function App() {
     };
   }, [initialMeta.localStorageCorrupted]);
 
-  // Listen for any global save-error events
+  // Listen for any global save-error events and cross-tab storage synchronization events
   useEffect(() => {
     const handleSaveErrorEvent = (e: Event) => {
       const custom = e as CustomEvent<{ errorMessage?: string }>;
@@ -165,9 +176,29 @@ export function App() {
         setStorageSaveError(custom.detail.errorMessage);
       }
     };
+
+    const handleCrossTabStorageEvent = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY || !e.newValue) return;
+      const verified = verifyAndParseBackupBundle(e.newValue);
+      if (!verified.isValid || !verified.state) return;
+      const incomingChecksum = computePayloadChecksum(verified.state);
+      if (incomingChecksum === lastSyncedChecksumRef.current) return;
+
+      lastSyncedChecksumRef.current = incomingChecksum;
+      setClassrooms(verified.state.classrooms);
+      setStudents(verified.state.students);
+      setRubrics(verified.state.rubrics);
+      setSessions(verified.state.sessions);
+      setRecoveryBanner(
+        'Başka bir sekmede yapılan değişiklikler doğrulandı ve bu sekmeye senkronize edildi.'
+      );
+    };
+
     window.addEventListener('rubrikpad:save-error', handleSaveErrorEvent);
+    window.addEventListener('storage', handleCrossTabStorageEvent);
     return () => {
       window.removeEventListener('rubrikpad:save-error', handleSaveErrorEvent);
+      window.removeEventListener('storage', handleCrossTabStorageEvent);
     };
   }, []);
 
@@ -182,11 +213,15 @@ export function App() {
         sessions,
       },
       {
+        expectedPreviousChecksum: lastSyncedChecksumRef.current || undefined,
         onSaveError: (errMsg) => {
           setStorageSaveError(errMsg);
         },
       }
     );
+    if (res.ok) {
+      lastSyncedChecksumRef.current = res.checksum;
+    }
     if (!res.ok || res.errors.length > 0) {
       setStorageSaveError(res.errorMessage || res.errors.join(' '));
     } else {
@@ -213,6 +248,27 @@ export function App() {
     setClassrooms((prev) => [...prev, newCls]);
   };
 
+  const handleUpdateClassroom = (updatedCls: Classroom) => {
+    setClassrooms((prev) =>
+      prev.map((c) => (c.id === updatedCls.id ? updatedCls : c))
+    );
+  };
+
+  const handleDeleteClassroom = (classroomId: string) => {
+    const impact = checkClassroomDeletionImpact(
+      classroomId,
+      classrooms,
+      students,
+      sessions
+    );
+    if (!impact.canDelete) return;
+    const remaining = classrooms.filter((c) => c.id !== classroomId);
+    setClassrooms(remaining);
+    if (activeClassId === classroomId && remaining[0]) {
+      setActiveClassId(remaining[0].id);
+    }
+  };
+
   const handleAddStudents = (newStudents: Student[]) => {
     setStudents((prev) => [...prev, ...newStudents]);
   };
@@ -235,14 +291,11 @@ export function App() {
                 ...s,
                 archived: true,
                 updatedAt: nowIso,
-                auditLog: [
-                  {
-                    timestamp: nowIso,
-                    action: 'archived',
-                    details: `Öğrencinin ${impact.sessionCount} oturumda değerlendirme geçmişi bulunduğu için silinmek yerine güvenli arşivlendi.`,
-                  },
-                  ...(s.auditLog || []),
-                ],
+                auditLog: appendStudentAuditLog(s.auditLog, {
+                  timestamp: nowIso,
+                  action: 'archived',
+                  details: `Öğrencinin ${impact.sessionCount} oturumda değerlendirme geçmişi bulunduğu için silinmek yerine güvenli arşivlendi.`,
+                }),
               }
             : s
         )
@@ -326,6 +379,16 @@ export function App() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_BACKUP_JSON_BYTES) {
+      setBackupBanner({
+        type: 'error',
+        message: `Yedek dosyası boyutu güvenli sınırı (${Math.round(
+          MAX_BACKUP_JSON_BYTES / (1024 * 1024)
+        )} MB) aşıyor.`,
+      });
+      e.target.value = '';
+      return;
+    }
     try {
       const text = await file.text();
       const verified = verifyAndParseBackupBundle(text);
@@ -338,6 +401,7 @@ export function App() {
       }
 
       unlockStorageWriteLock();
+      lastSyncedChecksumRef.current = computePayloadChecksum(verified.state);
       setClassrooms(verified.state.classrooms);
       setStudents(verified.state.students);
       setRubrics(verified.state.rubrics);
@@ -369,6 +433,16 @@ export function App() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_BACKUP_JSON_BYTES) {
+      setBackupBanner({
+        type: 'error',
+        message: `Yedek dosyası boyutu güvenli sınırı (${Math.round(
+          MAX_BACKUP_JSON_BYTES / (1024 * 1024)
+        )} MB) aşıyor.`,
+      });
+      e.target.value = '';
+      return;
+    }
     try {
       const text = await file.text();
       const imported = importLegacyBackupBundle(text);
@@ -382,6 +456,7 @@ export function App() {
       }
 
       unlockStorageWriteLock();
+      lastSyncedChecksumRef.current = computePayloadChecksum(imported.state);
       setClassrooms(imported.state.classrooms);
       setStudents(imported.state.students);
       setRubrics(imported.state.rubrics);
@@ -407,7 +482,14 @@ export function App() {
   };
 
   const handleResetDemoData = () => {
+    const rollbackChecksum = savePreResetRollbackBackup({
+      classrooms,
+      students,
+      rubrics,
+      sessions,
+    });
     unlockStorageWriteLock();
+    setConfirmResetDemoData(false);
     setClassrooms(INITIAL_CLASSROOMS);
     setStudents(INITIAL_STUDENTS);
     setRubrics(INITIAL_RUBRICS);
@@ -418,7 +500,10 @@ export function App() {
     setIsStorageHydrated(true);
     setBackupBanner({
       type: 'success',
-      message: 'Varsayılan örnek veriler sıfırlandı.',
+      message: `Varsayılan örnek veriler sıfırlandı. Sıfırlama öncesi verileriniz otomatik olarak geri dönüş yedeğine (${rollbackChecksum.slice(
+        0,
+        18
+      )}...) korundu.`,
     });
   };
 
@@ -611,6 +696,8 @@ export function App() {
             activeClassId={activeClassId}
             onSelectClass={setActiveClassId}
             onAddClassroom={handleAddClassroom}
+            onUpdateClassroom={handleUpdateClassroom}
+            onDeleteClassroom={handleDeleteClassroom}
             onAddStudents={handleAddStudents}
             onUpdateStudent={handleUpdateStudent}
             onDeleteStudent={handleDeleteStudent}
@@ -740,18 +827,47 @@ export function App() {
               </label>
             </div>
 
-            <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-              <span className="text-xs text-slate-500">
-                Başlangıç örnek verilerine dönmek isterseniz:
-              </span>
-              <button
-                type="button"
-                onClick={handleResetDemoData}
-                className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Örnek Veriyi Sıfırla
-              </button>
+            <div className="pt-3 border-t border-slate-200 flex flex-col gap-2">
+              {!confirmResetDemoData ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">
+                    Başlangıç örnek verilerine dönmek isterseniz:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmResetDemoData(true)}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Örnek Veriyi Sıfırla
+                  </button>
+                </div>
+              ) : (
+                <div
+                  role="alert"
+                  className="p-3 rounded-xl bg-red-50 border border-red-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                >
+                  <div className="text-red-950 font-medium">
+                    Mevcut kayıtlarınız sıfırlanacak (otomatik geri dönüş yedeği alınır). Onaylıyor musunuz?
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleResetDemoData}
+                      className="px-3 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white font-bold cursor-pointer"
+                    >
+                      Evet, Sıfırla
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmResetDemoData(false)}
+                      className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-semibold cursor-pointer"
+                    >
+                      Vazgeç
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

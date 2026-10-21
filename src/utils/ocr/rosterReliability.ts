@@ -279,11 +279,22 @@ export function evaluateRosterReliability(
       }
     }
 
-    // 5. Check token-level OCR alternatives and low confidence
-    if (row.confidence > 0 && row.confidence < 78) {
+    // 5. Check token-level OCR alternatives and low confidence (including 0% confidence!)
+    const rowTokens = row.sourceTokenIds
+      .map((id) => tokensById.get(id))
+      .filter((t): t is OcrWordToken => Boolean(t));
+    const minTokenConf =
+      rowTokens.length > 0
+        ? Math.min(...rowTokens.map((t) => t.confidence))
+        : row.confidence;
+
+    if (
+      row.rowKind === 'extracted' &&
+      (row.confidence < 78 || minTokenConf < 75)
+    ) {
       flags.add('LOW_CONFIDENCE_OCR');
       reasons.push(
-        `Satır OCR güven skoru düşük (%${row.confidence}); fotoğraf satırıyla karşılaştırın.`
+        `Satır veya kelime OCR güven skoru düşük (Satır: %${row.confidence}, En düşük kelime: %${minTokenConf}); fotoğraf satırıyla karşılaştırın.`
       );
     }
 

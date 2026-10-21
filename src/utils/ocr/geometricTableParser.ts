@@ -5,10 +5,38 @@ import type {
   GeometricTableAnalysisResult,
   OcrCellCoordinateMap,
   OcrWordToken,
+  SurnameOrderAlignmentPair,
   UncertaintyCode,
   VerifiedOcrRosterRow,
 } from './ocrTypes.ts';
 import { splitTurkishFullName } from '../rubricLogic.ts';
+
+export interface SurnameCandidateBlock {
+  candidateIndex: number;
+  tokens: OcrWordToken[];
+  text: string;
+  bbox: BoundingBox;
+  correctedY: number;
+  rawCenterY: number;
+  lineIndex?: number;
+  blockIndex?: number;
+}
+
+export interface AnchorRowSurnameTarget {
+  rowIndex: number;
+  anchorCorrectedY: number;
+  anchorRawY: number;
+  lineIndex?: number;
+  blockIndex?: number;
+}
+
+export interface OrderPreservingSurnameMatchResult {
+  matchedByRowIndex: Map<number, SurnameCandidateBlock>;
+  unmatchedCandidates: SurnameCandidateBlock[];
+  alignmentPairs: SurnameOrderAlignmentPair[];
+  estimatedColumnVerticalOffsetPx: number;
+  alignmentApplied: boolean;
+}
 
 export interface GeometricTableParseOptions {
   horizontalGridLinesY?: number[];
@@ -694,9 +722,303 @@ export function computeRowApprovalSignature(row: {
 }
 
 /**
+ * Helper to match a single token item to its best-fitting geometric column band.
+ */
+function matchTokenItemToColumnBand(
+  item: InternalTokenWithCorrectedY,
+  columns: DetectedColumnBand[],
+  headerRefY: number
+): { matchedCol: DetectedColumnBand | null; nearBoundaryEdge: boolean } {
+  const dyFromTop = Math.max(0, item.cy - headerRefY);
+  let matchedCol: DetectedColumnBand | null = null;
+  let bestColScore = -Infinity;
+
+  for (const col of columns) {
+    const driftX = col.driftSlopeXPerY * dyFromTop;
+    const effX0 = col.x0 + driftX;
+    const effX1 = col.x1 + driftX;
+    const effCenter = col.centerX + driftX;
+
+    const overlapW = Math.max(
+      0,
+      Math.min(item.token.bbox.x1, effX1) -
+        Math.max(item.token.bbox.x0, effX0)
+    );
+    const overlapRatio = overlapW / Math.max(1, item.width);
+    const centerInside = item.cx >= effX0 && item.cx <= effX1;
+    const distToCenter = Math.abs(item.cx - effCenter);
+
+    const score =
+      overlapRatio * 120 + (centerInside ? 50 : 0) - distToCenter * 0.25;
+
+    if (score > bestColScore) {
+      bestColScore = score;
+      matchedCol = col;
+    }
+  }
+
+  let nearBoundaryEdge = false;
+  if (matchedCol && columns.length > 1) {
+    const driftX = matchedCol.driftSlopeXPerY * dyFromTop;
+    const effX0 = matchedCol.x0 + driftX;
+    const effX1 = matchedCol.x1 + driftX;
+    const distToEdge = Math.min(
+      Math.abs(item.token.bbox.x0 - effX0),
+      Math.abs(item.token.bbox.x1 - effX1)
+    );
+    if (distToEdge < 3) {
+      nearBoundaryEdge = true;
+    }
+  }
+
+  return { matchedCol, nearBoundaryEdge };
+}
+
+/**
+ * Puanla's Order-Preserving 1-to-1 Surname Matching Algorithm (Sıra Koruyan Bire Bir Soyadı Eşleştirme).
+ *
+ * Solves the classic classroom roster OCR problem where right-hand surname cells drift vertically
+ * (due to camera tilt, page curvature, or separate block segmentation) relative to left-hand
+ * student anchor rows (Sıra / Okul No / Adı), while strictly guaranteeing:
+ * 1. Monotonic Order Preservation: If student row i1 < i2 are matched to surnames j1 and j2, then j1 < j2 (surnames never cross/swap order).
+ * 2. Strict 1-to-1 Exclusivity: Each student row receives at most one surname block, and each surname block is assigned to at most one student row.
+ * 3. Zero Cross-Row Borrowing: If a student's surname cell is empty on the page, that student row is skipped cleanly in the DP alignment rather than stealing a neighbor student's surname.
+ */
+export function matchSurnamesOrderPreservingOneToOne(
+  anchors: AnchorRowSurnameTarget[],
+  surnameBlocks: SurnameCandidateBlock[],
+  medianWordH: number,
+  medianRowStepY: number
+): OrderPreservingSurnameMatchResult {
+  const N = anchors.length;
+  const M = surnameBlocks.length;
+
+  if (N === 0 || M === 0) {
+    return {
+      matchedByRowIndex: new Map(),
+      unmatchedCandidates: [...surnameBlocks],
+      alignmentPairs: [],
+      estimatedColumnVerticalOffsetPx: 0,
+      alignmentApplied: false,
+    };
+  }
+
+  const effectiveStepY = Math.max(medianWordH * 1.5, medianRowStepY || medianWordH * 2.0);
+  const maxAllowedColumnOffset = effectiveStepY * 0.78;
+
+  // Step 1: Estimate systematic vertical offset (deltaY) between surname column and left anchor rows
+  const candidateOffsets = new Set<number>([0]);
+
+  if (N === M) {
+    const directDiffs = anchors.map(
+      (a, idx) => surnameBlocks[idx].correctedY - a.anchorCorrectedY
+    );
+    candidateOffsets.add(median(directDiffs));
+  }
+
+  // Top-aligned and bottom-aligned offset hypotheses (crucial when a middle row has a blank surname!)
+  candidateOffsets.add(surnameBlocks[0].correctedY - anchors[0].anchorCorrectedY);
+  candidateOffsets.add(
+    surnameBlocks[M - 1].correctedY - anchors[N - 1].anchorCorrectedY
+  );
+
+  for (const sb of surnameBlocks) {
+    for (const anc of anchors) {
+      const diff = sb.correctedY - anc.anchorCorrectedY;
+      if (Math.abs(diff) <= maxAllowedColumnOffset) {
+        candidateOffsets.add(diff);
+      }
+    }
+  }
+
+  const tightResidualGate = Math.max(6, medianWordH * 0.45);
+  let bestOffset = 0;
+  let bestOffsetScore = -Infinity;
+
+  for (const delta of candidateOffsets) {
+    if (Math.abs(delta) > maxAllowedColumnOffset) continue;
+
+    // Greedily count strictly order-preserving 1-to-1 matches within tightResidualGate under this delta
+    let lastAnchorIdx = -1;
+    let tightMatches = 0;
+    let residualSum = 0;
+
+    for (let j = 0; j < M; j++) {
+      const shiftedY = surnameBlocks[j].correctedY - delta;
+      let bestI = -1;
+      let bestDist = Infinity;
+      for (let i = lastAnchorIdx + 1; i < N; i++) {
+        const d = Math.abs(shiftedY - anchors[i].anchorCorrectedY);
+        if (d <= tightResidualGate && d < bestDist) {
+          bestDist = d;
+          bestI = i;
+        }
+      }
+      if (bestI !== -1) {
+        tightMatches++;
+        residualSum += bestDist;
+        lastAnchorIdx = bestI;
+      }
+    }
+
+    // Small regularization on |delta| so delta=0 wins whenever surnames are already aligned without offset
+    const score =
+      tightMatches * 250 - residualSum * 4 - Math.abs(delta) * 0.45;
+    if (score > bestOffsetScore) {
+      bestOffsetScore = score;
+      bestOffset = delta;
+    }
+  }
+
+  const estimatedOffset =
+    Math.abs(bestOffset) <= 1.5 ? 0 : Number(bestOffset.toFixed(2));
+
+  // Step 2: Build admissible pairwise score matrix for Order-Preserving 1-to-1 Dynamic Programming
+  const maxCompGate = Math.max(medianWordH * 0.82, effectiveStepY * 0.42);
+  const maxRawGate = Math.max(medianWordH * 1.65, effectiveStepY * 0.85);
+
+  const pairScore: number[][] = Array.from({ length: N }, () =>
+    new Array(M).fill(-Infinity)
+  );
+
+  for (let i = 0; i < N; i++) {
+    const anc = anchors[i];
+    for (let j = 0; j < M; j++) {
+      const sb = surnameBlocks[j];
+      const rawDist = Math.abs(sb.correctedY - anc.anchorCorrectedY);
+      const compY = sb.correctedY - estimatedOffset;
+      const compDist = Math.abs(compY - anc.anchorCorrectedY);
+
+      if (compDist > maxCompGate || rawDist > maxRawGate) {
+        continue;
+      }
+
+      // Anti-Cross-Row-Borrowing Guard:
+      // Check if another anchor row i' != i is substantially closer to compY than anchor i
+      let closerNeighborExists = false;
+      for (let iOther = 0; iOther < N; iOther++) {
+        if (iOther === i) continue;
+        const otherDist = Math.abs(compY - anchors[iOther].anchorCorrectedY);
+        if (otherDist + Math.max(4, medianWordH * 0.22) < compDist) {
+          closerNeighborExists = true;
+          break;
+        }
+      }
+      if (closerNeighborExists) {
+        continue;
+      }
+
+      const sameMlKitLine =
+        anc.blockIndex !== undefined &&
+        sb.blockIndex !== undefined &&
+        anc.blockIndex === sb.blockIndex &&
+        anc.lineIndex !== undefined &&
+        sb.lineIndex !== undefined &&
+        anc.lineIndex === sb.lineIndex;
+
+      pairScore[i][j] =
+        1000 - compDist * 10 - rawDist * 1.2 + (sameMlKitLine ? 60 : 0);
+    }
+  }
+
+  // Step 3: Solve Monotonic 1-to-1 Bipartite Matching via Dynamic Programming
+  const dp: number[][] = Array.from({ length: N + 1 }, () =>
+    new Array(M + 1).fill(0)
+  );
+  const choice: number[][] = Array.from({ length: N + 1 }, () =>
+    new Array(M + 1).fill(0)
+  ); // 1 = skip anchor i-1, 2 = skip surname j-1, 3 = match (i-1, j-1)
+
+  for (let i = 1; i <= N; i++) {
+    for (let j = 1; j <= M; j++) {
+      // Option 1: skip anchor i-1 (leave row i-1 without surname)
+      let best = dp[i - 1][j];
+      let bestWay = 1;
+
+      // Option 2: skip surname j-1
+      if (dp[i][j - 1] > best) {
+        best = dp[i][j - 1];
+        bestWay = 2;
+      }
+
+      // Option 3: match anchor i-1 with surname j-1 (strictly 1-to-1 and order-preserving)
+      const mScore = pairScore[i - 1][j - 1];
+      if (mScore > -Infinity) {
+        const cand = dp[i - 1][j - 1] + mScore;
+        if (cand >= best) {
+          best = cand;
+          bestWay = 3;
+        }
+      }
+
+      dp[i][j] = best;
+      choice[i][j] = bestWay;
+    }
+  }
+
+  // Backtrack to recover strictly order-preserving 1-to-1 pairs
+  const matchedPairs: Array<{ anchorIdx: number; surnameIdx: number }> = [];
+  let ci = N;
+  let cj = M;
+  while (ci > 0 && cj > 0) {
+    const way = choice[ci][cj];
+    if (way === 3) {
+      matchedPairs.push({ anchorIdx: ci - 1, surnameIdx: cj - 1 });
+      ci--;
+      cj--;
+    } else if (way === 2) {
+      cj--;
+    } else {
+      ci--;
+    }
+  }
+  matchedPairs.reverse();
+
+  const matchedByRowIndex = new Map<number, SurnameCandidateBlock>();
+  const matchedSurnameIndices = new Set<number>();
+  const alignmentPairs: SurnameOrderAlignmentPair[] = [];
+  let nonTrivialShiftResolved = Math.abs(estimatedOffset) >= 4;
+
+  for (const { anchorIdx, surnameIdx } of matchedPairs) {
+    const anc = anchors[anchorIdx];
+    const sb = surnameBlocks[surnameIdx];
+    matchedByRowIndex.set(anc.rowIndex, sb);
+    matchedSurnameIndices.add(surnameIdx);
+
+    const rawCost = Number(
+      Math.abs(sb.correctedY - anc.anchorCorrectedY).toFixed(2)
+    );
+    if (rawCost >= medianWordH * 0.45) {
+      nonTrivialShiftResolved = true;
+    }
+
+    alignmentPairs.push({
+      rowIndex: anc.rowIndex + 1,
+      rowAnchorY: Number(anc.anchorCorrectedY.toFixed(1)),
+      surnameTokenId: sb.tokens.map((t) => t.id).join('+'),
+      surnameText: sb.text,
+      surnameCorrectedY: Number(sb.correctedY.toFixed(1)),
+      verticalCostPx: rawCost,
+    });
+  }
+
+  const unmatchedCandidates = surnameBlocks.filter(
+    (_, idx) => !matchedSurnameIndices.has(idx)
+  );
+
+  return {
+    matchedByRowIndex,
+    unmatchedCandidates,
+    alignmentPairs,
+    estimatedColumnVerticalOffsetPx: estimatedOffset,
+    alignmentApplied: nonTrivialShiftResolved || matchedPairs.length > 0,
+  };
+}
+
+/**
  * Core Geometric Table Structure Analyzer.
  * Analyzes word coordinates, physical table headers, dynamic column bands,
- * order-preserving 1-to-1 physical row matching (with zero cross-row borrowing),
+ * Puanla's order-preserving 1-to-1 surname alignment (with zero cross-row borrowing),
  * and missing student sequence/spacing gaps.
  */
 export function analyzeRosterTableGeometry(
@@ -715,6 +1037,8 @@ export function analyzeRosterTableGeometry(
       unassignedTokens: [],
       medianRowHeight: 0,
       medianRowStepY: 0,
+      surnameOrderAlignmentApplied: false,
+      surnameOrderAlignmentPairs: [],
     };
   }
 
@@ -737,7 +1061,7 @@ export function analyzeRosterTableGeometry(
     };
   });
 
-  // 2. Cluster into initial physical rows
+  // 2. Cluster into initial physical rows for header discovery
   const allPhysicalRows = clusterTokensIntoPhysicalRows(
     internalItems,
     medianWordH,
@@ -807,26 +1131,165 @@ export function analyzeRosterTableGeometry(
     );
   }
 
-  // 5. Ensure no physical row cluster has merged two distinct studentNumber anchors
+  const hasDedicatedLastCol = columns.some((c) => c.role === 'lastName');
+  const hasDedicatedStuNumCol = columns.some(
+    (c) => c.role === 'studentNumber'
+  );
+  const headerRefY = headerCluster?.minY ?? (rawBodyClusters[0]?.minY ?? 0);
+
+  // 5. Separate dedicated Surname (`lastName`) and Gender (`gender`) column tokens from Left Anchor tokens
+  //    so vertically shifted surname cells never merge into neighbor student rows before Puanla's 1-to-1 matcher runs.
+  const allBodyItems = rawBodyClusters.flatMap((c) => c.items);
+  const anchorBodyItems: InternalTokenWithCorrectedY[] = [];
+  const surnameBodyItems: InternalTokenWithCorrectedY[] = [];
+  const genderBodyItems: InternalTokenWithCorrectedY[] = [];
+
+  if (hasDedicatedLastCol) {
+    for (const item of allBodyItems) {
+      const { matchedCol } = matchTokenItemToColumnBand(
+        item,
+        columns,
+        headerRefY
+      );
+      if (matchedCol?.role === 'lastName') {
+        surnameBodyItems.push(item);
+      } else if (matchedCol?.role === 'gender') {
+        genderBodyItems.push(item);
+      } else {
+        anchorBodyItems.push(item);
+      }
+    }
+  } else {
+    anchorBodyItems.push(...allBodyItems);
+  }
+
+  // Cluster anchor tokens into physical rows and split any merged studentNumber anchors
+  const rawAnchorClusters = clusterTokensIntoPhysicalRows(
+    anchorBodyItems,
+    medianWordH,
+    options.horizontalGridLinesY
+  );
   const bodyClusters = splitMergedRowClustersByStudentNumberAnchors(
-    rawBodyClusters,
+    rawAnchorClusters,
     columns,
     medianWordH
   );
 
   const rowStepDeltas: number[] = [];
   for (let i = 1; i < bodyClusters.length; i++) {
-    const dy = bodyClusters[i].meanCorrectedY - bodyClusters[i - 1].meanCorrectedY;
+    const dy =
+      bodyClusters[i].meanCorrectedY - bodyClusters[i - 1].meanCorrectedY;
     if (dy > medianWordH * 0.6) {
       rowStepDeltas.push(dy);
     }
   }
   const medianRowStepY =
-    rowStepDeltas.length > 0 ? median(rowStepDeltas) : Math.round(medianWordH * 2.1);
+    rowStepDeltas.length > 0
+      ? median(rowStepDeltas)
+      : Math.round(medianWordH * 2.1);
+
+  // 5b. Run Puanla's Order-Preserving 1-to-1 Surname Matching Algorithm on the dedicated `lastName` column
+  const sortLR = (arr: OcrWordToken[]) =>
+    [...arr].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+
+  let surnameMatchResult: OrderPreservingSurnameMatchResult = {
+    matchedByRowIndex: new Map(),
+    unmatchedCandidates: [],
+    alignmentPairs: [],
+    estimatedColumnVerticalOffsetPx: 0,
+    alignmentApplied: false,
+  };
+  let genderMatchResult: OrderPreservingSurnameMatchResult = {
+    matchedByRowIndex: new Map(),
+    unmatchedCandidates: [],
+    alignmentPairs: [],
+    estimatedColumnVerticalOffsetPx: 0,
+    alignmentApplied: false,
+  };
+
+  if (hasDedicatedLastCol) {
+    const surnameRowClusters = clusterTokensIntoPhysicalRows(
+      surnameBodyItems,
+      medianWordH,
+      options.horizontalGridLinesY
+    );
+    const surnameBlocks: SurnameCandidateBlock[] = surnameRowClusters.map(
+      (sc, idx) => {
+        const toks = sortLR(sc.items.map((it) => it.token));
+        const rawCenterY =
+          sc.items.reduce((s, it) => s + it.cy, 0) / sc.items.length;
+        return {
+          candidateIndex: idx,
+          tokens: toks,
+          text: toks.map((t) => t.text).join(' ').trim(),
+          bbox: unionBbox(toks.map((t) => t.bbox)),
+          correctedY: sc.meanCorrectedY,
+          rawCenterY,
+          lineIndex: toks[0]?.lineIndex,
+          blockIndex: toks[0]?.blockIndex,
+        };
+      }
+    );
+
+    const anchorTargets: AnchorRowSurnameTarget[] = bodyClusters.map(
+      (bc, idx) => {
+        const anchorRawY =
+          bc.items.reduce((s, it) => s + it.cy, 0) / bc.items.length;
+        return {
+          rowIndex: idx,
+          anchorCorrectedY: bc.meanCorrectedY,
+          anchorRawY,
+          lineIndex: bc.items[0]?.token.lineIndex,
+          blockIndex: bc.items[0]?.token.blockIndex,
+        };
+      }
+    );
+
+    surnameMatchResult = matchSurnamesOrderPreservingOneToOne(
+      anchorTargets,
+      surnameBlocks,
+      medianWordH,
+      medianRowStepY
+    );
+
+    if (genderBodyItems.length > 0) {
+      const genderRowClusters = clusterTokensIntoPhysicalRows(
+        genderBodyItems,
+        medianWordH,
+        options.horizontalGridLinesY
+      );
+      const genderBlocks: SurnameCandidateBlock[] = genderRowClusters.map(
+        (gc, idx) => {
+          const toks = sortLR(gc.items.map((it) => it.token));
+          const rawCenterY =
+            gc.items.reduce((s, it) => s + it.cy, 0) / gc.items.length;
+          return {
+            candidateIndex: idx,
+            tokens: toks,
+            text: toks.map((t) => t.text).join(' ').trim(),
+            bbox: unionBbox(toks.map((t) => t.bbox)),
+            correctedY: gc.meanCorrectedY,
+            rawCenterY,
+            lineIndex: toks[0]?.lineIndex,
+            blockIndex: toks[0]?.blockIndex,
+          };
+        }
+      );
+
+      genderMatchResult = matchSurnamesOrderPreservingOneToOne(
+        anchorTargets,
+        genderBlocks,
+        medianWordH,
+        medianRowStepY
+      );
+    }
+  }
 
   const unassignedTokens: OcrWordToken[] = [];
-  const extractedRows: VerifiedOcrRosterRow[] = [];
-  const headerRefY = headerCluster?.minY ?? (bodyClusters[0]?.minY ?? 0);
+  const extractedRowsWithSortY: Array<{
+    sortY: number;
+    row: VerifiedOcrRosterRow;
+  }> = [];
 
   // 6. Strict 1-to-1 Physical Row Extraction (Zero Cross-Row Borrowing!)
   bodyClusters.forEach((rowCluster, rIdx) => {
@@ -844,63 +1307,29 @@ export function analyzeRosterTableGeometry(
       uncertaintyFlags.add('HEADERLESS_COLUMN_INFERRED');
     }
 
-    // Assign each token strictly within THIS physical row to its matching geometric column band
+    // Assign each anchor token strictly within THIS physical row to its matching geometric column band
     for (const item of rowCluster.items) {
-      const dyFromTop = Math.max(0, item.cy - headerRefY);
-
       // Check vertical alignment within the physical row cluster
-      if (Math.abs(item.correctedY - rowCluster.meanCorrectedY) > medianWordH * 0.48) {
+      if (
+        Math.abs(item.correctedY - rowCluster.meanCorrectedY) >
+        medianWordH * 0.48
+      ) {
         uncertaintyFlags.add('SUSPICIOUS_ROW_ALIGNMENT');
-        if (
-          !uncertaintyReasons.some((r) => r.includes('dikey hizalaması'))
-        ) {
+        if (!uncertaintyReasons.some((r) => r.includes('dikey hizalaması'))) {
           uncertaintyReasons.push(
             `"${item.token.text}" kelimesinin satır içi dikey hizalaması olağan dışı.`
           );
         }
       }
 
-      // Find matching column at this vertical position (accounting for column drift slope and horizontal bbox overlap)
-      let matchedCol: DetectedColumnBand | null = null;
-      let bestColScore = -Infinity;
+      const { matchedCol, nearBoundaryEdge } = matchTokenItemToColumnBand(
+        item,
+        columns,
+        headerRefY
+      );
 
-      for (const col of columns) {
-        const driftX = col.driftSlopeXPerY * dyFromTop;
-        const effX0 = col.x0 + driftX;
-        const effX1 = col.x1 + driftX;
-        const effCenter = col.centerX + driftX;
-
-        const overlapW = Math.max(
-          0,
-          Math.min(item.token.bbox.x1, effX1) -
-            Math.max(item.token.bbox.x0, effX0)
-        );
-        const overlapRatio = overlapW / Math.max(1, item.width);
-        const centerInside = item.cx >= effX0 && item.cx <= effX1;
-        const distToCenter = Math.abs(item.cx - effCenter);
-
-        const score =
-          overlapRatio * 120 +
-          (centerInside ? 50 : 0) -
-          distToCenter * 0.25;
-
-        if (score > bestColScore) {
-          bestColScore = score;
-          matchedCol = col;
-        }
-      }
-
-      if (matchedCol && columns.length > 1) {
-        const driftX = matchedCol.driftSlopeXPerY * dyFromTop;
-        const effX0 = matchedCol.x0 + driftX;
-        const effX1 = matchedCol.x1 + driftX;
-        const distToEdge = Math.min(
-          Math.abs(item.token.bbox.x0 - effX0),
-          Math.abs(item.token.bbox.x1 - effX1)
-        );
-        if (distToEdge < 3) {
-          uncertaintyFlags.add('COLUMN_BOUNDARY_OVERLAP');
-        }
+      if (nearBoundaryEdge) {
+        uncertaintyFlags.add('COLUMN_BOUNDARY_OVERLAP');
       }
 
       if (!matchedCol || matchedCol.role === 'ignore') {
@@ -932,9 +1361,29 @@ export function analyzeRosterTableGeometry(
       }
     }
 
-    // Sort tokens within each cell strictly left-to-right
-    const sortLR = (arr: OcrWordToken[]) =>
-      [...arr].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    // Attach 1-to-1 order-preserving matched surname and gender tokens when dedicated lastName column is used
+    if (hasDedicatedLastCol) {
+      const matchedSurname = surnameMatchResult.matchedByRowIndex.get(rIdx);
+      if (matchedSurname) {
+        lastTokens.push(...matchedSurname.tokens);
+        const verticalDrift = Math.abs(
+          matchedSurname.correctedY - rowCluster.meanCorrectedY
+        );
+        if (verticalDrift > medianWordH * 0.65) {
+          uncertaintyFlags.add('SUSPICIOUS_ROW_ALIGNMENT');
+          uncertaintyReasons.push(
+            `Soyadı ("${matchedSurname.text}") dikey sapmaya (${Math.round(
+              verticalDrift
+            )}px) rağmen sıra koruyan 1'e 1 eşleştirme ile bu satıra bağlandı; kontrol edin.`
+          );
+        }
+      }
+
+      const matchedGender = genderMatchResult.matchedByRowIndex.get(rIdx);
+      if (matchedGender) {
+        genderTokens.push(...matchedGender.tokens);
+      }
+    }
 
     const sortedSeq = sortLR(seqTokens);
     const sortedStuNum = sortLR(stuNumTokens);
@@ -942,12 +1391,6 @@ export function analyzeRosterTableGeometry(
     let sortedLast = sortLR(lastTokens);
     const sortedFull = sortLR(fullNameTokens);
     const sortedGender = sortLR(genderTokens);
-
-    // If table used a single combined "Adı Soyadı" column, or if no separate lastName column exists and firstTokens has 2+ words, split rightmost word as surname
-    const hasDedicatedLastCol = columns.some((c) => c.role === 'lastName');
-    const hasDedicatedStuNumCol = columns.some(
-      (c) => c.role === 'studentNumber'
-    );
 
     if (
       sortedFull.length > 0 &&
@@ -983,21 +1426,39 @@ export function analyzeRosterTableGeometry(
     const parsedSeq = /^\d+$/.test(rawSeqText) ? Number(rawSeqText) : null;
 
     // Never borrow from adjacent rows! If stuNumTokens or lastTokens is empty in this row, it stays ""
-    // Only if the table has NO studentNumber column at all (1 numeric column mapped as sequence), use rawSeqText
     const rawStuNum = sortedStuNum.map((t) => t.text).join('').trim();
     const studentNumber =
-      rawStuNum || (!hasDedicatedStuNumCol && /^\d+$/.test(rawSeqText) ? rawSeqText : '');
+      rawStuNum ||
+      (!hasDedicatedStuNumCol && /^\d+$/.test(rawSeqText) ? rawSeqText : '');
     const firstName = sortedFirst.map((t) => t.text).join(' ').trim();
     const lastName = sortedLast.map((t) => t.text).join(' ').trim();
     const gender = sortedGender.map((t) => t.text).join(' ').trim();
 
-    // Skip completely empty noise rows that have neither numbers nor names
     if (!studentNumber && !firstName && !lastName && parsedSeq === null) {
       return;
     }
 
-    const allRowTokens = rowCluster.items.map((it) => it.token);
-    const rowBbox = unionBbox(allRowTokens.map((t) => t.bbox));
+    const anchorTokens = rowCluster.items.map((it) => it.token);
+    const allRowTokens = [
+      ...anchorTokens,
+      ...(hasDedicatedLastCol ? sortedLast : []),
+      ...(hasDedicatedLastCol ? sortedGender : []),
+    ];
+    // Deduplicate tokens by id
+    const uniqueRowTokens = Array.from(
+      new Map(allRowTokens.map((t) => [t.id, t])).values()
+    );
+
+    // Anchor rowBbox Y-span on primary row tokens so vertical gap detection isn't distorted by a curled right column
+    const anchorBbox = unionBbox(anchorTokens.map((t) => t.bbox));
+    const fullUnionBbox = unionBbox(uniqueRowTokens.map((t) => t.bbox));
+    const rowBbox: BoundingBox = {
+      x0: fullUnionBbox.x0,
+      y0: anchorTokens.length > 0 ? anchorBbox.y0 : fullUnionBbox.y0,
+      x1: fullUnionBbox.x1,
+      y1: anchorTokens.length > 0 ? anchorBbox.y1 : fullUnionBbox.y1,
+    };
+
     const cellBboxes: OcrCellCoordinateMap = {};
     if (sortedSeq.length > 0) {
       cellBboxes.sequence = unionBbox(sortedSeq.map((t) => t.bbox));
@@ -1015,9 +1476,19 @@ export function analyzeRosterTableGeometry(
       cellBboxes.gender = unionBbox(sortedGender.map((t) => t.bbox));
     }
 
+    // Compute row confidence without allowing high-confidence sequence/gender cells to hide a 0% or low-confidence identity token
+    const identityTokens = [...sortedStuNum, ...sortedFirst, ...sortedLast];
+    const meanAllConf =
+      uniqueRowTokens.reduce((s, t) => s + t.confidence, 0) /
+      Math.max(1, uniqueRowTokens.length);
+    const minIdentityConf =
+      identityTokens.length > 0
+        ? Math.min(...identityTokens.map((t) => t.confidence))
+        : meanAllConf;
     const avgConf = Math.round(
-      allRowTokens.reduce((s, t) => s + t.confidence, 0) /
-        Math.max(1, allRowTokens.length)
+      minIdentityConf === 0
+        ? 0
+        : Math.min(meanAllConf, minIdentityConf + 8)
     );
 
     const physicalRowId = `prow-${rIdx + 1}-${Math.round(rowBbox.y0)}-${Math.round(rowBbox.y1)}`;
@@ -1026,7 +1497,7 @@ export function analyzeRosterTableGeometry(
     const rowObj: VerifiedOcrRosterRow = {
       rowId: `ocr-row-${rIdx + 1}`,
       physicalRowId,
-      rowIndex: extractedRows.length + 1,
+      rowIndex: extractedRowsWithSortY.length + 1,
       rowKind: 'extracted',
       sequenceNumber: parsedSeq,
       studentNumber,
@@ -1036,7 +1507,7 @@ export function analyzeRosterTableGeometry(
       fullName,
       rowBbox,
       cellBboxes,
-      sourceTokenIds: allRowTokens.map((t) => t.id),
+      sourceTokenIds: uniqueRowTokens.map((t) => t.id),
       rawCells: {
         sequence: rawSeqText,
         studentNumber,
@@ -1054,8 +1525,69 @@ export function analyzeRosterTableGeometry(
       approvedSignature: '',
     };
 
-    extractedRows.push(rowObj);
+    extractedRowsWithSortY.push({
+      sortY: rowCluster.meanCorrectedY,
+      row: rowObj,
+    });
   });
+
+  // 6b. Preserve any unmatched surname-only rows (where school number and first name were completely unread on that line)
+  for (const unmatchedSb of surnameMatchResult.unmatchedCandidates) {
+    const sbTokens = unmatchedSb.tokens;
+    const avgConf = Math.round(
+      sbTokens.reduce((s, t) => s + t.confidence, 0) /
+        Math.max(1, sbTokens.length)
+    );
+    const rowBbox = unmatchedSb.bbox;
+    const physicalRowId = `prow-surname-only-${Math.round(rowBbox.y0)}-${Math.round(rowBbox.y1)}`;
+    const flags: UncertaintyCode[] = [];
+    if (!headerDetected) {
+      flags.push('HEADERLESS_COLUMN_INFERRED');
+    }
+
+    extractedRowsWithSortY.push({
+      sortY: unmatchedSb.correctedY,
+      row: {
+        rowId: `ocr-row-unmatched-last-${unmatchedSb.candidateIndex + 1}`,
+        physicalRowId,
+        rowIndex: 0,
+        rowKind: 'extracted',
+        sequenceNumber: null,
+        studentNumber: '',
+        firstName: '',
+        lastName: unmatchedSb.text,
+        gender: '',
+        fullName: unmatchedSb.text,
+        rowBbox,
+        cellBboxes: {
+          lastName: unmatchedSb.bbox,
+        },
+        sourceTokenIds: sbTokens.map((t) => t.id),
+        rawCells: {
+          sequence: '',
+          studentNumber: '',
+          firstName: '',
+          lastName: unmatchedSb.text,
+          gender: '',
+        },
+        confidence: avgConf,
+        reliabilityLevel: 'invalid',
+        uncertaintyFlags: flags,
+        uncertaintyReasons: [],
+        validationErrors: [],
+        suggestions: [],
+        approvedByTeacher: false,
+        approvedSignature: '',
+      },
+    });
+  }
+
+  extractedRowsWithSortY.sort((a, b) => a.sortY - b.sortY);
+  const extractedRows = extractedRowsWithSortY.map((entry, idx) => ({
+    ...entry.row,
+    rowId: `ocr-row-${idx + 1}`,
+    rowIndex: idx + 1,
+  }));
 
   // 7. Missing Student Detection (Sequence Number Gaps & Physical Vertical Row Spacing Gaps)
   const finalRowsWithGapCandidates: VerifiedOcrRosterRow[] = [];
@@ -1090,10 +1622,7 @@ export function analyzeRosterTableGeometry(
       ) {
         missingCount = next.sequenceNumber - cur.sequenceNumber - 1;
         bySeqGap = true;
-      } else if (
-        medianRowStepY > 12 &&
-        deltaY > medianRowStepY * 1.72
-      ) {
+      } else if (medianRowStepY > 12 && deltaY > medianRowStepY * 1.72) {
         const estimated = Math.round(deltaY / medianRowStepY) - 1;
         if (estimated >= 1 && estimated <= 4) {
           missingCount = estimated;
@@ -1184,5 +1713,8 @@ export function analyzeRosterTableGeometry(
     unassignedTokens,
     medianRowHeight: medianWordH,
     medianRowStepY,
+    surnameOrderAlignmentApplied: surnameMatchResult.alignmentApplied,
+    surnameOrderAlignmentPairs: surnameMatchResult.alignmentPairs,
   };
 }
+

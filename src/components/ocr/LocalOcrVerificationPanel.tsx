@@ -42,6 +42,7 @@ import {
   reparseOcrWithColumnRoles,
   runLocalRosterOcrPipelineAsync,
   runRealisticCameraOcrBenchmarkSuite,
+  terminateActiveOcrWorker,
   type RealisticCameraBenchmarkSuiteSummary,
   type RosterOcrAccuracyMetrics,
   type RosterOcrPerformanceMetrics,
@@ -126,6 +127,13 @@ export const LocalOcrVerificationPanel: React.FC<
 
   const inspectedRow =
     rows.find((r) => r.rowId === inspectedRowId) || rows[0] || null;
+
+  // Terminate any active background OCR Web Worker on component unmount
+  useEffect(() => {
+    return () => {
+      terminateActiveOcrWorker();
+    };
+  }, []);
 
   // Re-evaluate rows if classroom's existing students change
   useEffect(() => {
@@ -851,9 +859,66 @@ export const LocalOcrVerificationPanel: React.FC<
         </div>
       )}
 
+      {/* Explicit ML Kit Native Bridge Failure / Fallback Transparency Alert */}
+      {ocrOutput?.fallbackOccurred && (
+        <div
+          role="status"
+          data-testid="mlkit-fallback-alert"
+          className="flex items-start gap-2.5 text-xs text-amber-950 bg-amber-50 border border-amber-300 rounded-xl p-3.5 space-y-1"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-700" />
+          <div className="space-y-1">
+            <div className="font-bold text-amber-950">
+              Yerel ML Kit Köprüsü Kullanılamadı — Yedek OCR Motoruna Geçildi
+            </div>
+            <div className="text-[11px] text-amber-900 leading-relaxed">
+              <strong>Hata / Geçiş Nedeni:</strong> {ocrOutput.fallbackReason}
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-mono-num pt-0.5 text-amber-950">
+              <span>
+                <strong>İstenen Motor:</strong>{' '}
+                {ocrOutput.requestedEngineName || ocrOutput.requestedEngineId}
+              </span>
+              <span>
+                <strong>Gerçekte Çalışan Motor:</strong> {ocrOutput.engineName}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Preprocessing & Geometric Diagnostics Toolbar */}
       {ocrOutput && tableAnalysis && (
         <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/80 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/80 text-[11px]">
+            <div
+              data-testid="actual-running-ocr-engine"
+              className="flex flex-wrap items-center gap-1.5 text-slate-800"
+            >
+              <span className="font-bold text-slate-900">
+                Gerçekte Çalışan Motor:
+              </span>
+              <span className="font-semibold text-teal-900 bg-teal-100/80 border border-teal-300 rounded px-2 py-0.5">
+                {ocrOutput.engineName}
+              </span>
+              {ocrOutput.fallbackOccurred && (
+                <span className="font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded px-2 py-0.5">
+                  Yedek Motor Devrede
+                </span>
+              )}
+            </div>
+
+            {tableAnalysis.surnameOrderAlignmentApplied && (
+              <div
+                data-testid="surname-order-alignment-badge"
+                className="font-mono-num text-[11px] font-semibold text-teal-900 bg-white border border-teal-200 rounded px-2 py-0.5"
+              >
+                Sıra Koruyan 1-1 Soyadı Eşleştirme:{' '}
+                {tableAnalysis.surnameOrderAlignmentPairs?.length ?? 0} eşleşme
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-700 font-mono-num">
               <span className="font-bold text-slate-900">
@@ -926,13 +991,21 @@ export const LocalOcrVerificationPanel: React.FC<
             </div>
           </div>
 
-          {ocrOutput.preprocessing.diagnostics.qualityWarnings.length > 0 && (
+          {ocrOutput.preprocessing.diagnostics.qualityWarnings.filter(
+            (w) =>
+              !w.startsWith('[Motor Bilgilendirmesi]') &&
+              !w.startsWith('[ML Kit Hatası')
+          ).length > 0 && (
             <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-0.5">
-              {ocrOutput.preprocessing.diagnostics.qualityWarnings.map(
-                (w, idx) => (
-                  <div key={idx}>• {w}</div>
+              {ocrOutput.preprocessing.diagnostics.qualityWarnings
+                .filter(
+                  (w) =>
+                    !w.startsWith('[Motor Bilgilendirmesi]') &&
+                    !w.startsWith('[ML Kit Hatası')
                 )
-              )}
+                .map((w, idx) => (
+                  <div key={idx}>• {w}</div>
+                ))}
             </div>
           )}
 

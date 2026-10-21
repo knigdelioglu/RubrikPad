@@ -1,13 +1,44 @@
 import type {
+  Classroom,
   Rubric,
   RubricCriterion,
   Student,
+  StudentAuditEntry,
   StudentEvaluation,
   EvaluationSession,
   StudentGroup,
   ParsedRosterRow,
   EvaluationActionHistoryEntry,
 } from '../types.ts';
+
+export const MAX_STUDENT_AUDIT_LOG_ENTRIES = 50;
+
+let entitySequenceCounter = 0;
+
+/**
+ * Generates a collision-proof entity ID combining timestamp, a monotonic counter,
+ * and random entropy so rapid bulk operations in the same millisecond never collide.
+ */
+export function createUniqueEntityId(prefix: string): string {
+  entitySequenceCounter = (entitySequenceCounter + 1) % 1000000;
+  const randomSuffix = Math.floor(Math.random() * 46656)
+    .toString(36)
+    .padStart(3, '0');
+  return `${prefix}-${Date.now()}-${entitySequenceCounter}-${randomSuffix}`;
+}
+
+/**
+ * Prepends a new audit log entry to a student's audit history while bounding the array
+ * to `maxEntries` (default 50) so local storage never bloats unboundedly.
+ */
+export function appendStudentAuditLog(
+  existingLog: StudentAuditEntry[] | undefined,
+  newEntry: StudentAuditEntry,
+  maxEntries = MAX_STUDENT_AUDIT_LOG_ENTRIES
+): StudentAuditEntry[] {
+  const safeExisting = Array.isArray(existingLog) ? existingLog : [];
+  return [newEntry, ...safeExisting].slice(0, Math.max(1, maxEntries));
+}
 
 /**
  * Checks whether a score value is a valid assigned score (0 is valid; null/undefined/NaN is unscored).
@@ -1043,6 +1074,94 @@ export function checkRubricDeletionImpact(
   return {
     canDelete: true,
     usedInSessionsCount,
+  };
+}
+
+/**
+ * Validates creating or updating a classroom record (prevents empty or duplicate classroom names).
+ */
+export function validateClassroomRecord(
+  input: {
+    name: string;
+    gradeLevel?: string;
+    subject?: string;
+    academicYear?: string;
+  },
+  allClassrooms: Classroom[],
+  editingClassroomId?: string
+): { isValid: boolean; error?: string } {
+  const trimmedName = (input.name || '').trim();
+  if (trimmedName.length < 2) {
+    return {
+      isValid: false,
+      error: 'Sınıf / şube adı en az 2 karakter olmalıdır.',
+    };
+  }
+  if (trimmedName.length > 80) {
+    return {
+      isValid: false,
+      error: 'Sınıf / şube adı en fazla 80 karakter olabilir.',
+    };
+  }
+  const normalizedTarget = trimmedName.toLocaleLowerCase('tr-TR');
+  const duplicate = allClassrooms.find(
+    (c) =>
+      c.id !== editingClassroomId &&
+      c.name.trim().toLocaleLowerCase('tr-TR') === normalizedTarget
+  );
+  if (duplicate) {
+    return {
+      isValid: false,
+      error: `"${duplicate.name}" adında bir sınıf zaten kayıtlı.`,
+    };
+  }
+  return { isValid: true };
+}
+
+/**
+ * Checks whether a classroom has associated students or evaluation sessions before deletion.
+ * Blocks deletion if it is the last classroom or if it has any students or sessions.
+ */
+export function checkClassroomDeletionImpact(
+  classroomId: string,
+  allClassrooms: Classroom[],
+  students: Student[],
+  sessions: EvaluationSession[]
+): {
+  canDelete: boolean;
+  studentCount: number;
+  sessionCount: number;
+  reason?: string;
+} {
+  const studentCount = students.filter((s) => s.classId === classroomId).length;
+  const sessionCount = sessions.filter(
+    (s) =>
+      s.classId === classroomId ||
+      (Array.isArray(s.classIds) && s.classIds.includes(classroomId))
+  ).length;
+
+  if (allClassrooms.length <= 1) {
+    return {
+      canDelete: false,
+      studentCount,
+      sessionCount,
+      reason: 'Sistemde en az bir sınıf tanımlı kalmalıdır.',
+    };
+  }
+
+  if (studentCount > 0 || sessionCount > 0) {
+    return {
+      canDelete: false,
+      studentCount,
+      sessionCount,
+      reason: `Bu sınıfa bağlı ${studentCount} öğrenci ve ${sessionCount} değerlendirme oturumu bulunduğu için veri bütünlüğünü korumak amacıyla sınıf silinemez.`,
+    };
+  }
+
+  return {
+    canDelete: true,
+    studentCount: 0,
+    sessionCount: 0,
   };
 }
 
@@ -2273,13 +2392,21 @@ export function getStudentConsecutiveLowScoreReminder(
 }
 
 /**
- * Neutralizes Spreadsheet / CSV Formula Injection (DDE / Excel formula execution)
- * by prefixing a single quote `'` when a text value starts with `=`, `+`, `-`, `@`, `\t`, or `\r`.
+ * Neutralizes Spreadsheet / CSV Formula Injection (DDE / Excel / Calc formula execution)
+ * by prefixing a single quote `'` when a text value (or its trimmed leading character)
+ * starts with `=`, `+`, `-`, `@`, `|`, `\t`, `\r`, or `\n`.
  */
 export function sanitizeCsvFormulaInjection(val: string | number): string {
   if (typeof val === 'number') return String(val);
   const str = String(val ?? '');
-  if (str.length > 0 && /^[=+\-@\t\r]/.test(str) && str !== '-') {
+  if (!str || str === '-') return str;
+  const trimmedStart = str.trimStart();
+  if (
+    /^[=+\-@|\t\r\n]/.test(str) ||
+    (trimmedStart.length > 0 &&
+      trimmedStart !== '-' &&
+      /^[=+\-@|]/.test(trimmedStart))
+  ) {
     return `'${str}`;
   }
   return str;
@@ -2288,6 +2415,7 @@ export function sanitizeCsvFormulaInjection(val: string | number): string {
 /**
  * Generates a UTF-8 BOM CSV string for an evaluation session with:
  * - Strict rubric/session validation (no wrong fallback)
+ * - Optional `targetClassId` isolation for multi-class sessions so another class's students never leak into a single-class export
  * - CSV formula injection protection (P2)
  * - Separate Individual vs Group score columns (P0 #4)
  * - Definitive total only when all criteria are completed (P0 #2)
@@ -2295,7 +2423,8 @@ export function sanitizeCsvFormulaInjection(val: string | number): string {
 export function generateSessionCsv(
   session: EvaluationSession,
   rubric: Rubric | null | undefined,
-  students: Student[]
+  students: Student[],
+  targetClassId?: string
 ): string {
   const effectiveRubric =
     session.rubricSnapshot && session.rubricSnapshot.id === session.rubricId
@@ -2311,9 +2440,20 @@ export function generateSessionCsv(
   const allowedClassIds = new Set(
     session.classIds && session.classIds.length > 0 ? session.classIds : [session.classId]
   );
-  const sessionStudents = students.filter(
-    (s) => allowedClassIds.has(s.classId) && !s.archived
-  );
+
+  if (targetClassId && !allowedClassIds.has(targetClassId)) {
+    throw new Error(
+      'Rapor oluşturulamadı: Seçilen sınıf bu değerlendirme oturumuna dahil değil.'
+    );
+  }
+
+  const sessionStudents = students.filter((s) => {
+    if (s.archived) return false;
+    if (targetClassId) {
+      return s.classId === targetClassId;
+    }
+    return allowedClassIds.has(s.classId);
+  });
 
   const escapeCsvCell = (val: string | number): string => {
     const safeStr = sanitizeCsvFormulaInjection(val);
