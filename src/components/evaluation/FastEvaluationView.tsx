@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Check,
   FileDown,
+  MessageSquare,
   RotateCcw,
   Sliders,
   Table,
@@ -19,6 +20,7 @@ import type {
 import {
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
+  hasStudentObservationData,
 } from '../../utils/rubricLogic.ts';
 import {
   RubricCriterionCard,
@@ -74,6 +76,7 @@ interface FastEvaluationViewProps {
   onConfirmResetAndChangeRubric?: (targetRubric: Rubric) => void;
   onCancelRubricChange?: () => void;
   onExportPdf?: () => void;
+  onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
 }
@@ -106,6 +109,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   onConfirmResetAndChangeRubric,
   onCancelRubricChange,
   onExportPdf,
+  onOpenQuickNoteModal,
   allSessions,
   rubricsById,
 }) => {
@@ -317,16 +321,13 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                   ev
                 ).effectiveCalc;
                 const isSelected = stu.id === selectedStudent?.id;
+                const hasObsData = hasStudentObservationData(ev);
 
                 return (
-                  <button
+                  <div
                     key={stu.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectStudent(stu.id);
-                      onDismissBanner();
-                    }}
-                    className={`w-full text-left px-2.5 py-2 rounded-xl border transition-all flex items-center justify-between gap-2 cursor-pointer min-h-[40px] ${
+                    data-testid={`fast-student-card-${stu.id}`}
+                    className={`w-full rounded-xl border transition-all flex items-center justify-between gap-1 pr-1.5 min-h-[40px] ${
                       isSelected
                         ? 'bg-slate-900 border-slate-900 text-white shadow-xs'
                         : calc.isComplete
@@ -336,45 +337,87 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span
-                        className={`font-mono-num text-[11px] font-bold shrink-0 ${
-                          isSelected ? 'text-slate-300' : 'text-slate-400'
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectStudent(stu.id);
+                        onDismissBanner();
+                      }}
+                      className="flex-1 min-w-0 text-left pl-2.5 pr-1 py-2 flex items-center justify-between gap-1.5 cursor-pointer min-h-[40px]"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span
+                          className={`font-mono-num text-[11px] font-bold shrink-0 ${
+                            isSelected ? 'text-slate-300' : 'text-slate-400'
+                          }`}
+                        >
+                          #{stu.studentNumber}
+                        </span>
+                        <span className="text-xs font-bold truncate">
+                          {stu.fullName}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
+                          <span
+                            className={`font-mono-num text-[11px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              isSelected
+                                ? 'bg-emerald-500 text-white'
+                                : 'bg-emerald-100 text-emerald-900'
+                            }`}
+                          >
+                            <Check className="w-3 h-3 stroke-[2.5]" />
+                            {calc.finalScoreOutOf100}
+                          </span>
+                        ) : calc.completedCriteriaCount > 0 ? (
+                          <span
+                            className={`font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              isSelected
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-amber-100 text-amber-900'
+                            }`}
+                          >
+                            Taslak ({calc.completedCriteriaCount}/
+                            {calc.totalCriteriaCount})
+                          </span>
+                        ) : null}
+                      </div>
+                    </button>
+
+                    {onOpenQuickNoteModal && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenQuickNoteModal(stu.id);
+                        }}
+                        data-testid={`fast-quick-note-icon-${stu.id}`}
+                        aria-label={`${stu.fullName} için Hızlı Gözlem Notu`}
+                        title={
+                          hasObsData
+                            ? `Hızlı Gözlem Notunu Düzenle (${stu.fullName})${
+                                ev?.note ? `: "${ev.note}"` : ''
+                              }`
+                            : `${stu.fullName} için Hızlı Gözlem Notu Ekle`
+                        }
+                        className={`shrink-0 p-1.5 rounded-lg border transition-colors cursor-pointer flex items-center justify-center relative ${
+                          isSelected
+                            ? hasObsData
+                              ? 'bg-teal-500 text-white border-teal-400 hover:bg-teal-400'
+                              : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+                            : hasObsData
+                            ? 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-teal-300 hover:text-teal-700'
                         }`}
                       >
-                        #{stu.studentNumber}
-                      </span>
-                      <span className="text-xs font-bold truncate">
-                        {stu.fullName}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
-                        <span
-                          className={`font-mono-num text-[11px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
-                            isSelected
-                              ? 'bg-emerald-500 text-white'
-                              : 'bg-emerald-100 text-emerald-900'
-                          }`}
-                        >
-                          <Check className="w-3 h-3 stroke-[2.5]" />
-                          {calc.finalScoreOutOf100}
-                        </span>
-                      ) : calc.completedCriteriaCount > 0 ? (
-                        <span
-                          className={`font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                            isSelected
-                              ? 'bg-amber-500 text-white'
-                              : 'bg-amber-100 text-amber-900'
-                          }`}
-                        >
-                          Taslak ({calc.completedCriteriaCount}/
-                          {calc.totalCriteriaCount})
-                        </span>
-                      ) : null}
-                    </div>
-                  </button>
+                        <MessageSquare className="w-3 h-3" />
+                        {hasObsData && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-300 absolute -top-0.5 -right-0.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -420,7 +463,11 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                     ).shouldRemind && (
                       <button
                         type="button"
-                        onClick={onExitFastMode}
+                        onClick={() =>
+                          onOpenQuickNoteModal
+                            ? onOpenQuickNoteModal(selectedStudent.id)
+                            : onExitFastMode()
+                        }
                         data-testid="low-score-observation-reminder"
                         className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 cursor-pointer"
                         title="Üst üste 3 değerlendirmede düşük puan (1 veya 2) — Gözlem notu eklemek için tıklayın"
@@ -432,6 +479,23 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    {onOpenQuickNoteModal && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenQuickNoteModal(selectedStudent.id)}
+                        data-testid="fast-active-student-quick-note-btn"
+                        aria-label={`${selectedStudent.fullName} için Hızlı Gözlem Notu`}
+                        className={`px-2.5 py-1 rounded-lg border text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+                          hasStudentObservationData(currentStudentEval)
+                            ? 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'
+                            : 'bg-teal-50 text-teal-900 border-teal-200 hover:bg-teal-100'
+                        }`}
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        <span>Hızlı Gözlem Notu</span>
+                      </button>
+                    )}
+
                     {fastCompletionBanner &&
                       fastCompletionBanner.completedStudentId &&
                       fastCompletionBanner.completedStudentId !==

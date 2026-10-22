@@ -1296,7 +1296,13 @@ export function validateFullAppDataStructure(payload: unknown): {
   };
 
   for (const cls of p.classrooms) {
-    if (!cls || typeof cls !== 'object' || typeof (cls as Classroom).id !== 'string' || typeof (cls as Classroom).name !== 'string') {
+    if (
+      !cls ||
+      typeof cls !== 'object' ||
+      typeof (cls as Classroom).id !== 'string' ||
+      typeof (cls as Classroom).name !== 'string' ||
+      (cls as Classroom).name.length > 500
+    ) {
       return { isValid: false, error: 'Sınıf kayıtlarından biri geçersiz veya eksik alan içeriyor.' };
     }
   }
@@ -1308,14 +1314,16 @@ export function validateFullAppDataStructure(payload: unknown): {
       typeof (stu as Student).id !== 'string' ||
       typeof (stu as Student).studentNumber !== 'string' ||
       typeof (stu as Student).fullName !== 'string' ||
-      typeof (stu as Student).classId !== 'string'
+      typeof (stu as Student).classId !== 'string' ||
+      (stu as Student).fullName.length > 500 ||
+      (stu as Student).studentNumber.length > 64
     ) {
       return { isValid: false, error: 'Öğrenci kayıtlarından biri geçersiz veya zorunlu alanları eksik.' };
     }
     const auditLog = (stu as Student).auditLog;
     if (auditLog !== undefined) {
-      if (!Array.isArray(auditLog)) {
-        return { isValid: false, error: 'Öğrenci denetim geçmişi (auditLog) dizi formatında olmalıdır.' };
+      if (!Array.isArray(auditLog) || auditLog.length > 500) {
+        return { isValid: false, error: 'Öğrenci denetim geçmişi (auditLog) dizi formatında olmalıdır ve sınırları aşmamalıdır.' };
       }
       for (const entry of auditLog) {
         if (
@@ -1323,7 +1331,8 @@ export function validateFullAppDataStructure(payload: unknown): {
           typeof entry !== 'object' ||
           typeof entry.timestamp !== 'string' ||
           typeof entry.action !== 'string' ||
-          typeof entry.details !== 'string'
+          typeof entry.details !== 'string' ||
+          entry.details.length > 2000
         ) {
           return { isValid: false, error: 'Öğrenci denetim geçmişi (auditLog) kaydı bozuk.' };
         }
@@ -1337,8 +1346,10 @@ export function validateFullAppDataStructure(payload: unknown): {
       typeof rub !== 'object' ||
       typeof (rub as Rubric).id !== 'string' ||
       typeof (rub as Rubric).title !== 'string' ||
+      (rub as Rubric).title.length > 500 ||
       !Array.isArray((rub as Rubric).criteria) ||
-      (rub as Rubric).criteria.length === 0
+      (rub as Rubric).criteria.length === 0 ||
+      (rub as Rubric).criteria.length > 100
     ) {
       return { isValid: false, error: 'Rubrik kayıtlarından biri geçersiz veya ölçütleri eksik.' };
     }
@@ -1348,6 +1359,7 @@ export function validateFullAppDataStructure(payload: unknown): {
         typeof crit !== 'object' ||
         typeof crit.id !== 'string' ||
         typeof crit.title !== 'string' ||
+        crit.title.length > 500 ||
         typeof crit.weight !== 'number' ||
         !Number.isFinite(crit.weight) ||
         crit.weight < 0 ||
@@ -1382,6 +1394,7 @@ export function validateFullAppDataStructure(payload: unknown): {
       typeof ses !== 'object' ||
       typeof (ses as EvaluationSession).id !== 'string' ||
       typeof (ses as EvaluationSession).title !== 'string' ||
+      (ses as EvaluationSession).title.length > 500 ||
       typeof (ses as EvaluationSession).classId !== 'string' ||
       typeof (ses as EvaluationSession).rubricId !== 'string' ||
       !Array.isArray((ses as EvaluationSession).groups) ||
@@ -1390,12 +1403,19 @@ export function validateFullAppDataStructure(payload: unknown): {
     ) {
       return { isValid: false, error: 'Değerlendirme oturumu kayıtlarından biri bozuk veya eksik.' };
     }
+    if (
+      typeof (ses as EvaluationSession).generalSessionNote === 'string' &&
+      (ses as EvaluationSession).generalSessionNote.length > 5000
+    ) {
+      return { isValid: false, error: 'Oturum genel gözlem notu uzunluk sınırını aşıyor.' };
+    }
     for (const grp of (ses as EvaluationSession).groups) {
       if (
         !grp ||
         typeof grp !== 'object' ||
         typeof grp.id !== 'string' ||
         typeof grp.name !== 'string' ||
+        grp.name.length > 500 ||
         !Array.isArray(grp.studentIds) ||
         !isValidScoreMap(grp.criterionScores) ||
         !isValidScoreMap(grp.directCriterionScores)
@@ -1406,6 +1426,9 @@ export function validateFullAppDataStructure(payload: unknown): {
     for (const ev of Object.values((ses as EvaluationSession).evaluations)) {
       if (!ev || typeof ev !== 'object') {
         return { isValid: false, error: 'Öğrenci değerlendirme kaydı geçersiz.' };
+      }
+      if (typeof ev.note === 'string' && ev.note.length > 5000) {
+        return { isValid: false, error: 'Öğrenci gözlem notu uzunluk sınırını aşıyor.' };
       }
       if (
         !isValidScoreMap(ev.criterionScores) ||
@@ -1421,8 +1444,8 @@ export function validateFullAppDataStructure(payload: unknown): {
     }
     const undoHistory = (ses as EvaluationSession).undoHistory;
     if (undoHistory !== undefined) {
-      if (!Array.isArray(undoHistory)) {
-        return { isValid: false, error: 'Oturum geri alma geçmişi (undoHistory) dizi formatında olmalıdır.' };
+      if (!Array.isArray(undoHistory) || undoHistory.length > 200) {
+        return { isValid: false, error: 'Oturum geri alma geçmişi (undoHistory) dizi formatında olmalıdır ve sınırları aşmamalıdır.' };
       }
       for (const u of undoHistory) {
         if (
@@ -1431,10 +1454,26 @@ export function validateFullAppDataStructure(payload: unknown): {
           typeof u.id !== 'string' ||
           typeof u.timestamp !== 'string' ||
           typeof u.description !== 'string' ||
+          u.description.length > 1000 ||
           typeof u.previousEvaluations !== 'object' ||
           u.previousEvaluations === null
         ) {
           return { isValid: false, error: 'Oturum geri alma geçmişi (undoHistory) kaydı bozuk.' };
+        }
+        for (const prevEv of Object.values(u.previousEvaluations)) {
+          if (
+            !prevEv ||
+            typeof prevEv !== 'object' ||
+            !isValidScoreMap(prevEv.criterionScores) ||
+            !isValidScoreMap(prevEv.directCriterionScores) ||
+            !isValidScoreMap(prevEv.groupCriterionScores) ||
+            !isValidScoreMap(prevEv.groupDirectScores)
+          ) {
+            return {
+              isValid: false,
+              error: 'Geri alma geçmişinde (undoHistory) geçersiz puan haritası tespit edildi.',
+            };
+          }
         }
       }
     }

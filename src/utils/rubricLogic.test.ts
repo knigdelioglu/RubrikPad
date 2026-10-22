@@ -40,10 +40,15 @@ import {
   sanitizeCsvFormulaInjection,
   generateSessionCsv,
   MAX_STUDENT_AUDIT_LOG_ENTRIES,
+  MAX_UNDO_HISTORY_ENTRIES,
   createUniqueEntityId,
   appendStudentAuditLog,
+  sanitizeObservationText,
+  sanitizeExportFilename,
   validateClassroomRecord,
   checkClassroomDeletionImpact,
+  hasStudentObservationData,
+  upsertStudentQuickObservation,
 } from './rubricLogic.ts';
 import {
   STORAGE_KEY,
@@ -83,6 +88,7 @@ import {
   decodePdfTextWithToUnicode,
   normalizePdfTextLine,
 } from './pdfGenerator.ts';
+import { validateUploadedImageMagicBytes } from './ocr/imagePreprocessor.ts';
 import type {
   Classroom,
   Rubric,
@@ -2906,6 +2912,204 @@ test('Medium-Priority Data Security & Integrity Fixes: PDF control-char sanitiza
   );
   assert.equal(emptyClassImpact.canDelete, true);
 });
+
+test('Low-Priority Data Security & Resilience Fixes: OCR magic-byte validation, SVG blocking, observation/filename sanitization, and undoHistory validation', () => {
+  // 1. Magic-byte validation accepts genuine PNG, JPEG, and WEBP headers and rejects SVG/HTML/spoofed files
+  const pngHeader = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  ]);
+  assert.equal(validateUploadedImageMagicBytes(pngHeader, 'image/png').valid, true);
+  assert.equal(
+    validateUploadedImageMagicBytes(pngHeader, 'image/png').detectedFormat,
+    'png'
+  );
+
+  const jpegHeader = new Uint8Array([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  ]);
+  assert.equal(validateUploadedImageMagicBytes(jpegHeader, 'image/jpeg').valid, true);
+  assert.equal(
+    validateUploadedImageMagicBytes(jpegHeader, 'image/jpeg').detectedFormat,
+    'jpeg'
+  );
+
+  const webpHeader = new Uint8Array([
+    0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+  ]);
+  assert.equal(validateUploadedImageMagicBytes(webpHeader, 'image/webp').valid, true);
+  assert.equal(
+    validateUploadedImageMagicBytes(webpHeader, 'image/webp').detectedFormat,
+    'webp'
+  );
+
+  const svgHeader = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg">');
+  assert.equal(
+    validateUploadedImageMagicBytes(svgHeader, 'image/svg+xml').valid,
+    false
+  );
+  assert.equal(validateUploadedImageMagicBytes(svgHeader, 'image/png').valid, false);
+
+  // 2. Observation text and export filename sanitizers strip control chars, preserve Turkish letters, and bound length
+  const rawNote = 'Deney gözlemi\u0000\u0007:\nÖğrenci ŞĞÜİÖÇşığüöç başarılı.';
+  const cleanNote = sanitizeObservationText(rawNote, 200);
+  assert.equal(cleanNote.includes('\u0000'), false);
+  assert.equal(cleanNote.includes('\u0007'), false);
+  assert.ok(cleanNote.includes('\nÖğrenci ŞĞÜİÖÇşığüöç başarılı.'));
+
+  const slug = sanitizeExportFilename('  ../../../3. Ünite: Karışımlar & Yoğunluk?!  ', 'yedek');
+  assert.equal(slug, '3_ünite_karışımlar_yoğunluk');
+  assert.equal(sanitizeExportFilename('///...///', 'varsayilan'), 'varsayilan');
+
+  // 3. Session undoHistory is capped at MAX_UNDO_HISTORY_ENTRIES (30) and validated against score smuggling on import
+  let ses: EvaluationSession = {
+    id: 'ses-undo-bound',
+    title: 'Undo Sınır Testi',
+    classId: 'cls-1',
+    rubricId: sampleRubric.id,
+    rubricSnapshot: sampleRubric,
+    date: '2026-10-21',
+    status: 'in_progress',
+    mode: 'individual',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {},
+    undoHistory: [],
+  };
+  for (let i = 1; i <= 40; i++) {
+    ses = {
+      ...ses,
+      undoHistory: recordSessionUndoEntry(ses, {
+        scope: 'session',
+        description: `Adım ${i}`,
+        previousEvaluations: {},
+      }),
+    };
+  }
+  assert.equal(ses.undoHistory!.length, MAX_UNDO_HISTORY_ENTRIES);
+  assert.equal(ses.undoHistory![0].description, 'Adım 40');
+
+  // Smuggled negative score inside undoHistory.previousEvaluations is rejected by validateFullAppDataStructure
+  const tamperedUndoState = {
+    classrooms: [
+      {
+        id: 'cls-1',
+        name: '7/A',
+        gradeLevel: '7',
+        subject: 'Fen',
+        academicYear: '2026-2027',
+      },
+    ],
+    students: [],
+    rubrics: [sampleRubric],
+    sessions: [
+      {
+        ...ses,
+        undoHistory: [
+          {
+            id: 'undo-bad',
+            timestamp: '2026-10-21T10:00:00Z',
+            scope: 'student',
+            description: 'Bozuk geri alma kaydı',
+            previousEvaluations: {
+              'stu-1': {
+                studentId: 'stu-1',
+                criterionScores: { c1: -50 },
+                note: '',
+                tags: [],
+                updatedAt: '2026-10-21T10:00:00Z',
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  assert.equal(validateFullAppDataStructure(tamperedUndoState).isValid, false);
+});
+
+test('Quick Observation Note: upsertStudentQuickObservation saves sanitized note & tags, preserves existing scores, and records undo entry', () => {
+  const baseSession: EvaluationSession = {
+    id: 'ses-quick-obs',
+    title: 'Deney Gözlem Oturumu',
+    classId: 'cls-7a',
+    rubricId: sampleRubric.id,
+    rubricSnapshot: sampleRubric,
+    date: '2026-10-21',
+    status: 'in_progress',
+    mode: 'individual',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      'stu-1': {
+        studentId: 'stu-1',
+        criterionScores: { c1: 4, c2: 3 },
+        groupCriterionScores: { c1: 3, c2: 3 },
+        groupNote: 'Grup ortak notu korunmalı',
+        note: '',
+        tags: [],
+        updatedAt: '2026-10-21T08:00:00Z',
+      },
+    },
+    undoHistory: [],
+  };
+
+  assert.equal(
+    hasStudentObservationData(baseSession.evaluations['stu-1']),
+    false
+  );
+  assert.equal(hasStudentObservationData(undefined), false);
+
+  // 1. Add quick observation note & tags for stu-1 (who already has scores)
+  const updated1 = upsertStudentQuickObservation(baseSession, 'stu-1', {
+    note: 'Mikroskop odaklamasını\u0000 tek başına başarıyla tamamladı.',
+    tags: ['Aktif Katılım', 'Aktif Katılım', 'Örnek Gösterim'],
+    studentName: 'Elif Yılmaz',
+    timestampIso: '2026-10-21T09:30:00Z',
+  });
+
+  const eval1 = updated1.evaluations['stu-1'];
+  assert.equal(hasStudentObservationData(eval1), true);
+  assert.equal(
+    eval1.note,
+    'Mikroskop odaklamasını tek başına başarıyla tamamladı.'
+  );
+  assert.deepEqual(eval1.tags, ['Aktif Katılım', 'Örnek Gösterim']);
+  // Existing individual and group scores & groupNote must be intact
+  assert.deepEqual(eval1.criterionScores, { c1: 4, c2: 3 });
+  assert.deepEqual(eval1.groupCriterionScores, { c1: 3, c2: 3 });
+  assert.equal(eval1.groupNote, 'Grup ortak notu korunmalı');
+  // Undo entry recorded
+  assert.equal(updated1.undoHistory?.length, 1);
+  assert.match(
+    updated1.undoHistory![0].description,
+    /Elif Yılmaz — hızlı gözlem notu güncellendi/
+  );
+
+  // 2. Add quick observation note for stu-2 (who has not been scored yet)
+  const updated2 = upsertStudentQuickObservation(updated1, 'stu-2', {
+    note: 'Deney düzeneğini kurarken arkadaşına yardımcı oldu.',
+    tags: ['Akran Desteği'],
+    studentName: 'Kerem Demir',
+    timestampIso: '2026-10-21T09:31:00Z',
+  });
+  assert.equal(hasStudentObservationData(updated2.evaluations['stu-2']), true);
+  assert.deepEqual(updated2.evaluations['stu-2'].criterionScores, {});
+  assert.equal(
+    updated2.evaluations['stu-2'].note,
+    'Deney düzeneğini kurarken arkadaşına yardımcı oldu.'
+  );
+  assert.equal(updated2.undoHistory?.length, 2);
+
+  // 3. No-op save does not duplicate undo entries
+  const noOp = upsertStudentQuickObservation(updated2, 'stu-2', {
+    note: 'Deney düzeneğini kurarken arkadaşına yardımcı oldu.',
+    tags: ['Akran Desteği'],
+    studentName: 'Kerem Demir',
+  });
+  assert.equal(noOp.undoHistory?.length, 2);
+});
+
+
 
 
 

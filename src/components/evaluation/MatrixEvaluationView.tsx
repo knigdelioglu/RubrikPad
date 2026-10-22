@@ -1,9 +1,18 @@
 import React from 'react';
-import { AlertTriangle, ArrowLeft, Check, FileDown, Undo2, Zap } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  FileDown,
+  MessageSquare,
+  Undo2,
+  Zap,
+} from 'lucide-react';
 import type { EvaluationSession, Rubric, Student } from '../../types.ts';
 import {
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
+  hasStudentObservationData,
   isScoreAssigned,
 } from '../../utils/rubricLogic.ts';
 
@@ -27,6 +36,7 @@ interface MatrixEvaluationViewProps {
   ) => void;
   onUndoLastAction: () => void;
   onExportPdf?: () => void;
+  onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
 }
@@ -43,6 +53,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
   onBulkAssignCriterion,
   onUndoLastAction,
   onExportPdf,
+  onOpenQuickNoteModal,
   allSessions,
   rubricsById,
 }) => {
@@ -213,8 +224,12 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                             <span
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onSelectCell(stu.id, safeCriterionIdx);
-                                onBackToFastCards();
+                                if (onOpenQuickNoteModal) {
+                                  onOpenQuickNoteModal(stu.id);
+                                } else {
+                                  onSelectCell(stu.id, safeCriterionIdx);
+                                  onBackToFastCards();
+                                }
                               }}
                               data-testid="low-score-observation-reminder"
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-950 border border-amber-300 cursor-pointer"
@@ -234,6 +249,31 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                               <Check className="w-2.5 h-2.5" />
                             </span>
+                          )}
+                          {onOpenQuickNoteModal && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenQuickNoteModal(stu.id);
+                              }}
+                              data-testid={`matrix-quick-note-icon-${stu.id}`}
+                              aria-label={`${stu.fullName} için Hızlı Gözlem Notu`}
+                              title={
+                                hasStudentObservationData(ev)
+                                  ? `Hızlı Gözlem Notunu Düzenle (${stu.fullName})${
+                                      ev?.note ? `: "${ev.note}"` : ''
+                                    }`
+                                  : `${stu.fullName} için Hızlı Gözlem Notu Ekle`
+                              }
+                              className={`p-1 rounded border transition-colors cursor-pointer relative ${
+                                hasStudentObservationData(ev)
+                                  ? 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'
+                                  : 'bg-white text-slate-500 border-slate-200 hover:border-teal-300 hover:text-teal-700'
+                              }`}
+                            >
+                              <MessageSquare className="w-3 h-3" />
+                            </button>
                           )}
                         </div>
                       </div>

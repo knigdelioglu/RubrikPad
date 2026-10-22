@@ -12,6 +12,9 @@ import type {
 } from '../types.ts';
 
 export const MAX_STUDENT_AUDIT_LOG_ENTRIES = 50;
+export const MAX_UNDO_HISTORY_ENTRIES = 30;
+export const MAX_NOTE_LENGTH = 1000;
+export const MAX_SESSION_TITLE_LENGTH = 120;
 
 let entitySequenceCounter = 0;
 
@@ -38,6 +41,34 @@ export function appendStudentAuditLog(
 ): StudentAuditEntry[] {
   const safeExisting = Array.isArray(existingLog) ? existingLog : [];
   return [newEntry, ...safeExisting].slice(0, Math.max(1, maxEntries));
+}
+
+/**
+ * Sanitizes observation notes or text inputs by stripping null bytes and non-printable
+ * control characters (while preserving newlines, tabs, and all Turkish characters) and capping length.
+ */
+export function sanitizeObservationText(
+  text: string,
+  maxLength = MAX_NOTE_LENGTH
+): string {
+  return String(text ?? '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+    .slice(0, Math.max(1, maxLength));
+}
+
+/**
+ * Sanitizes an arbitrary title into a safe, bounded download filename slug (preserving Turkish letters).
+ */
+export function sanitizeExportFilename(
+  rawTitle: string,
+  fallback = 'rapor'
+): string {
+  const cleaned = String(rawTitle ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9ğüşıöç]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64);
+  return cleaned || fallback;
 }
 
 /**
@@ -2069,7 +2100,7 @@ export function recordSessionUndoEntry(
 ): EvaluationActionHistoryEntry[] {
   const nextEntry: EvaluationActionHistoryEntry = {
     ...entry,
-    id: `undo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: createUniqueEntityId('undo'),
     timestamp: new Date().toISOString(),
     previousEvaluations: JSON.parse(JSON.stringify(entry.previousEvaluations)),
     previousGroups: entry.previousGroups
@@ -2081,7 +2112,7 @@ export function recordSessionUndoEntry(
       : undefined,
   };
   const current = session.undoHistory || [];
-  return [nextEntry, ...current].slice(0, 30);
+  return [nextEntry, ...current].slice(0, MAX_UNDO_HISTORY_ENTRIES);
 }
 
 /**
@@ -2557,3 +2588,86 @@ export function generateSessionCsv(
 
   return '\uFEFF' + [headers.map(escapeCsvCell).join(','), ...rows].join('\n');
 }
+
+/**
+ * Returns true if the student has a non-empty observation note or at least one quick observation tag in the session.
+ */
+export function hasStudentObservationData(
+  evaluation?: StudentEvaluation | null
+): boolean {
+  if (!evaluation) return false;
+  if (typeof evaluation.note === 'string' && evaluation.note.trim().length > 0) {
+    return true;
+  }
+  if (Array.isArray(evaluation.tags) && evaluation.tags.length > 0) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Safely updates a specific student's session-scoped quick observation note and optional tags
+ * while preserving all individual/group scores and recording an undo history entry when modified.
+ */
+export function upsertStudentQuickObservation(
+  session: EvaluationSession,
+  studentId: string,
+  payload: {
+    note: string;
+    tags?: string[];
+    studentName?: string;
+    timestampIso?: string;
+  }
+): EvaluationSession {
+  const cleanStudentId = studentId.trim();
+  if (!cleanStudentId) return session;
+
+  const existing = session.evaluations[cleanStudentId];
+  const sanitizedNote = sanitizeObservationText(payload.note, MAX_NOTE_LENGTH);
+  const sanitizedTags = Array.isArray(payload.tags)
+    ? Array.from(
+        new Set(
+          payload.tags
+            .map((t) => sanitizeObservationText(String(t), 80).trim())
+            .filter((t) => t.length > 0)
+        )
+      )
+    : existing?.tags || [];
+
+  const prevNote = existing?.note || '';
+  const prevTags = existing?.tags || [];
+  const tagsChanged =
+    prevTags.length !== sanitizedTags.length ||
+    prevTags.some((t, idx) => t !== sanitizedTags[idx]);
+  const noteChanged = prevNote !== sanitizedNote;
+
+  if (!noteChanged && !tagsChanged) {
+    return session;
+  }
+
+  const nowIso = payload.timestampIso || new Date().toISOString();
+  const labelName = payload.studentName?.trim() || cleanStudentId;
+  const undoHistory = recordSessionUndoEntry(session, {
+    scope: 'student',
+    studentId: cleanStudentId,
+    description: `${labelName} — hızlı gözlem notu güncellendi`,
+    previousEvaluations: session.evaluations,
+  });
+
+  return {
+    ...session,
+    evaluations: {
+      ...session.evaluations,
+      [cleanStudentId]: {
+        ...existing,
+        studentId: cleanStudentId,
+        criterionScores: existing?.criterionScores || {},
+        note: sanitizedNote,
+        tags: sanitizedTags,
+        updatedAt: nowIso,
+      },
+    },
+    undoHistory,
+  };
+}
+

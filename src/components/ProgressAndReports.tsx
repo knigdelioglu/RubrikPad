@@ -23,6 +23,7 @@ import {
   getGroupProgressHistory,
   generateSessionCsv,
   isScoreAssigned,
+  sanitizeExportFilename,
 } from '../utils/rubricLogic.ts';
 import { downloadSessionPdfFile } from '../utils/pdfGenerator.ts';
 
@@ -146,9 +147,10 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const safeName = activeReportSession.title
-        .toLowerCase()
-        .replace(/[^a-z0-9ğüşıöç]/gi, '_');
+      const safeName = sanitizeExportFilename(
+        activeReportSession.title,
+        'oturum'
+      );
       link.setAttribute('download', `rapor_${safeName}.csv`);
       document.body.appendChild(link);
       link.click();

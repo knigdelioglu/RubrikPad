@@ -31,6 +31,7 @@ import {
   MAX_OCR_IMAGE_DIMENSION_PX,
   rgbaToGrayImage,
   validateAndPlanOcrImageDimensions,
+  validateUploadedImageMagicBytes,
 } from '../../utils/ocr/imagePreprocessor.ts';
 import { defaultLocalOcrRegistry } from '../../utils/ocr/localOcrEngine.ts';
 import {
@@ -338,20 +339,29 @@ export const LocalOcrVerificationPanel: React.FC<
     }
 
     setOcrLoading(true);
+    let objectUrl: string | null = null;
 
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      const headerBuffer = await file.slice(0, 12).arrayBuffer();
+      const magicCheck = validateUploadedImageMagicBytes(
+        new Uint8Array(headerBuffer),
+        file.type
+      );
+      if (!magicCheck.valid) {
+        setOcrError(
+          magicCheck.error ||
+            'Geçersiz görsel dosyası. Lütfen PNG, JPEG veya WEBP fotoğraf seçin.'
+        );
+        setOcrLoading(false);
+        return;
+      }
 
+      objectUrl = URL.createObjectURL(file);
       const img = await new Promise<HTMLImageElement>((resolve, reject) => {
         const el = new Image();
         el.onload = () => resolve(el);
         el.onerror = reject;
-        el.src = dataUrl;
+        el.src = objectUrl!;
       });
 
       const rawWidth = img.naturalWidth || img.width;
@@ -402,6 +412,9 @@ export const LocalOcrVerificationPanel: React.FC<
       );
       setOcrLoading(false);
     } finally {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
       e.target.value = '';
     }
   };

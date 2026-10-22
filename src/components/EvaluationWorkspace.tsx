@@ -39,12 +39,20 @@ import {
   shouldTriggerAutoAdvance,
   recordSessionUndoEntry,
   generateSessionCsv,
+  createUniqueEntityId,
+  sanitizeExportFilename,
+  sanitizeObservationText,
+  upsertStudentQuickObservation,
+  getStudentConsecutiveLowScoreReminder,
+  MAX_SESSION_TITLE_LENGTH,
+  MAX_NOTE_LENGTH,
 } from '../utils/rubricLogic.ts';
 import { downloadSessionPdfFile } from '../utils/pdfGenerator.ts';
 import { FastEvaluationView } from './evaluation/FastEvaluationView.tsx';
 import { MatrixEvaluationView } from './evaluation/MatrixEvaluationView.tsx';
 import { IndividualEvaluationView } from './evaluation/IndividualEvaluationView.tsx';
 import { GroupEvaluationView } from './evaluation/GroupEvaluationView.tsx';
+import { QuickObservationNoteModal } from './evaluation/QuickObservationNoteModal.tsx';
 import type { RubricCardViewMode } from './evaluation/RubricCriterionCard.tsx';
 
 interface EvaluationWorkspaceProps {
@@ -150,6 +158,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     'matrix'
   );
   const [statusAnnouncement, setStatusAnnouncement] = useState<string>('');
+  const [quickNoteModalStudentId, setQuickNoteModalStudentId] = useState<
+    string | null
+  >(null);
   const [fastCompletionBanner, setFastCompletionBanner] = useState<{
     completedStudentId?: string;
     completedStudentName: string;
@@ -587,8 +598,11 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   const handleCreateNewSessionWithRubric = (targetRubric: Rubric) => {
     if (!activeSession) return;
     const newSes: EvaluationSession = {
-      id: `ses-${Date.now()}`,
-      title: `${targetRubric.title} Uygulaması`,
+      id: createUniqueEntityId('ses'),
+      title: sanitizeObservationText(
+        `${targetRubric.title} Uygulaması`,
+        MAX_SESSION_TITLE_LENGTH
+      ),
       classId: activeSession.classId,
       classIds: sessionClassIds,
       rubricId: targetRubric.id,
@@ -599,7 +613,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       generalSessionNote: '',
       groups: [
         {
-          id: `grp-${Date.now()}-1`,
+          id: createUniqueEntityId('grp'),
           name: 'Grup 1: Çalışma Ekibi',
           studentIds: [],
           criterionScores: {},
@@ -627,11 +641,15 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
 
   const handleCreateNewSessionSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSessionTitle.trim() || newSessionClassIds.length === 0) return;
+    const cleanedTitle = sanitizeObservationText(
+      newSessionTitle.trim(),
+      MAX_SESSION_TITLE_LENGTH
+    );
+    if (!cleanedTitle || newSessionClassIds.length === 0) return;
     const selectedRubric = rubricsById[newSessionRubricId] || rubrics[0];
     const newSession: EvaluationSession = {
-      id: `ses-${Date.now()}`,
-      title: newSessionTitle.trim(),
+      id: createUniqueEntityId('ses'),
+      title: cleanedTitle,
       classId: newSessionClassIds[0],
       classIds: newSessionClassIds,
       rubricId: selectedRubric.id,
@@ -642,7 +660,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       generalSessionNote: '',
       groups: [
         {
-          id: `grp-${Date.now()}-1`,
+          id: createUniqueEntityId('grp'),
           name: 'Grup 1: Çalışma Ekibi',
           studentIds: [],
           criterionScores: {},
@@ -663,15 +681,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     const csvContent = generateSessionCsv(
       activeSession,
       activeRubric,
-      students
+      students,
+      activeClassroom?.id
     );
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const safeTitle = activeSession.title
-      .toLowerCase()
-      .replace(/[^a-z0-9ğüşıöç]/gi, '_');
+    const safeTitle = sanitizeExportFilename(activeSession.title, 'oturum');
     link.setAttribute('download', `degerlendirme_${safeTitle}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -697,118 +714,174 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     );
   }
 
+  const quickNoteModalStudent = quickNoteModalStudentId
+    ? classStudents.find((s) => s.id === quickNoteModalStudentId) ||
+      students.find((s) => s.id === quickNoteModalStudentId)
+    : undefined;
+
+  const handleSaveQuickObservationNote = (
+    studentId: string,
+    note: string,
+    tags: string[]
+  ) => {
+    const targetStu =
+      classStudents.find((s) => s.id === studentId) ||
+      students.find((s) => s.id === studentId);
+    const nextSession = upsertStudentQuickObservation(activeSession, studentId, {
+      note,
+      tags,
+      studentName: targetStu?.fullName,
+      timestampIso: new Date().toISOString(),
+    });
+    onUpdateSession(nextSession);
+    if (targetStu) {
+      setStatusAnnouncement(
+        `${targetStu.fullName} için hızlı gözlem notu kaydedildi.`
+      );
+    }
+  };
+
+  const quickNoteModalElement = quickNoteModalStudent ? (
+    <QuickObservationNoteModal
+      student={quickNoteModalStudent}
+      sessionTitle={activeSession.title}
+      sessionDate={activeSession.date}
+      evaluation={activeSession.evaluations[quickNoteModalStudent.id]}
+      lowScoreReminder={getStudentConsecutiveLowScoreReminder(
+        quickNoteModalStudent.id,
+        activeSession,
+        sessions,
+        rubricsById
+      )}
+      onSave={handleSaveQuickObservationNote}
+      onClose={() => setQuickNoteModalStudentId(null)}
+    />
+  ) : null;
+
   // Dedicated Single-Screen Views for Hızlı Değerlendirme (Serial Card & Matrix)
   if (activeSession.mode === 'grid') {
     if (fastFlowSubMode === 'matrix') {
       return (
-        <MatrixEvaluationView
-          activeSession={activeSession}
-          activeRubric={activeRubric}
-          classStudents={classStudents}
-          selectedStudentId={selectedStudent?.id || ''}
-          activeCriterionIndex={activeCriterionIndex}
-          onSelectCell={(stuId, critIdx) => {
-            setSelectedStudentId(stuId);
-            setActiveCriterionIndex(critIdx);
-          }}
-          onBackToFastCards={() =>
-            onUpdateSession({ ...activeSession, mode: 'individual' })
-          }
-          onSetStudentCriterionScore={(studentId, criterionId, points) => {
-            const existing = activeSession.evaluations[studentId];
-            const { updatedEvaluation } = applyIndividualCriterionEdit(
-              activeRubric,
-              existing,
-              studentId,
-              {
-                type: 'level',
+        <>
+          <MatrixEvaluationView
+            activeSession={activeSession}
+            activeRubric={activeRubric}
+            classStudents={classStudents}
+            selectedStudentId={selectedStudent?.id || ''}
+            activeCriterionIndex={activeCriterionIndex}
+            onSelectCell={(stuId, critIdx) => {
+              setSelectedStudentId(stuId);
+              setActiveCriterionIndex(critIdx);
+            }}
+            onBackToFastCards={() =>
+              onUpdateSession({ ...activeSession, mode: 'individual' })
+            }
+            onSetStudentCriterionScore={(studentId, criterionId, points) => {
+              const existing = activeSession.evaluations[studentId];
+              const { updatedEvaluation } = applyIndividualCriterionEdit(
+                activeRubric,
+                existing,
+                studentId,
+                {
+                  type: 'level',
+                  criterionId,
+                  points,
+                },
+                new Date().toISOString()
+              );
+              const undoHistory = recordSessionUndoEntry(activeSession, {
+                scope: 'criterion',
+                studentId,
+                criterionId,
+                description: `Matris puanlama (${points}P)`,
+                previousEvaluations: activeSession.evaluations,
+              });
+              onUpdateSession({
+                ...activeSession,
+                evaluations: {
+                  ...activeSession.evaluations,
+                  [studentId]: updatedEvaluation,
+                },
+                undoHistory,
+              });
+            }}
+            onBulkAssignCriterion={(criterionId, points, onlyUnscored) => {
+              const undoHistory = recordSessionUndoEntry(activeSession, {
+                scope: 'session',
+                criterionId,
+                description: `Toplu ölçüt puanı atama (${points}P)`,
+                previousEvaluations: activeSession.evaluations,
+              });
+              const updatedEvaluations = applyCriterionScoreToStudents(
+                activeSession.evaluations,
+                classStudents.map((s) => s.id),
                 criterionId,
                 points,
-              },
-              new Date().toISOString()
-            );
-            const undoHistory = recordSessionUndoEntry(activeSession, {
-              scope: 'criterion',
-              studentId,
-              criterionId,
-              description: `Matris puanlama (${points}P)`,
-              previousEvaluations: activeSession.evaluations,
-            });
-            onUpdateSession({
-              ...activeSession,
-              evaluations: {
-                ...activeSession.evaluations,
-                [studentId]: updatedEvaluation,
-              },
-              undoHistory,
-            });
-          }}
-          onBulkAssignCriterion={(criterionId, points, onlyUnscored) => {
-            const undoHistory = recordSessionUndoEntry(activeSession, {
-              scope: 'session',
-              criterionId,
-              description: `Toplu ölçüt puanı atama (${points}P)`,
-              previousEvaluations: activeSession.evaluations,
-            });
-            const updatedEvaluations = applyCriterionScoreToStudents(
-              activeSession.evaluations,
-              classStudents.map((s) => s.id),
-              criterionId,
-              points,
-              new Date().toISOString(),
-              onlyUnscored
-            );
-            onUpdateSession({
-              ...activeSession,
-              evaluations: updatedEvaluations,
-              undoHistory,
-            });
-          }}
-          onUndoLastAction={handleUndoLastAction}
-          onExportPdf={handleExportPdf}
-          allSessions={sessions}
-          rubricsById={rubricsById}
-        />
+                new Date().toISOString(),
+                onlyUnscored
+              );
+              onUpdateSession({
+                ...activeSession,
+                evaluations: updatedEvaluations,
+                undoHistory,
+              });
+            }}
+            onUndoLastAction={handleUndoLastAction}
+            onExportPdf={handleExportPdf}
+            onOpenQuickNoteModal={(studentId) =>
+              setQuickNoteModalStudentId(studentId)
+            }
+            allSessions={sessions}
+            rubricsById={rubricsById}
+          />
+          {quickNoteModalElement}
+        </>
       );
     }
 
     return (
-      <FastEvaluationView
-        activeSession={activeSession}
-        activeRubric={activeRubric}
-        allRubrics={rubrics}
-        classrooms={classrooms}
-        classStudents={classStudents}
-        selectedStudent={selectedStudent}
-        selectedStudentId={selectedStudent?.id || ''}
-        onSelectStudent={setSelectedStudentId}
-        onChangeSessionRubric={handleChangeSessionRubric}
-        onExitFastMode={() =>
-          onUpdateSession({ ...activeSession, mode: 'individual' })
-        }
-        onOpenMatrixView={() => setFastFlowSubMode('matrix')}
-        onSelectCriterionLevel={handleSelectCriterionLevel}
-        onSetDirectCriterionScore={handleSetDirectCriterionScore}
-        onClearCriterionScore={handleClearCriterionScore}
-        onResetStudentScores={handleResetStudentScores}
-        onUndoLastAction={handleUndoLastAction}
-        autoAdvanceStudent={autoAdvanceStudent}
-        onToggleAutoAdvance={() => setAutoAdvanceStudent(!autoAdvanceStudent)}
-        precisionScoringMode={precisionScoringMode}
-        onTogglePrecisionScoring={() =>
-          setPrecisionScoringMode(!precisionScoringMode)
-        }
-        fastCompletionBanner={fastCompletionBanner}
-        onDismissBanner={() => setFastCompletionBanner(null)}
-        statusAnnouncement={statusAnnouncement}
-        pendingRubricChange={pendingRubricChange}
-        onCreateNewSessionWithRubric={handleCreateNewSessionWithRubric}
-        onConfirmResetAndChangeRubric={handleConfirmResetAndChangeRubric}
-        onCancelRubricChange={() => setPendingRubricChange(null)}
-        onExportPdf={handleExportPdf}
-        allSessions={sessions}
-        rubricsById={rubricsById}
-      />
+      <>
+        <FastEvaluationView
+          activeSession={activeSession}
+          activeRubric={activeRubric}
+          allRubrics={rubrics}
+          classrooms={classrooms}
+          classStudents={classStudents}
+          selectedStudent={selectedStudent}
+          selectedStudentId={selectedStudent?.id || ''}
+          onSelectStudent={setSelectedStudentId}
+          onChangeSessionRubric={handleChangeSessionRubric}
+          onExitFastMode={() =>
+            onUpdateSession({ ...activeSession, mode: 'individual' })
+          }
+          onOpenMatrixView={() => setFastFlowSubMode('matrix')}
+          onSelectCriterionLevel={handleSelectCriterionLevel}
+          onSetDirectCriterionScore={handleSetDirectCriterionScore}
+          onClearCriterionScore={handleClearCriterionScore}
+          onResetStudentScores={handleResetStudentScores}
+          onUndoLastAction={handleUndoLastAction}
+          autoAdvanceStudent={autoAdvanceStudent}
+          onToggleAutoAdvance={() => setAutoAdvanceStudent(!autoAdvanceStudent)}
+          precisionScoringMode={precisionScoringMode}
+          onTogglePrecisionScoring={() =>
+            setPrecisionScoringMode(!precisionScoringMode)
+          }
+          fastCompletionBanner={fastCompletionBanner}
+          onDismissBanner={() => setFastCompletionBanner(null)}
+          statusAnnouncement={statusAnnouncement}
+          pendingRubricChange={pendingRubricChange}
+          onCreateNewSessionWithRubric={handleCreateNewSessionWithRubric}
+          onConfirmResetAndChangeRubric={handleConfirmResetAndChangeRubric}
+          onCancelRubricChange={() => setPendingRubricChange(null)}
+          onExportPdf={handleExportPdf}
+          onOpenQuickNoteModal={(studentId) =>
+            setQuickNoteModalStudentId(studentId)
+          }
+          allSessions={sessions}
+          rubricsById={rubricsById}
+        />
+        {quickNoteModalElement}
+      </>
     );
   }
 
@@ -1212,6 +1285,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           onUpdateStudentNote={(note) => {
             if (!selectedStudent) return;
             const existing = activeSession.evaluations[selectedStudent.id];
+            const cleanNote = sanitizeObservationText(note, MAX_NOTE_LENGTH);
             onUpdateSession({
               ...activeSession,
               evaluations: {
@@ -1220,7 +1294,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                   ...existing,
                   studentId: selectedStudent.id,
                   criterionScores: existing?.criterionScores || {},
-                  note,
+                  note: cleanNote,
                   tags: existing?.tags || [],
                   updatedAt: new Date().toISOString(),
                 },
@@ -1256,6 +1330,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           justCompletedBanner={justCompletedBanner}
           onDismissBanner={() => setJustCompletedBanner(null)}
           onUndoLastAction={handleUndoLastAction}
+          onOpenQuickNoteModal={(studentId) =>
+            setQuickNoteModalStudentId(studentId)
+          }
           allSessions={sessions}
           rubricsById={rubricsById}
         />
@@ -1554,6 +1631,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           onDismissGroupBanner={() => setLastAppliedGroupBanner(null)}
         />
       )}
+
+      {quickNoteModalElement}
     </div>
   );
 };

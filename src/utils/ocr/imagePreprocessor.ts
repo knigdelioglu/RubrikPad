@@ -22,6 +22,86 @@ export interface OcrImageDimensionPlan {
 }
 
 /**
+ * Verifies that an uploaded image file's binary header (first >= 12 bytes) matches
+ * a safe raster image format (PNG, JPEG, or WEBP) and explicitly blocks SVG/XML/HTML
+ * or spoofed non-image files before browser decoding.
+ */
+export function validateUploadedImageMagicBytes(
+  headerBytes: Uint8Array,
+  mimeType?: string
+): {
+  valid: boolean;
+  detectedFormat?: 'png' | 'jpeg' | 'webp';
+  error?: string;
+} {
+  const normalizedMime = (mimeType || '').trim().toLowerCase();
+  if (
+    normalizedMime.includes('svg') ||
+    normalizedMime.includes('xml') ||
+    normalizedMime.includes('html')
+  ) {
+    return {
+      valid: false,
+      error:
+        'Güvenlik nedeniyle SVG/XML formatındaki vektörel dosyalar kabul edilmez. Lütfen PNG, JPEG veya WEBP fotoğraf seçin.',
+    };
+  }
+
+  if (!headerBytes || headerBytes.byteLength < 4) {
+    return {
+      valid: false,
+      error: 'Görsel dosyası boş veya geçersiz dosya başlığı içeriyor.',
+    };
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  const isPng =
+    headerBytes.byteLength >= 8 &&
+    headerBytes[0] === 0x89 &&
+    headerBytes[1] === 0x50 &&
+    headerBytes[2] === 0x4e &&
+    headerBytes[3] === 0x47 &&
+    headerBytes[4] === 0x0d &&
+    headerBytes[5] === 0x0a &&
+    headerBytes[6] === 0x1a &&
+    headerBytes[7] === 0x0a;
+  if (isPng) {
+    return { valid: true, detectedFormat: 'png' };
+  }
+
+  // JPEG: FF D8 FF
+  const isJpeg =
+    headerBytes.byteLength >= 3 &&
+    headerBytes[0] === 0xff &&
+    headerBytes[1] === 0xd8 &&
+    headerBytes[2] === 0xff;
+  if (isJpeg) {
+    return { valid: true, detectedFormat: 'jpeg' };
+  }
+
+  // WEBP: "RIFF" (52 49 46 46) + 4 bytes size + "WEBP" (57 45 42 50)
+  const isWebp =
+    headerBytes.byteLength >= 12 &&
+    headerBytes[0] === 0x52 &&
+    headerBytes[1] === 0x49 &&
+    headerBytes[2] === 0x46 &&
+    headerBytes[3] === 0x46 &&
+    headerBytes[8] === 0x57 &&
+    headerBytes[9] === 0x45 &&
+    headerBytes[10] === 0x42 &&
+    headerBytes[11] === 0x50;
+  if (isWebp) {
+    return { valid: true, detectedFormat: 'webp' };
+  }
+
+  return {
+    valid: false,
+    error:
+      'Geçersiz görsel formatı: Dosya imzası (Magic Bytes) PNG, JPEG veya WEBP ile eşleşmiyor.',
+  };
+}
+
+/**
  * Validates file size and raw pixel dimensions before heavy Canvas/OCR buffer allocation,
  * and computes proportional target dimensions capped at `maxDimensionPx` (default 1800px)
  * so large smartphone/tablet photos never freeze the UI thread.

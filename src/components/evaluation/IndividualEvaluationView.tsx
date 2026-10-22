@@ -25,6 +25,7 @@ import { QUICK_OBSERVATION_TAGS } from '../../data/seedData.ts';
 import {
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
+  hasStudentObservationData,
 } from '../../utils/rubricLogic.ts';
 import {
   RubricCriterionCard,
@@ -77,6 +78,7 @@ interface IndividualEvaluationViewProps {
   } | null;
   onDismissBanner: () => void;
   onUndoLastAction?: () => void;
+  onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
 }
@@ -108,6 +110,7 @@ export const IndividualEvaluationView: React.FC<
   justCompletedBanner,
   onDismissBanner,
   onUndoLastAction,
+  onOpenQuickNoteModal,
   allSessions,
   rubricsById,
 }) => {
@@ -352,17 +355,19 @@ export const IndividualEvaluationView: React.FC<
                 );
                 const calc = stuBreakdown.effectiveCalc;
                 const isSelected = stu.id === selectedStudent?.id;
+                const hasObsData = hasStudentObservationData(ev);
+                const lowScoreRem = getStudentConsecutiveLowScoreReminder(
+                  stu.id,
+                  activeSession,
+                  effectiveSessions,
+                  effectiveRubricsMap
+                );
 
                 return (
-                  <button
+                  <div
                     key={stu.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectStudent(stu.id);
-                      onDismissBanner();
-                      setShowPortraitRosterDrawer(false);
-                    }}
-                    className={`w-full text-left px-3.5 py-3 flex items-center justify-between gap-2.5 transition-colors cursor-pointer min-h-[54px] ${
+                    data-testid={`student-card-${stu.id}`}
+                    className={`w-full flex items-center justify-between gap-1.5 pr-2.5 transition-colors ${
                       isSelected
                         ? 'bg-teal-50/95 border-l-4 border-l-teal-700'
                         : calc.isComplete
@@ -372,91 +377,128 @@ export const IndividualEvaluationView: React.FC<
                         : 'hover:bg-slate-50 border-l-4 border-l-transparent'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                          isSelected
-                            ? 'bg-teal-700 text-white'
-                            : calc.isComplete
-                            ? 'bg-emerald-100 text-emerald-900'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        {getInitials(stu.fullName)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono-num text-xs font-bold text-slate-500">
-                            #{stu.studentNumber}
-                          </span>
-                          <span className="text-sm font-bold text-slate-900 truncate">
-                            {stu.fullName}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[11px] text-slate-500">
-                          <span>
-                            {calc.completedCriteriaCount}/
-                            {calc.totalCriteriaCount} ölçüt
-                          </span>
-                          {stuBreakdown.individualCalc.completedCriteriaCount >
-                            0 &&
-                            stuBreakdown.groupCalc.completedCriteriaCount >
-                              0 && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal-800 bg-teal-50 px-1.5 py-0.5 rounded">
-                                <Users className="w-2.5 h-2.5" />
-                                Bireysel + Grup
-                              </span>
-                            )}
-                          {getStudentConsecutiveLowScoreReminder(
-                            stu.id,
-                            activeSession,
-                            effectiveSessions,
-                            effectiveRubricsMap
-                          ).shouldRemind && (
-                            <span
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded"
-                              title="Üst üste 3 değerlendirmede düşük puan (1 veya 2) — Gözlem notu ekle"
-                            >
-                              <AlertTriangle className="w-2.5 h-2.5 text-amber-700" />
-                              Gözlem notu ekle
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {/* Definitive score rule: NEVER show a 100-point grade unless isComplete === true */}
-                      {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
-                        <span
-                          className={`font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 ${
-                            calc.finalScoreOutOf100 >= 85
-                              ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-                              : calc.finalScoreOutOf100 >= 70
-                              ? 'bg-teal-50 text-teal-900 border-teal-200'
-                              : calc.finalScoreOutOf100 >= 50
-                              ? 'bg-amber-50 text-amber-900 border-amber-200'
-                              : 'bg-rose-50 text-rose-900 border-rose-200'
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectStudent(stu.id);
+                        onDismissBanner();
+                        setShowPortraitRosterDrawer(false);
+                      }}
+                      className="flex-1 min-w-0 text-left pl-3.5 pr-1.5 py-3 flex items-center justify-between gap-2 cursor-pointer min-h-[54px]"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                            isSelected
+                              ? 'bg-teal-700 text-white'
+                              : calc.isComplete
+                              ? 'bg-emerald-100 text-emerald-900'
+                              : 'bg-slate-100 text-slate-700'
                           }`}
                         >
-                          <Check className="w-3 h-3 stroke-[2.5]" />
-                          {calc.finalScoreOutOf100}
-                        </span>
-                      ) : calc.completedCriteriaCount > 0 ? (
-                        <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-200">
-                          Taslak ({calc.completedCriteriaCount}/
-                          {calc.totalCriteriaCount})
-                        </span>
-                      ) : (
-                        <Clock className="w-4 h-4 text-slate-300" />
-                      )}
-                      <ChevronRight
-                        className={`w-4 h-4 ${
-                          isSelected ? 'text-teal-700' : 'text-slate-300'
+                          {getInitials(stu.fullName)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono-num text-xs font-bold text-slate-500">
+                              #{stu.studentNumber}
+                            </span>
+                            <span className="text-sm font-bold text-slate-900 truncate">
+                              {stu.fullName}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[11px] text-slate-500">
+                            <span>
+                              {calc.completedCriteriaCount}/
+                              {calc.totalCriteriaCount} ölçüt
+                            </span>
+                            {stuBreakdown.individualCalc
+                              .completedCriteriaCount > 0 &&
+                              stuBreakdown.groupCalc.completedCriteriaCount >
+                                0 && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal-800 bg-teal-50 px-1.5 py-0.5 rounded">
+                                  <Users className="w-2.5 h-2.5" />
+                                  Bireysel + Grup
+                                </span>
+                              )}
+                            {hasObsData && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal-900 bg-teal-100/80 px-1.5 py-0.5 rounded">
+                                <MessageSquare className="w-2.5 h-2.5 text-teal-700" />
+                                Not var
+                              </span>
+                            )}
+                            {lowScoreRem.shouldRemind && (
+                              <span
+                                className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded"
+                                title="Üst üste 3 değerlendirmede düşük puan (1 veya 2) — Gözlem notu ekle"
+                              >
+                                <AlertTriangle className="w-2.5 h-2.5 text-amber-700" />
+                                Gözlem notu ekle
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Definitive score rule: NEVER show a 100-point grade unless isComplete === true */}
+                        {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
+                          <span
+                            className={`font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 ${
+                              calc.finalScoreOutOf100 >= 85
+                                ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                                : calc.finalScoreOutOf100 >= 70
+                                ? 'bg-teal-50 text-teal-900 border-teal-200'
+                                : calc.finalScoreOutOf100 >= 50
+                                ? 'bg-amber-50 text-amber-900 border-amber-200'
+                                : 'bg-rose-50 text-rose-900 border-rose-200'
+                            }`}
+                          >
+                            <Check className="w-3 h-3 stroke-[2.5]" />
+                            {calc.finalScoreOutOf100}
+                          </span>
+                        ) : calc.completedCriteriaCount > 0 ? (
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-200">
+                            Taslak ({calc.completedCriteriaCount}/
+                            {calc.totalCriteriaCount})
+                          </span>
+                        ) : (
+                          <Clock className="w-4 h-4 text-slate-300" />
+                        )}
+                      </div>
+                    </button>
+
+                    {onOpenQuickNoteModal && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenQuickNoteModal(stu.id);
+                        }}
+                        data-testid={`quick-note-icon-${stu.id}`}
+                        aria-label={`${stu.fullName} için Hızlı Gözlem Notu`}
+                        title={
+                          hasObsData
+                            ? `Hızlı Gözlem Notunu Düzenle (${stu.fullName})${
+                                ev?.note ? `: "${ev.note}"` : ''
+                              }`
+                            : `${stu.fullName} için Hızlı Gözlem Notu Ekle`
+                        }
+                        className={`shrink-0 p-2 rounded-xl border transition-colors cursor-pointer flex items-center justify-center relative min-w-[34px] min-h-[34px] ${
+                          hasObsData
+                            ? 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700 shadow-2xs'
+                            : lowScoreRem.shouldRemind
+                            ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-teal-300 hover:text-teal-700 hover:bg-teal-50'
                         }`}
-                      />
-                    </div>
-                  </button>
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        {hasObsData && (
+                          <span className="w-2 h-2 rounded-full bg-amber-300 border border-teal-800 absolute -top-0.5 -right-0.5" />
+                        )}
+                      </button>
+                    )}
+                  </div>
                 );
               })
             )}
@@ -607,8 +649,30 @@ export const IndividualEvaluationView: React.FC<
                   </div>
                 </div>
 
-                {/* Right Controls: Detailed/Compact View Toggle + Auto-Advance + Precision + Reset */}
+                {/* Right Controls: Detailed/Compact View Toggle + Quick Note + Auto-Advance + Precision + Reset */}
                 <div className="flex flex-wrap items-center gap-2">
+                  {onOpenQuickNoteModal && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenQuickNoteModal(selectedStudent.id)}
+                      data-testid="active-student-quick-note-btn"
+                      aria-label={`${selectedStudent.fullName} için Hızlı Gözlem Notu`}
+                      title={`${selectedStudent.fullName} için bu oturuma özel hızlı gözlem notu penceresini aç`}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[38px] transition-colors ${
+                        hasStudentObservationData(currentStudentEval)
+                          ? 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700 shadow-2xs'
+                          : 'bg-teal-50 text-teal-900 border-teal-200 hover:bg-teal-100'
+                      }`}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>
+                        {hasStudentObservationData(currentStudentEval)
+                          ? 'Hızlı Gözlem Notu (Düzenle)'
+                          : 'Hızlı Gözlem Notu'}
+                      </span>
+                    </button>
+                  )}
+
                   <RubricViewModeToggle
                     viewMode={cardViewMode}
                     onChangeViewMode={onChangeCardViewMode}

@@ -8,6 +8,7 @@ import type {
   VerifiedOcrRosterRow,
 } from './ocrTypes.ts';
 import { computeRowApprovalSignature } from './geometricTableParser.ts';
+import { createUniqueEntityId } from '../rubricLogic.ts';
 
 const TURKISH_DIACRITIC_SUGGESTION_MAP: Record<string, string> = {
   AYSE: 'AYŞE',
@@ -710,13 +711,13 @@ export function commitVerifiedOcrRosterAtomically(
     seenPhysicalRows.add(r.physicalRowId);
   }
 
-  const createdStudents: Student[] = freshRows.map((r, idx) => {
+  const createdStudents: Student[] = freshRows.map((r) => {
     const num = r.studentNumber.trim();
     const first = r.firstName.trim();
     const last = r.lastName.trim();
     const full = `${first} ${last}`.trim();
     return {
-      id: `stu-ocr-${Date.now()}-${idx + 1}`,
+      id: createUniqueEntityId('stu-ocr'),
       studentNumber: num,
       firstName: first,
       lastName: last,
