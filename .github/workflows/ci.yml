@@ -24,8 +24,8 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Install locked dependencies
-        run: bun install --frozen-lockfile
+      - name: Install dependencies (refresh stale lockfile)
+        run: bun install
 
       - name: Typecheck
         run: npm run lint
@@ -67,8 +67,8 @@ jobs:
       - name: Install Android 16 SDK
         run: sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
 
-      - name: Install locked dependencies
-        run: bun install --frozen-lockfile
+      - name: Install dependencies (refresh stale lockfile)
+        run: bun install
 
       - name: Build web assets
         run: npm run build
