@@ -565,7 +565,7 @@ export const LocalOcrVerificationPanel: React.FC<
   const handleAtomicCommit = () => {
     setOcrError(null);
     const result = commitVerifiedOcrRosterAtomically(
-      rows,
+      approvedRows,
       activeClassId,
       existingClassroomStudents
     );
@@ -590,10 +590,10 @@ export const LocalOcrVerificationPanel: React.FC<
     (r) => r.reliabilityLevel === 'invalid'
   ).length;
   const approvedCount = rows.filter((r) => r.approvedByTeacher).length;
-  const allApprovedAndValid =
-    rows.length > 0 &&
-    invalidRowCount === 0 &&
-    approvedCount === rows.length;
+  const approvedRows = rows.filter((r) => r.approvedByTeacher);
+  const canCommitApprovedRows =
+    approvedRows.length > 0 &&
+    approvedRows.every((r) => r.validationErrors.length === 0);
 
   const handleEngineChange = async (newEngineId: string) => {
     defaultLocalOcrRegistry.setActiveEngine(newEngineId);
@@ -1530,17 +1530,17 @@ export const LocalOcrVerificationPanel: React.FC<
           {/* Atomic Commit Footer */}
           <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
             <div className="text-[11px] font-semibold text-slate-700">
-              Onaylı: {approvedCount} / {rows.length}
+              Onaylanan {approvedCount} / {rows.length} satır kaydedilecek
             </div>
 
             <button
               type="button"
               onClick={handleAtomicCommit}
-              disabled={!allApprovedAndValid}
+              disabled={!canCommitApprovedRows}
               className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 disabled:opacity-40 cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
             >
               <Check className="w-4 h-4" />
-              Onaylanan {rows.length} Öğrenciyi {activeClassName} Listesine
+              Onaylanan {approvedCount} Öğrenciyi {activeClassName} Listesine
               Kaydet
             </button>
           </div>
