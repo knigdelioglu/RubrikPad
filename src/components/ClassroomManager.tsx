@@ -19,6 +19,7 @@ import {
 import type {
   Classroom,
   Student,
+  Rubric,
   EvaluationSession,
   ParsedRosterRow,
 } from '../types.ts';
@@ -32,11 +33,17 @@ import {
   validateClassroomRecord,
   validateStudentRecord,
 } from '../utils/rubricLogic.ts';
+import {
+  STANDARD_GRADE_LEVELS,
+  STANDARD_SUBJECTS,
+  getRubricsForClassrooms,
+} from '../utils/rubricService.ts';
 import { LocalOcrVerificationPanel } from './ocr/LocalOcrVerificationPanel.tsx';
 
 interface ClassroomManagerProps {
   classrooms: Classroom[];
   students: Student[];
+  rubrics?: Rubric[];
   sessions?: EvaluationSession[];
   activeClassId: string;
   onSelectClass: (id: string) => void;
@@ -51,6 +58,7 @@ interface ClassroomManagerProps {
 export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
   classrooms,
   students,
+  rubrics = [],
   sessions = [],
   activeClassId,
   onSelectClass,
@@ -94,8 +102,10 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
   // New Classroom Form State
   const [showNewClassForm, setShowNewClassForm] = useState(false);
   const [newClassName, setNewClassName] = useState('');
-  const [newClassGrade, setNewClassGrade] = useState('7. Sınıf');
-  const [newClassSubject, setNewClassSubject] = useState('Fen Bilimleri');
+  const [newClassGrade, setNewClassGrade] = useState('11. Sınıf');
+  const [newClassSubject, setNewClassSubject] = useState(
+    'Türk Dili ve Edebiyatı'
+  );
   const [newClassError, setNewClassError] = useState<string | null>(null);
   const [confirmDeleteClassId, setConfirmDeleteClassId] = useState<string | null>(null);
 
@@ -360,17 +370,14 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            Sınıflar ve Öğrenci Listesi Yönetimi
+            Sınıflar ve Öğrenci Listesi
           </h1>
-          <p className="text-sm text-slate-600 mt-0.5">
-            Ad-Soyad-Okul No doğrulamalı öğrenci yönetimi, kayıt geçmişi, ilişkili kayıt koruma ve çevrimdışı/kontrollü OCR aktarımı.
-          </p>
         </div>
 
         <button
           type="button"
           onClick={() => setShowNewClassForm(!showNewClassForm)}
-          className="px-4 py-2.5 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+          className="px-4 py-2.5 text-sm font-semibold text-white bg-blue-900 hover:bg-blue-950 rounded-lg flex items-center gap-1.5 cursor-pointer self-start sm:self-auto shadow-xs"
         >
           <Plus className="w-4 h-4" />
           Yeni Sınıf Ekle
@@ -381,7 +388,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
       {showNewClassForm && (
         <form
           onSubmit={handleCreateClassroom}
-          className="bg-white border border-slate-200 rounded-xl p-5 grid grid-cols-1 sm:grid-cols-4 gap-4 items-end"
+          className="bg-white border border-slate-300 rounded-xl p-5 grid grid-cols-1 sm:grid-cols-4 gap-4 items-end shadow-xs"
         >
           <div>
             <label
@@ -396,8 +403,8 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
               required
               value={newClassName}
               onChange={(e) => setNewClassName(e.target.value)}
-              placeholder="Örn: 7-B Sınıfı"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+              placeholder="Örn: 11-A Sınıfı"
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
             />
           </div>
           <div>
@@ -407,14 +414,18 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
             >
               Kademe / Seviye
             </label>
-            <input
+            <select
               id="new-cls-grade"
-              type="text"
               value={newClassGrade}
               onChange={(e) => setNewClassGrade(e.target.value)}
-              placeholder="Örn: 7. Sınıf"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-            />
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+            >
+              {STANDARD_GRADE_LEVELS.map((grade) => (
+                <option key={grade} value={grade}>
+                  {grade}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label
@@ -423,19 +434,23 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
             >
               Ders / Branş
             </label>
-            <input
+            <select
               id="new-cls-subject"
-              type="text"
               value={newClassSubject}
               onChange={(e) => setNewClassSubject(e.target.value)}
-              placeholder="Örn: Fen Bilimleri"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-            />
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+            >
+              {STANDARD_SUBJECTS.map((subj) => (
+                <option key={subj} value={subj}>
+                  {subj}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="flex items-center gap-2">
             <button
               type="submit"
-              className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 cursor-pointer"
+              className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-blue-900 rounded-lg hover:bg-blue-950 cursor-pointer"
             >
               Kaydet
             </button>
@@ -469,12 +484,15 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
           const count = students.filter(
             (s) => s.classId === cls.id && !s.archived
           ).length;
+          const matchingRubricCount = getRubricsForClassrooms(rubrics, [
+            cls,
+          ]).length;
           return (
             <div
               key={cls.id}
               className={`relative p-4 rounded-xl border transition-all ${
                 isSelected
-                  ? 'bg-teal-50/90 border-teal-700 ring-1 ring-teal-700'
+                  ? 'bg-slate-100 border-2 border-blue-900 shadow-xs'
                   : 'bg-white border-slate-200 hover:border-slate-300'
               }`}
             >
@@ -484,20 +502,31 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                 className="w-full text-left cursor-pointer"
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800">
-                    <School className="w-3.5 h-3.5" />
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+                    <School className="w-3.5 h-3.5 text-blue-900" />
                     {cls.gradeLevel}
                   </span>
-                  <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                    {count} Öğrenci
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-950 border border-blue-200">
+                      {matchingRubricCount} Rubrik
+                    </span>
+                    <span
+                      className={`font-mono-num text-xs font-bold px-2 py-0.5 rounded ${
+                        isSelected
+                          ? 'bg-blue-900 text-white'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {count} Öğrenci
+                    </span>
+                  </div>
                 </div>
                 <div className="text-lg font-bold text-slate-900">{cls.name}</div>
                 <div className="text-xs text-slate-600 mt-0.5 pr-7">
                   {cls.subject} · {cls.academicYear}
                 </div>
               </button>
-              {onDeleteClassroom && classrooms.length > 1 && isSelected && (
+              {onDeleteClassroom && isSelected && (
                 <button
                   type="button"
                   onClick={() =>
@@ -527,6 +556,8 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
             students,
             sessions
           );
+          const canDeleteEmpty =
+            clsImpact.studentCount === 0 && clsImpact.sessionCount === 0;
           return (
             <div
               role="alert"
@@ -537,13 +568,13 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                   &ldquo;{activeClassroom.name}&rdquo; Sınıf Silme Kontrolü
                 </div>
                 <div className="mt-0.5">
-                  {clsImpact.canDelete
+                  {canDeleteEmpty
                     ? 'Bu sınıfa bağlı öğrenci veya değerlendirme oturumu bulunmuyor. Sınıfı güvenli bir şekilde silebilirsiniz.'
                     : clsImpact.reason}
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {clsImpact.canDelete && onDeleteClassroom && (
+                {canDeleteEmpty && onDeleteClassroom && (
                   <button
                     type="button"
                     onClick={() => {
@@ -571,26 +602,43 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
         <div
           role="status"
           aria-live="polite"
-          className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2"
+          className="bg-slate-100 border border-slate-300 text-slate-900 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2"
         >
-          <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+          <Check className="w-4 h-4 text-blue-900 shrink-0" />
           {importSuccessBanner}
         </div>
       )}
 
-      {/* Main Two-Column Area: Current Roster & Local Geometric OCR / Text Import */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {!activeClassroom ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-3">
+          <div className="text-base font-bold text-slate-900">
+            Henüz Kayıtlı Sınıf Bulunmuyor
+          </div>
+          <p className="text-xs text-slate-600">
+            Öğrenci eklemek için önce yeni bir sınıf oluşturun.
+          </p>
+          {!showNewClassForm && (
+            <button
+              type="button"
+              onClick={() => setShowNewClassForm(true)}
+              className="px-4 py-2 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Yeni Sınıf Ekle
+            </button>
+          )}
+        </div>
+      ) : (
+        /* Main Two-Column Area: Current Roster & Local Geometric OCR / Text Import */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Existing Students List + Single Add + Edit + Audit Log */}
         <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Users className="w-4 h-4 text-teal-700" />
+                <Users className="w-4 h-4 text-blue-900" />
                 {activeClassroom?.name} Öğrenci Listesi ({classStudents.length})
               </h2>
-              <p className="text-xs text-slate-500">
-                Mükerrer numara korumalı, düzenlenebilir ve değerlendirme geçmişi korumalı liste
-              </p>
             </div>
             {archivedCount > 0 && (
               <button
@@ -618,7 +666,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                 value={singleStudentNum}
                 onChange={(e) => setSingleStudentNum(e.target.value)}
                 placeholder="Okul No"
-                className="sm:col-span-3 px-3 py-2 text-xs font-mono-num bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                className="sm:col-span-3 px-3 py-2 text-xs font-mono-num bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
               />
               <input
                 type="text"
@@ -626,7 +674,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                 value={singleFirstName}
                 onChange={(e) => setSingleFirstName(e.target.value)}
                 placeholder="Ad (Örn: Zeynep)"
-                className="sm:col-span-4 px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                className="sm:col-span-4 px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
               />
               <input
                 type="text"
@@ -634,11 +682,11 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                 value={singleLastName}
                 onChange={(e) => setSingleLastName(e.target.value)}
                 placeholder="Soyad (Örn: Kaya)"
-                className="sm:col-span-3 px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                className="sm:col-span-3 px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
               />
               <button
                 type="submit"
-                className="sm:col-span-2 px-3 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+                className="sm:col-span-2 px-3 py-2 text-xs font-semibold text-white bg-blue-900 hover:bg-blue-950 rounded-lg cursor-pointer"
               >
                 Öğrenci Ekle
               </button>
@@ -684,34 +732,34 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                       }`}
                     >
                       {isEditingThis ? (
-                        <td colSpan={5} className="p-3 bg-teal-50/50 space-y-2">
+                        <td colSpan={5} className="p-3 bg-slate-50 space-y-2">
                           <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
                             <input
                               type="text"
                               aria-label="Düzenlenen Okul No"
                               value={editNum}
                               onChange={(e) => setEditNum(e.target.value)}
-                              className="sm:col-span-2 px-2.5 py-1.5 text-xs font-mono-num bg-white border border-teal-400 rounded"
+                              className="sm:col-span-2 px-2.5 py-1.5 text-xs font-mono-num bg-white border border-slate-400 rounded"
                             />
                             <input
                               type="text"
                               aria-label="Düzenlenen Ad"
                               value={editFirst}
                               onChange={(e) => setEditFirst(e.target.value)}
-                              className="sm:col-span-4 px-2.5 py-1.5 text-xs bg-white border border-teal-400 rounded"
+                              className="sm:col-span-4 px-2.5 py-1.5 text-xs bg-white border border-slate-400 rounded"
                             />
                             <input
                               type="text"
                               aria-label="Düzenlenen Soyad"
                               value={editLast}
                               onChange={(e) => setEditLast(e.target.value)}
-                              className="sm:col-span-3 px-2.5 py-1.5 text-xs bg-white border border-teal-400 rounded"
+                              className="sm:col-span-3 px-2.5 py-1.5 text-xs bg-white border border-slate-400 rounded"
                             />
                             <div className="sm:col-span-3 flex items-center justify-end gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => handleSaveEditStudent(stu)}
-                                className="px-2.5 py-1.5 text-xs font-bold text-white bg-teal-700 rounded cursor-pointer"
+                                className="px-2.5 py-1.5 text-xs font-bold text-white bg-blue-900 rounded cursor-pointer"
                               >
                                 Kaydet
                               </button>
@@ -753,9 +801,9 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                             <button
                               type="button"
                               onClick={() => setHistoryStudent(stu)}
-                              className="inline-flex items-center gap-1 text-[11px] font-mono-num font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 px-2 py-0.5 rounded border border-teal-200 cursor-pointer"
+                              className="inline-flex items-center gap-1 text-[11px] font-mono-num font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded border border-slate-300 cursor-pointer"
                             >
-                              <History className="w-3 h-3" />
+                              <History className="w-3 h-3 text-blue-900" />
                               {impact.sessionCount} Oturum
                             </button>
                           </td>
@@ -766,7 +814,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                                   type="button"
                                   onClick={() => handleStartEditStudent(stu)}
                                   aria-label={`${stu.fullName} bilgilerini düzenle`}
-                                  className="p-1.5 text-slate-500 hover:text-teal-700 cursor-pointer"
+                                  className="p-1.5 text-slate-500 hover:text-blue-900 cursor-pointer"
                                   title="Öğrenci bilgilerini düzenle"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
@@ -792,7 +840,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                                     });
                                   }}
                                   aria-label={`${stu.fullName} kaydını arşivden çıkar`}
-                                  className="p-1.5 text-teal-700 hover:text-teal-900 cursor-pointer"
+                                  className="p-1.5 text-blue-900 hover:text-blue-950 cursor-pointer"
                                   title="Arşivden Geri Yükle"
                                 >
                                   <RotateCcw className="w-3.5 h-3.5" />
@@ -847,12 +895,9 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
         <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
           <div>
             <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Camera className="w-4 h-4 text-teal-700" />
-              Sınıf Listesi Aktarımı (Yerel Fotoğraf OCR &amp; Metin)
+              <Camera className="w-4 h-4 text-blue-900" />
+              Sınıf Listesi Aktarımı (OCR &amp; Metin)
             </h2>
-            <p className="text-xs text-slate-600 mt-1">
-              Öğrenci verileri hiçbir harici servise gönderilmeden tarayıcı içinde çözümlenir; fiziksel tablo satırları ve sütun koordinatlarıyla doğrulanır.
-            </p>
           </div>
 
           {/* Mode Switcher: 100% Local Photo OCR vs Local Text Paste */}
@@ -865,11 +910,17 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
               }}
               className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
                 importTab === 'local_photo_ocr'
-                  ? 'bg-white text-teal-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-blue-900 text-white shadow-xs'
+                  : 'text-slate-700 hover:text-slate-900'
               }`}
             >
-              <Camera className="w-3.5 h-3.5 text-teal-700" />
+              <Camera
+                className={`w-3.5 h-3.5 ${
+                  importTab === 'local_photo_ocr'
+                    ? 'text-white'
+                    : 'text-slate-600'
+                }`}
+              />
               Fotoğraftan Yerel OCR
             </button>
             <button
@@ -880,11 +931,15 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
               }}
               className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
                 importTab === 'local_text'
-                  ? 'bg-white text-teal-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'bg-blue-900 text-white shadow-xs'
+                  : 'text-slate-700 hover:text-slate-900'
               }`}
             >
-              <WifiOff className="w-3.5 h-3.5 text-teal-700" />
+              <WifiOff
+                className={`w-3.5 h-3.5 ${
+                  importTab === 'local_text' ? 'text-white' : 'text-slate-600'
+                }`}
+              />
               Metin / Tablo Yapıştır
             </button>
           </div>
@@ -906,23 +961,13 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
             />
           ) : (
             <div className="space-y-3">
-              <div className="bg-teal-50/70 border border-teal-200 rounded-lg p-3 text-xs text-teal-950 flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
-                <div>
-                  <strong>%100 Çevrimdışı Metin Ayrıştırma:</strong>{' '}
-                  Verileriniz cihaz dışına çıkmadan yerel olarak ayrıştırılır.
-                  e-Okul veya Excel listesinden kopyaladığınız satırları
-                  yapıştırın.
-                </div>
-              </div>
-
               <div>
                 <label
                   htmlFor="bulk-roster-textarea"
                   className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5"
                 >
                   <FileText className="w-3.5 h-3.5 text-slate-500" />
-                  Okul No + Ad + Soyad Listesi (Her satıra bir öğrenci)
+                  Okul No + Ad + Soyad Listesi
                 </label>
                 <textarea
                   id="bulk-roster-textarea"
@@ -930,7 +975,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                   value={bulkText}
                   onChange={(e) => setBulkText(e.target.value)}
                   placeholder={'109 - Beren Su Karahan\n110 - Kuzey Alp Tekin\n111 - Duru Erdem'}
-                  className="w-full p-3 text-xs font-mono-num bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  className="w-full p-3 text-xs font-mono-num bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-900"
                 />
               </div>
 
@@ -938,7 +983,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                 type="button"
                 onClick={handleParseLocalRoster}
                 disabled={!bulkText.trim()}
-                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-40 rounded-lg cursor-pointer"
+                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 disabled:opacity-40 rounded-lg cursor-pointer"
               >
                 Satırları Ayrıştır ve Doğrulama Tablosunda İncele
               </button>
@@ -1091,7 +1136,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                 type="button"
                 disabled={validRowCount === 0}
                 onClick={handleCommitVerifiedRoster}
-                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-40 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                className="w-full py-2.5 px-4 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 disabled:opacity-40 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Check className="w-4 h-4" />
                 Doğrulanan {validRowCount} Öğrenciyi Sınıfa Kaydet
@@ -1100,6 +1145,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
           )}
         </div>
       </div>
+      )}
 
       {/* Student Audit History Modal (P1 #4) */}
       {historyStudent && (
@@ -1112,7 +1158,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
           <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div>
-                <span className="font-mono-num text-xs font-bold text-teal-800">
+                <span className="font-mono-num text-xs font-bold text-blue-900">
                   #{historyStudent.studentNumber}
                 </span>
                 <h3 className="text-base font-bold text-slate-900">
@@ -1164,7 +1210,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                       <div key={idx} className="p-2.5 bg-white">
                         <div className="font-mono-num text-[10px] text-slate-500">
                           {entry.timestamp.slice(0, 19).replace('T', ' ')} ·{' '}
-                          <span className="uppercase font-bold text-teal-800">
+                          <span className="uppercase font-bold text-blue-900">
                             {entry.action}
                           </span>
                         </div>

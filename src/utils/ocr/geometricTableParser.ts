@@ -64,6 +64,61 @@ export function normalizeHeaderKeyword(raw: string): string {
     .trim();
 }
 
+export function isTurkishGenderToken(raw: string): boolean {
+  const norm = normalizeHeaderKeyword(raw);
+  return (
+    norm === 'K' ||
+    norm === 'E' ||
+    norm === 'KIZ' ||
+    norm === 'ERKEK' ||
+    norm === 'KADIN' ||
+    norm === 'BAY' ||
+    norm === 'BAYAN'
+  );
+}
+
+export function isTurkishRosterStatusOrBoardingToken(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (/^(yat\.|günd\.|gund\.|pan\.|örg\.|org\.)$/i.test(trimmed)) {
+    return true;
+  }
+  const norm = normalizeHeaderKeyword(trimmed);
+  if (!norm) return false;
+  return (
+    norm === 'YAT' ||
+    norm === 'YATILI' ||
+    norm === 'YATILILIK' ||
+    norm === 'GUND' ||
+    norm === 'GUNDUZLU' ||
+    norm === 'PARALI' ||
+    norm === 'PARASIZ' ||
+    norm === 'PARALI YATILI' ||
+    norm === 'PARASIZ YATILI' ||
+    norm === 'PANSIYON' ||
+    norm === 'PANSIYONLU' ||
+    norm === 'BURSLU' ||
+    norm === 'ORGUN' ||
+    norm === 'KAYITLI' ||
+    norm === 'DEVAMLI' ||
+    norm === 'DEVAMSIZ' ||
+    norm === 'MISAFIR' ||
+    norm === 'NAKIL' ||
+    norm === 'IOO'
+  );
+}
+
+export function cleanNumericTokenText(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[.#(\[]+|[.):\-\]]+$/g, '')
+    .trim();
+}
+
+export function isNumericTokenText(raw: string): boolean {
+  const cleaned = cleanNumericTokenText(raw);
+  return /^\d{1,6}$/.test(cleaned);
+}
+
 export function classifyHeaderRole(text: string): ColumnRole | null {
   const norm = normalizeHeaderKeyword(text);
   if (!norm) return null;
@@ -71,6 +126,7 @@ export function classifyHeaderRole(text: string): ColumnRole | null {
   if (
     norm === 'SIRA' ||
     norm === 'SIRA NO' ||
+    norm === 'SIRANO' ||
     norm === 'SNO' ||
     norm === 'S NO' ||
     norm === 'SN'
@@ -79,14 +135,14 @@ export function classifyHeaderRole(text: string): ColumnRole | null {
   }
   if (
     norm === 'OKUL NO' ||
-    norm === 'OKUL' ||
     norm === 'OKUL NUMARASI' ||
     norm === 'OGRENCI NO' ||
     norm === 'OGRENCI NUMARASI' ||
-    norm === 'OGRENCI' ||
     norm === 'NO' ||
     norm === 'NUMARA' ||
-    norm === 'OKULNO'
+    norm === 'NUMARASI' ||
+    norm === 'OKULNO' ||
+    norm === 'OGRENCINO'
   ) {
     return 'studentNumber';
   }
@@ -125,11 +181,23 @@ export function classifyHeaderRole(text: string): ColumnRole | null {
   }
   if (
     norm === 'SINIF' ||
+    norm === 'SINIFI' ||
     norm === 'SUBE' ||
+    norm === 'SUBESI' ||
     norm === 'IMZA' ||
     norm === 'ACIKLAMA' ||
     norm === 'NOT' ||
-    norm === 'DURUM'
+    norm === 'DURUM' ||
+    norm === 'DURUMU' ||
+    norm === 'PANSIYON' ||
+    norm === 'PANSIYON DURUMU' ||
+    norm === 'YATILILIK' ||
+    norm === 'YATILILIK DURUMU' ||
+    norm === 'YATILI' ||
+    norm === 'DEVAM' ||
+    norm === 'DEVAM DURUMU' ||
+    norm === 'OGRENIM' ||
+    norm === 'OGRENIM SEKLI'
   ) {
     return 'auxiliary';
   }
@@ -360,23 +428,80 @@ function buildHeaderCellsFromRow(
 }
 
 /**
- * Detects whether a row cluster is a table header row.
+ * Detects whether a row cluster is an e-Okul / MEB page banner, title, or signature footer
+ * rather than a table header or student row.
  */
-function isClusterHeaderRow(cluster: PhysicalRowCluster): boolean {
+function isNonStudentBannerOrFooterRow(cluster: PhysicalRowCluster): boolean {
+  const joinedNorm = normalizeHeaderKeyword(
+    cluster.items.map((it) => it.token.text).join(' ')
+  );
+  if (!joinedNorm) return true;
+
+  if (
+    joinedNorm.includes('BAKANLIGI') ||
+    joinedNorm.includes('MUDURLUGU') ||
+    joinedNorm.includes('VALILIGI') ||
+    joinedNorm.includes('KAYMAKAMLIGI') ||
+    joinedNorm.includes('EGITIM OGRETIM') ||
+    joinedNorm.includes('SINIF LISTESI') ||
+    joinedNorm.includes('OGRENCI LISTESI') ||
+    joinedNorm.includes('PUAN LISTESI') ||
+    joinedNorm.includes('OKUL MUDURU') ||
+    joinedNorm.includes('MUDUR YARDIMCISI') ||
+    joinedNorm.includes('SINIF OGRETMENI') ||
+    joinedNorm.includes('TOPLAM OGRENCI') ||
+    /^T\s*C(\s|$)/.test(joinedNorm) ||
+    /^SAYFA\s*\d+/.test(joinedNorm)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Evaluates how strongly a row cluster matches a table header row.
+ * Requires at least 2 recognized column headers AND at least 1 core student identity header
+ * (sequence, studentNumber, firstName, lastName, fullName), and rejects page title banners.
+ */
+function scoreClusterAsHeaderRow(cluster: PhysicalRowCluster): number {
+  if (isNonStudentBannerOrFooterRow(cluster)) {
+    return 0;
+  }
+
   let recognizedHeaderMatches = 0;
+  let coreIdentityMatches = 0;
   const texts = cluster.items.map((it) => it.token.text);
 
-  for (let i = 0; i < texts.length; i++) {
-    if (classifyHeaderRole(texts[i])) {
+  let i = 0;
+  while (i < texts.length) {
+    const combinedRole =
+      i + 1 < texts.length
+        ? classifyHeaderRole(`${texts[i]} ${texts[i + 1]}`)
+        : null;
+    const singleRole = classifyHeaderRole(texts[i]);
+    const role = combinedRole ?? singleRole;
+
+    if (role) {
       recognizedHeaderMatches++;
-    } else if (
-      i + 1 < texts.length &&
-      classifyHeaderRole(`${texts[i]} ${texts[i + 1]}`)
-    ) {
-      recognizedHeaderMatches++;
+      if (
+        role === 'sequence' ||
+        role === 'studentNumber' ||
+        role === 'firstName' ||
+        role === 'lastName' ||
+        role === 'fullName'
+      ) {
+        coreIdentityMatches++;
+      }
+      i += combinedRole ? 2 : 1;
+    } else {
+      i += 1;
     }
   }
-  return recognizedHeaderMatches >= 2;
+
+  if (recognizedHeaderMatches < 2 || coreIdentityMatches < 1) {
+    return 0;
+  }
+  return coreIdentityMatches * 10 + recognizedHeaderMatches;
 }
 
 /**
@@ -394,35 +519,63 @@ function discoverHeaderlessColumns(
   const minX = Math.min(...allItems.map((it) => it.token.bbox.x0));
   const maxX = Math.max(...allItems.map((it) => it.token.bbox.x1));
 
-  // Group horizontally overlapping or aligned tokens across rows into column spans
-  // First, merge same-row tokens that are close together (e.g. "AYŞE" + "NUR") if not separated by a vertical grid line
-  const rowCells: { x0: number; x1: number; cx: number; cy: number; text: string }[] = [];
+  // Group horizontally overlapping or aligned tokens across rows into column spans.
+  // Never merge numeric tokens, gender tokens ("Kız"/"Erkek"/"K"/"E"), or boarding/status tokens ("Yat."/"Günd.") with neighbor words!
+  const rowCells: {
+    rowIndex: number;
+    x0: number;
+    x1: number;
+    cx: number;
+    cy: number;
+    text: string;
+    isNumeric: boolean;
+  }[] = [];
   const hasVertLine = (xA: number, xB: number) =>
-    verticalGridLinesX.some((vx) => vx > Math.min(xA, xB) + 2 && vx < Math.max(xA, xB) - 2);
+    verticalGridLinesX.some(
+      (vx) => vx > Math.min(xA, xB) + 2 && vx < Math.max(xA, xB) - 2
+    );
 
-  for (const row of bodyRows) {
-    const items = [...row.items].sort((a, b) => a.token.bbox.x0 - b.token.bbox.x0);
+  bodyRows.forEach((row, rowIndex) => {
+    const items = [...row.items].sort(
+      (a, b) => a.token.bbox.x0 - b.token.bbox.x0
+    );
     let idx = 0;
     while (idx < items.length) {
       let x0 = items[idx].token.bbox.x0;
       let x1 = items[idx].token.bbox.x1;
       const cy = items[idx].cy;
       let text = items[idx].token.text;
+      const curIsNumeric = isNumericTokenText(text);
+      const curIsGenderOrStatus =
+        isTurkishGenderToken(text) || isTurkishRosterStatusOrBoardingToken(text);
+
       while (
+        !curIsNumeric &&
+        !curIsGenderOrStatus &&
         idx + 1 < items.length &&
         !hasVertLine(x1, items[idx + 1].token.bbox.x0) &&
-        items[idx + 1].token.bbox.x0 - x1 <= Math.max(22, items[idx].height * 1.05) &&
-        !/^\d+$/.test(text) &&
-        !/^\d+$/.test(items[idx + 1].token.text)
+        items[idx + 1].token.bbox.x0 - x1 <=
+          Math.max(22, items[idx].height * 1.05) &&
+        !isNumericTokenText(items[idx + 1].token.text) &&
+        !isTurkishGenderToken(items[idx + 1].token.text) &&
+        !isTurkishRosterStatusOrBoardingToken(items[idx + 1].token.text)
       ) {
         idx++;
         x1 = items[idx].token.bbox.x1;
         text = `${text} ${items[idx].token.text}`;
       }
-      rowCells.push({ x0, x1, cx: (x0 + x1) / 2, cy, text });
+      rowCells.push({
+        rowIndex,
+        x0,
+        x1,
+        cx: (x0 + x1) / 2,
+        cy,
+        text,
+        isNumeric: curIsNumeric,
+      });
       idx++;
     }
-  }
+  });
 
   // Sort cells by center X and cluster into columns
   const sortedCells = [...rowCells].sort((a, b) => a.cx - b.cx);
@@ -432,14 +585,29 @@ function discoverHeaderlessColumns(
     let bestCol: typeof rowCells | null = null;
     let bestDist = Infinity;
     for (const col of colClusters) {
+      // Never merge two numeric cells from the same physical row (e.g. Sıra No "1." and Okul No "105") into the same column cluster
+      const hasSameRowNumericConflict =
+        cell.isNumeric &&
+        col.some((c) => c.rowIndex === cell.rowIndex && c.isNumeric);
+      if (hasSameRowNumericConflict) {
+        continue;
+      }
+
       const colMeanX = col.reduce((s, c) => s + c.cx, 0) / col.length;
       const colMinX = Math.min(...col.map((c) => c.x0));
       const colMaxX = Math.max(...col.map((c) => c.x1));
       const separatedByGrid = hasVertLine(colMeanX, cell.cx);
-      const overlapsHorizontally =
-        Math.min(colMaxX, cell.x1) - Math.max(colMinX, cell.x0) > -18;
+      const overlapX = Math.min(colMaxX, cell.x1) - Math.max(colMinX, cell.x0);
+      const overlapsHorizontally = cell.isNumeric
+        ? overlapX >= -4
+        : overlapX > -14;
+      const maxAllowedDist = cell.isNumeric ? 22 : 38;
       const dist = Math.abs(cell.cx - colMeanX);
-      if (!separatedByGrid && (overlapsHorizontally || dist < 42) && dist < bestDist) {
+      if (
+        !separatedByGrid &&
+        (overlapsHorizontally || dist < maxAllowedDist) &&
+        dist < bestDist
+      ) {
         bestDist = dist;
         bestCol = col;
       }
@@ -460,10 +628,20 @@ function discoverHeaderlessColumns(
   // Infer role for each column cluster
   const colStats = colClusters.map((col, colIdx) => {
     const texts = col.map((c) => c.text.trim());
-    const numericCount = texts.filter((t) => /^\d+$/.test(t)).length;
-    const genderCount = texts.filter((t) => /^[KEke]$/.test(t)).length;
-    const alphaCount = texts.filter((t) => /[A-ZÇĞİÖŞÜa-zçğıöşü]{2,}/.test(t)).length;
-    const nums = texts.filter((t) => /^\d+$/.test(t)).map((t) => Number(t));
+    const numericCount = texts.filter((t) => isNumericTokenText(t)).length;
+    const genderCount = texts.filter((t) => isTurkishGenderToken(t)).length;
+    const statusCount = texts.filter((t) =>
+      isTurkishRosterStatusOrBoardingToken(t)
+    ).length;
+    const alphaCount = texts.filter(
+      (t) =>
+        !isTurkishGenderToken(t) &&
+        !isTurkishRosterStatusOrBoardingToken(t) &&
+        /[A-ZÇĞİÖŞÜa-zçğıöşü]{2,}/.test(t)
+    ).length;
+    const nums = texts
+      .filter((t) => isNumericTokenText(t))
+      .map((t) => Number(cleanNumericTokenText(t)));
 
     // Check if strictly sequential 1, 2, 3... or small 1-2 digit sequence numbers
     let isSequentialSmall = false;
@@ -485,6 +663,7 @@ function discoverHeaderlessColumns(
       centerX,
       numericRatio: numericCount / Math.max(1, texts.length),
       genderRatio: genderCount / Math.max(1, texts.length),
+      statusRatio: statusCount / Math.max(1, texts.length),
       alphaRatio: alphaCount / Math.max(1, texts.length),
       isSequentialSmall,
       avgTextLen:
@@ -493,7 +672,9 @@ function discoverHeaderlessColumns(
   });
 
   // Assign default inferred roles
-  const inferredRoles: ColumnRole[] = new Array(colStats.length).fill('auxiliary');
+  const inferredRoles: ColumnRole[] = new Array(colStats.length).fill(
+    'auxiliary'
+  );
 
   // Identify numeric columns
   const numericCols = colStats.filter((c) => c.numericRatio >= 0.5);
@@ -505,16 +686,20 @@ function discoverHeaderlessColumns(
     inferredRoles[numericCols[0].colIdx] = 'studentNumber';
   }
 
-  // Identify gender column
+  // Identify gender column (supports K/E as well as Kız/Erkek)
   for (const c of colStats) {
-    if (c.genderRatio >= 0.6 && inferredRoles[c.colIdx] === 'auxiliary') {
+    if (c.genderRatio >= 0.45 && inferredRoles[c.colIdx] === 'auxiliary') {
       inferredRoles[c.colIdx] = 'gender';
     }
   }
 
-  // Identify alphabetic name columns
+  // Identify alphabetic name columns (excluding gender and boarding/status columns like Yat./Günd.)
   const alphaCols = colStats.filter(
-    (c) => c.alphaRatio >= 0.5 && inferredRoles[c.colIdx] === 'auxiliary'
+    (c) =>
+      c.alphaRatio >= 0.5 &&
+      c.genderRatio < 0.35 &&
+      c.statusRatio < 0.35 &&
+      inferredRoles[c.colIdx] === 'auxiliary'
   );
   if (alphaCols.length >= 2) {
     inferredRoles[alphaCols[0].colIdx] = 'firstName';
@@ -540,7 +725,9 @@ function discoverHeaderlessColumns(
       idx + 1 < colStats.length ? colStats[idx + 1].centerX : maxX + 40;
 
     const leftBoundary =
-      idx === 0 ? Math.min(minX - 20, st.centerX - 60) : (prevCenter + st.centerX) / 2;
+      idx === 0
+        ? Math.min(minX - 20, st.centerX - 60)
+        : (prevCenter + st.centerX) / 2;
     const rightBoundary =
       idx === colStats.length - 1
         ? Math.max(maxX + 20, st.centerX + 60)
@@ -565,6 +752,8 @@ function discoverHeaderlessColumns(
 /**
  * Estimates horizontal column drift per vertical pixel (dx/dy) for each column
  * so narrowed or perspectively tilted columns track accurately from top to bottom.
+ * Also guards against stretching `studentNumber` across an unheadered left `sequence` column
+ * or stretching `lastName` across right-hand `gender` / `boarding status` columns.
  */
 function refineColumnBandsWithBodyTokens(
   initialColumns: DetectedColumnBand[],
@@ -576,6 +765,84 @@ function refineColumnBandsWithBodyTokens(
   const sortedCols = [...initialColumns].sort((a, b) => a.centerX - b.centerX);
 
   const allTokens = bodyRows.flatMap((r) => r.items);
+
+  // Check if there is an unheadered sequence column to the left of the first column (`studentNumber`)
+  if (
+    sortedCols[0].role === 'studentNumber' &&
+    !sortedCols.some((c) => c.role === 'sequence')
+  ) {
+    const leftNumericItems = allTokens.filter(
+      (it) =>
+        isNumericTokenText(it.token.text) &&
+        it.token.bbox.x1 <= sortedCols[0].x0 + 8
+    );
+    if (leftNumericItems.length >= 2) {
+      const seqCenterX = Math.round(
+        leftNumericItems.reduce((s, it) => s + it.cx, 0) /
+          leftNumericItems.length
+      );
+      const seqMinX = Math.min(...leftNumericItems.map((it) => it.token.bbox.x0));
+      sortedCols.unshift({
+        columnIndex: 0,
+        role: 'sequence',
+        headerText: 'Sıra (Tahmini)',
+        x0: seqMinX - 15,
+        x1: Math.round((seqCenterX + sortedCols[0].centerX) / 2),
+        centerX: seqCenterX,
+        driftSlopeXPerY: 0,
+        inferredWithoutHeader: true,
+        confidence: 80,
+      });
+    }
+  }
+
+  // Check if there are unheadered gender or boarding/status tokens to the right of the rightmost name column
+  const lastCol = sortedCols[sortedCols.length - 1];
+  if (
+    lastCol.role === 'lastName' ||
+    lastCol.role === 'fullName' ||
+    lastCol.role === 'firstName'
+  ) {
+    const rightGenderOrStatusItems = allTokens.filter(
+      (it) =>
+        it.cx > lastCol.centerX + 28 &&
+        (isTurkishGenderToken(it.token.text) ||
+          isTurkishRosterStatusOrBoardingToken(it.token.text))
+    );
+    if (rightGenderOrStatusItems.length >= 1) {
+      const rightMinX = Math.min(
+        ...rightGenderOrStatusItems.map((it) => it.token.bbox.x0)
+      );
+      const rightCenterX = Math.round(
+        rightGenderOrStatusItems.reduce((s, it) => s + it.cx, 0) /
+          rightGenderOrStatusItems.length
+      );
+      const isMostlyGender =
+        rightGenderOrStatusItems.filter((it) =>
+          isTurkishGenderToken(it.token.text)
+        ).length >=
+        rightGenderOrStatusItems.length * 0.5;
+      sortedCols.push({
+        columnIndex: sortedCols.length,
+        role: isMostlyGender ? 'gender' : 'auxiliary',
+        headerText: isMostlyGender ? 'Cinsiyet (Tahmini)' : 'Ek Sütun',
+        x0: Math.round((lastCol.centerX + rightMinX) / 2),
+        x1:
+          Math.max(...rightGenderOrStatusItems.map((it) => it.token.bbox.x1)) +
+          20,
+        centerX: rightCenterX,
+        driftSlopeXPerY: 0,
+        inferredWithoutHeader: true,
+        confidence: 80,
+      });
+    }
+  }
+
+  // Re-index columnIndex after any prepended/appended bands
+  sortedCols.forEach((c, idx) => {
+    c.columnIndex = idx;
+  });
+
   const globalMinX =
     allTokens.length > 0
       ? Math.min(...allTokens.map((t) => t.token.bbox.x0), sortedCols[0].x0)
@@ -663,13 +930,18 @@ function splitMergedRowClustersByStudentNumberAnchors(
         (it) =>
           it.cx >= stuNumCol.x0 - 10 &&
           it.cx <= stuNumCol.x1 + 10 &&
-          /^\d{2,6}$/.test(it.token.text.replace(/[OÖ]/g, '0').replace(/[Iİ]/g, '1'))
+          /^\d{2,6}$/.test(
+            cleanNumericTokenText(it.token.text)
+              .replace(/[OÖ]/g, '0')
+              .replace(/[Iİ]/g, '1')
+          )
       )
       .sort((a, b) => a.correctedY - b.correctedY);
 
     if (
       anchorItems.length >= 2 &&
-      anchorItems[anchorItems.length - 1].correctedY - anchorItems[0].correctedY >=
+      anchorItems[anchorItems.length - 1].correctedY -
+        anchorItems[0].correctedY >=
         medianWordH * 0.45
     ) {
       // Split items into sub-rows assigned to the closest anchor by correctedY
@@ -696,7 +968,8 @@ function splitMergedRowClustersByStudentNumberAnchors(
             clusterIndex: result.length,
             items: sortedLR,
             meanCorrectedY:
-              sortedLR.reduce((s, it) => s + it.correctedY, 0) / sortedLR.length,
+              sortedLR.reduce((s, it) => s + it.correctedY, 0) /
+              sortedLR.length,
             minY: Math.min(...sortedLR.map((it) => it.token.bbox.y0)),
             maxY: Math.max(...sortedLR.map((it) => it.token.bbox.y1)),
           });
@@ -719,6 +992,84 @@ export function computeRowApprovalSignature(row: {
   lastName: string;
 }): string {
   return `${row.studentNumber.trim()}|${row.firstName.trim()}|${row.lastName.trim()}`;
+}
+
+/**
+ * Detects and splits OCR-glued row sequence numbers + student school numbers
+ * (e.g. Row 1: "1105" -> seq=1, no="105"; Row 2: "2108" -> seq=2, no="108").
+ * Guards against false splits when school numbers genuinely share a constant prefix (e.g. 1001, 1002, 1003).
+ */
+function splitGluedSequenceAndStudentNumbers(
+  rows: VerifiedOcrRosterRow[]
+): void {
+  if (rows.length === 0) return;
+
+  // Candidate analysis: check how many rows have sequenceNumber === null and studentNumber starting with (rowIndex)
+  const candidates: Array<{
+    idx: number;
+    expectedSeq: number;
+    remainder: string;
+  }> = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.sequenceNumber !== null) continue;
+    const num = r.studentNumber.trim();
+    if (!/^\d{3,7}$/.test(num)) continue;
+
+    const expectedSeq = i + 1;
+    const prefix = String(expectedSeq);
+    if (num.startsWith(prefix)) {
+      const remainder = num.slice(prefix.length);
+      if (/^\d{2,5}$/.test(remainder)) {
+        candidates.push({ idx: i, expectedSeq, remainder });
+      }
+    }
+  }
+
+  if (candidates.length === 0) return;
+
+  // Determine if the table exhibits sequential row-prefix gluing:
+  // Case A: >= 2 rows match sequential prefixes AND at least one has expectedSeq >= 2 (disproving constant '100x' school numbers)
+  const hasMultiRowSequentialEvidence =
+    candidates.length >= 2 && candidates.some((c) => c.expectedSeq >= 2);
+
+  // Case B: Other rows already have explicit sequenceNumber and a consistent studentNumber digit length
+  const rowsWithExplicitSeq = rows.filter(
+    (r) => r.sequenceNumber !== null && /^\d{2,5}$/.test(r.studentNumber.trim())
+  );
+  const medianExplicitStuLen =
+    rowsWithExplicitSeq.length > 0
+      ? Math.round(
+          median(
+            rowsWithExplicitSeq.map((r) => r.studentNumber.trim().length)
+          )
+        )
+      : 0;
+
+  for (const cand of candidates) {
+    const matchesExplicitLengthPattern =
+      medianExplicitStuLen >= 2 &&
+      cand.remainder.length === medianExplicitStuLen;
+
+    const singleRowObviousGlue =
+      rows.length === 1 &&
+      cand.expectedSeq === 1 &&
+      rows[0].studentNumber.length >= 4 &&
+      !cand.remainder.startsWith('0');
+
+    if (
+      hasMultiRowSequentialEvidence ||
+      matchesExplicitLengthPattern ||
+      singleRowObviousGlue
+    ) {
+      const targetRow = rows[cand.idx];
+      targetRow.sequenceNumber = cand.expectedSeq;
+      targetRow.studentNumber = cand.remainder;
+      targetRow.rawCells.sequence = String(cand.expectedSeq);
+      targetRow.rawCells.studentNumber = cand.remainder;
+    }
+  }
 }
 
 /**
@@ -803,7 +1154,10 @@ export function matchSurnamesOrderPreservingOneToOne(
     };
   }
 
-  const effectiveStepY = Math.max(medianWordH * 1.5, medianRowStepY || medianWordH * 2.0);
+  const effectiveStepY = Math.max(
+    medianWordH * 1.5,
+    medianRowStepY || medianWordH * 2.0
+  );
   const maxAllowedColumnOffset = effectiveStepY * 0.78;
 
   // Step 1: Estimate systematic vertical offset (deltaY) between surname column and left anchor rows
@@ -817,7 +1171,9 @@ export function matchSurnamesOrderPreservingOneToOne(
   }
 
   // Top-aligned and bottom-aligned offset hypotheses (crucial when a middle row has a blank surname!)
-  candidateOffsets.add(surnameBlocks[0].correctedY - anchors[0].anchorCorrectedY);
+  candidateOffsets.add(
+    surnameBlocks[0].correctedY - anchors[0].anchorCorrectedY
+  );
   candidateOffsets.add(
     surnameBlocks[M - 1].correctedY - anchors[N - 1].anchorCorrectedY
   );
@@ -1068,13 +1424,16 @@ export function analyzeRosterTableGeometry(
     options.horizontalGridLinesY
   );
 
-  // 3. Detect header row (within first 2 clusters) unless forceHeaderlessMode is true
+  // 3. Detect header row (within first 10 clusters to skip top-of-page e-Okul school/class title banners)
   let headerRowIdx = -1;
+  let bestHeaderScore = 0;
   if (!options.forceHeaderlessMode) {
-    for (let i = 0; i < Math.min(2, allPhysicalRows.length); i++) {
-      if (isClusterHeaderRow(allPhysicalRows[i])) {
+    const searchLimit = Math.min(10, allPhysicalRows.length);
+    for (let i = 0; i < searchLimit; i++) {
+      const score = scoreClusterAsHeaderRow(allPhysicalRows[i]);
+      if (score > bestHeaderScore) {
+        bestHeaderScore = score;
         headerRowIdx = i;
-        break;
       }
     }
   }
@@ -1085,9 +1444,13 @@ export function analyzeRosterTableGeometry(
     ? { y0: headerCluster.minY, y1: headerCluster.maxY }
     : null;
 
-  const rawBodyClusters = headerDetected
+  // Exclude header row and any top/bottom e-Okul title banners or signature footers from body rows
+  const candidateBodyClusters = headerDetected
     ? allPhysicalRows.slice(headerRowIdx + 1)
     : allPhysicalRows;
+  const rawBodyClusters = candidateBodyClusters.filter(
+    (cluster) => !isNonStudentBannerOrFooterRow(cluster)
+  );
 
   // 4. Build dynamic column bands from headers OR headerless statistical inference
   let columns: DetectedColumnBand[] = [];
@@ -1139,6 +1502,7 @@ export function analyzeRosterTableGeometry(
 
   // 5. Separate dedicated Surname (`lastName`) and Gender (`gender`) column tokens from Left Anchor tokens
   //    so vertically shifted surname cells never merge into neighbor student rows before Puanla's 1-to-1 matcher runs.
+  //    Also intercept gender ("Kız"/"Erkek") and boarding/status ("Yat."/"Günd.") tokens so they NEVER enter surnameBodyItems.
   const allBodyItems = rawBodyClusters.flatMap((c) => c.items);
   const anchorBodyItems: InternalTokenWithCorrectedY[] = [];
   const surnameBodyItems: InternalTokenWithCorrectedY[] = [];
@@ -1146,6 +1510,13 @@ export function analyzeRosterTableGeometry(
 
   if (hasDedicatedLastCol) {
     for (const item of allBodyItems) {
+      if (isTurkishRosterStatusOrBoardingToken(item.token.text)) {
+        continue;
+      }
+      if (isTurkishGenderToken(item.token.text)) {
+        genderBodyItems.push(item);
+        continue;
+      }
       const { matchedCol } = matchTokenItemToColumnBand(
         item,
         columns,
@@ -1160,7 +1531,12 @@ export function analyzeRosterTableGeometry(
       }
     }
   } else {
-    anchorBodyItems.push(...allBodyItems);
+    for (const item of allBodyItems) {
+      if (isTurkishRosterStatusOrBoardingToken(item.token.text)) {
+        continue;
+      }
+      anchorBodyItems.push(item);
+    }
   }
 
   // Cluster anchor tokens into physical rows and split any merged studentNumber anchors
@@ -1309,6 +1685,14 @@ export function analyzeRosterTableGeometry(
 
     // Assign each anchor token strictly within THIS physical row to its matching geometric column band
     for (const item of rowCluster.items) {
+      if (isTurkishRosterStatusOrBoardingToken(item.token.text)) {
+        continue;
+      }
+      if (isTurkishGenderToken(item.token.text)) {
+        genderTokens.push(item.token);
+        continue;
+      }
+
       // Check vertical alignment within the physical row cluster
       if (
         Math.abs(item.correctedY - rowCluster.meanCorrectedY) >
@@ -1365,11 +1749,20 @@ export function analyzeRosterTableGeometry(
     if (hasDedicatedLastCol) {
       const matchedSurname = surnameMatchResult.matchedByRowIndex.get(rIdx);
       if (matchedSurname) {
-        lastTokens.push(...matchedSurname.tokens);
+        for (const st of matchedSurname.tokens) {
+          if (isTurkishRosterStatusOrBoardingToken(st.text)) {
+            continue;
+          }
+          if (isTurkishGenderToken(st.text)) {
+            genderTokens.push(st);
+            continue;
+          }
+          lastTokens.push(st);
+        }
         const verticalDrift = Math.abs(
           matchedSurname.correctedY - rowCluster.meanCorrectedY
         );
-        if (verticalDrift > medianWordH * 0.65) {
+        if (verticalDrift > medianWordH * 0.65 && lastTokens.length > 0) {
           uncertaintyFlags.add('SUSPICIOUS_ROW_ALIGNMENT');
           uncertaintyReasons.push(
             `Soyadı ("${matchedSurname.text}") dikey sapmaya (${Math.round(
@@ -1386,11 +1779,53 @@ export function analyzeRosterTableGeometry(
     }
 
     const sortedSeq = sortLR(seqTokens);
-    const sortedStuNum = sortLR(stuNumTokens);
-    let sortedFirst = sortLR(firstTokens);
-    let sortedLast = sortLR(lastTokens);
-    const sortedFull = sortLR(fullNameTokens);
+    let sortedStuNum = sortLR(stuNumTokens);
+    let sortedFirst = sortLR(firstTokens).filter(
+      (t) =>
+        !isTurkishGenderToken(t.text) &&
+        !isTurkishRosterStatusOrBoardingToken(t.text)
+    );
+    let sortedLast = sortLR(lastTokens).filter(
+      (t) =>
+        !isTurkishGenderToken(t.text) &&
+        !isTurkishRosterStatusOrBoardingToken(t.text)
+    );
+    const sortedFull = sortLR(fullNameTokens).filter(
+      (t) =>
+        !isTurkishGenderToken(t.text) &&
+        !isTurkishRosterStatusOrBoardingToken(t.text)
+    );
     const sortedGender = sortLR(genderTokens);
+
+    // Guard against two separate numeric tokens (e.g. ["1", "105"] or ["1.", "105"]) landing in `sortedStuNum`
+    if (sortedStuNum.length >= 2) {
+      const firstClean = cleanNumericTokenText(sortedStuNum[0].text);
+      const secondClean = cleanNumericTokenText(sortedStuNum[1].text);
+      if (
+        sortedSeq.length === 0 &&
+        /^\d{1,2}$/.test(firstClean) &&
+        /^\d{2,6}$/.test(secondClean)
+      ) {
+        sortedSeq.push(sortedStuNum[0]);
+        sortedStuNum = sortedStuNum.slice(1);
+      } else {
+        // Pick the rightmost numeric token as school number; never concatenate separate tokens with join('')
+        sortedStuNum = [sortedStuNum[sortedStuNum.length - 1]];
+      }
+    }
+
+    // Also handle single token with internal punctuation like "1.105" or "1-105"
+    let inlineSplitSeq: number | null = null;
+    let inlineSplitStuNum: string | null = null;
+    if (sortedStuNum.length === 1) {
+      const m = sortedStuNum[0].text
+        .trim()
+        .match(/^(\d{1,2})[.\-):/](\d{2,5})$/);
+      if (m) {
+        inlineSplitSeq = Number(m[1]);
+        inlineSplitStuNum = m[2];
+      }
+    }
 
     if (
       sortedFull.length > 0 &&
@@ -1414,7 +1849,7 @@ export function analyzeRosterTableGeometry(
         }
       }
     } else if (
-      !hasDedicatedLastCol &&
+      (!hasDedicatedLastCol || surnameBodyItems.length === 0) &&
       sortedLast.length === 0 &&
       sortedFirst.length >= 2
     ) {
@@ -1422,11 +1857,22 @@ export function analyzeRosterTableGeometry(
       sortedFirst = sortedFirst.slice(0, -1);
     }
 
-    const rawSeqText = sortedSeq.map((t) => t.text).join('').trim();
+    const rawSeqText =
+      inlineSplitSeq !== null
+        ? String(inlineSplitSeq)
+        : sortedSeq
+            .map((t) => cleanNumericTokenText(t.text))
+            .filter(Boolean)
+            .join('');
     const parsedSeq = /^\d+$/.test(rawSeqText) ? Number(rawSeqText) : null;
 
     // Never borrow from adjacent rows! If stuNumTokens or lastTokens is empty in this row, it stays ""
-    const rawStuNum = sortedStuNum.map((t) => t.text).join('').trim();
+    const rawStuNum =
+      inlineSplitStuNum !== null
+        ? inlineSplitStuNum
+        : sortedStuNum.length > 0
+          ? cleanNumericTokenText(sortedStuNum[0].text)
+          : '';
     const studentNumber =
       rawStuNum ||
       (!hasDedicatedStuNumCol && /^\d+$/.test(rawSeqText) ? rawSeqText : '');
@@ -1533,7 +1979,13 @@ export function analyzeRosterTableGeometry(
 
   // 6b. Preserve any unmatched surname-only rows (where school number and first name were completely unread on that line)
   for (const unmatchedSb of surnameMatchResult.unmatchedCandidates) {
-    const sbTokens = unmatchedSb.tokens;
+    const sbTokens = unmatchedSb.tokens.filter(
+      (t) =>
+        !isTurkishGenderToken(t.text) &&
+        !isTurkishRosterStatusOrBoardingToken(t.text)
+    );
+    if (sbTokens.length === 0) continue;
+    const cleanText = sbTokens.map((t) => t.text).join(' ').trim();
     const avgConf = Math.round(
       sbTokens.reduce((s, t) => s + t.confidence, 0) /
         Math.max(1, sbTokens.length)
@@ -1555,9 +2007,9 @@ export function analyzeRosterTableGeometry(
         sequenceNumber: null,
         studentNumber: '',
         firstName: '',
-        lastName: unmatchedSb.text,
+        lastName: cleanText,
         gender: '',
-        fullName: unmatchedSb.text,
+        fullName: cleanText,
         rowBbox,
         cellBboxes: {
           lastName: unmatchedSb.bbox,
@@ -1567,7 +2019,7 @@ export function analyzeRosterTableGeometry(
           sequence: '',
           studentNumber: '',
           firstName: '',
-          lastName: unmatchedSb.text,
+          lastName: cleanText,
           gender: '',
         },
         confidence: avgConf,
@@ -1588,6 +2040,22 @@ export function analyzeRosterTableGeometry(
     rowId: `ocr-row-${idx + 1}`,
     rowIndex: idx + 1,
   }));
+
+  // If header-based parsing produced 0 student rows despite having body tokens, automatically retry in headerless mode
+  if (
+    headerDetected &&
+    !options.forceHeaderlessMode &&
+    extractedRows.length === 0 &&
+    rawBodyClusters.length > 0
+  ) {
+    return analyzeRosterTableGeometry(words, {
+      ...options,
+      forceHeaderlessMode: true,
+    });
+  }
+
+  // 6c. Split OCR-glued row sequence numbers + student school numbers (e.g. Row 1: "1105" -> seq=1, no="105")
+  splitGluedSequenceAndStudentNumbers(extractedRows);
 
   // 7. Missing Student Detection (Sequence Number Gaps & Physical Vertical Row Spacing Gaps)
   const finalRowsWithGapCandidates: VerifiedOcrRosterRow[] = [];

@@ -94,6 +94,37 @@ export function validateUploadedImageMagicBytes(
     return { valid: true, detectedFormat: 'webp' };
   }
 
+  // BMP: "BM" (42 4D)
+  const isBmp =
+    headerBytes.byteLength >= 6 &&
+    headerBytes[0] === 0x42 &&
+    headerBytes[1] === 0x4d;
+  if (isBmp) {
+    return { valid: true, detectedFormat: 'png' };
+  }
+
+  // GIF: "GIF8" (47 49 46 38)
+  const isGif =
+    headerBytes.byteLength >= 6 &&
+    headerBytes[0] === 0x47 &&
+    headerBytes[1] === 0x49 &&
+    headerBytes[2] === 0x46 &&
+    headerBytes[3] === 0x38;
+  if (isGif) {
+    return { valid: true, detectedFormat: 'png' };
+  }
+
+  // ISO Base Media File Format (HEIC / HEIF / AVIF from smartphone camera galleries): bytes 4..7 === "ftyp" (66 74 79 70)
+  const isHeicOrAvif =
+    headerBytes.byteLength >= 12 &&
+    headerBytes[4] === 0x66 &&
+    headerBytes[5] === 0x74 &&
+    headerBytes[6] === 0x79 &&
+    headerBytes[7] === 0x70;
+  if (isHeicOrAvif) {
+    return { valid: true, detectedFormat: 'jpeg' };
+  }
+
   return {
     valid: false,
     error:
@@ -278,7 +309,10 @@ export function detectAutoOrientation90(image: RawGrayImage): 0 | 90 {
   const { width, height } = image;
   if (width < 20 || height < 20) return 0;
 
-  const bin = adaptiveLocalBinarize(image);
+  const rawBin = adaptiveLocalBinarize(image);
+  // Strip solid table grid lines first so vertical column borders in upright portrait tables
+  // do not create false vertical projection spikes that rotate upright portrait photos sideways!
+  const { cleaned: bin } = detectAndRemoveTableGridLines(rawBin);
   const step = Math.max(1, Math.floor(Math.min(width, height) / 160));
   const ptsX: number[] = [];
   const ptsY: number[] = [];
@@ -329,7 +363,9 @@ export function detectAutoOrientation90(image: RawGrayImage): 0 | 90 {
     if (e > maxVertEnergy) maxVertEnergy = e;
   }
 
-  if (maxVertEnergy > maxHorizEnergy * 1.65 && height >= width * 0.85) {
+  // Only auto-rotate 90° if vertical energy strongly dominates AFTER grid line removal
+  // AND the aspect ratio is strongly tall (e.g. a landscape table strip rotated sideways where height >= width * 1.85)
+  if (maxVertEnergy > maxHorizEnergy * 2.2 && height >= width * 1.85) {
     return 90;
   }
   return 0;

@@ -893,6 +893,208 @@ test('OCR #14: Puanla order-preserving 1-to-1 surname matching algorithm resolve
   );
 });
 
+test('OCR #15: Real e-Okul camera scan with Turkish gender ("Kız"/"Erkek") and boarding status ("Yat."/"Günd.") never absorbs gender/boarding into surname and never merges sequence "1." + "105" into "1105"', async () => {
+  const { parseStudentRosterText } = await import('../rubricLogic.ts');
+
+  // Headerless camera scan matching exact user report:
+  // Row 1: "1." | "105" | "AYŞE" | "MELEK" | "Kız" | "Yat."
+  // Row 2: "2." | "108" | "MEHMET" | "DEMİR" | "Erkek" | "Günd."
+  // Row 3: "3." | "112" | "ZEYNEP" | "KAYA" | "Kız" | "Yatılı"
+  const cameraScanTokens: OcrWordToken[] = [
+    // Row 1 (note close X proximity between "1." and "105", and between "MELEK", "Kız", "Yat.")
+    { id: 'r1-seq', text: '1.', confidence: 96, bbox: { x0: 40, y0: 100, x1: 60, y1: 122 } },
+    { id: 'r1-num', text: '105', confidence: 97, bbox: { x0: 78, y0: 100, x1: 118, y1: 122 } },
+    { id: 'r1-fn', text: 'AYŞE', confidence: 96, bbox: { x0: 160, y0: 100, x1: 225, y1: 122 } },
+    { id: 'r1-ln', text: 'MELEK', confidence: 95, bbox: { x0: 235, y0: 100, x1: 310, y1: 122 } },
+    { id: 'r1-gen', text: 'Kız', confidence: 94, bbox: { x0: 360, y0: 100, x1: 400, y1: 122 } },
+    { id: 'r1-brd', text: 'Yat.', confidence: 92, bbox: { x0: 410, y0: 100, x1: 455, y1: 122 } },
+
+    // Row 2
+    { id: 'r2-seq', text: '2.', confidence: 96, bbox: { x0: 40, y0: 145, x1: 60, y1: 167 } },
+    { id: 'r2-num', text: '108', confidence: 97, bbox: { x0: 78, y0: 145, x1: 118, y1: 167 } },
+    { id: 'r2-fn', text: 'MEHMET', confidence: 96, bbox: { x0: 160, y0: 145, x1: 245, y1: 167 } },
+    { id: 'r2-ln', text: 'DEMİR', confidence: 95, bbox: { x0: 255, y0: 145, x1: 325, y1: 167 } },
+    { id: 'r2-gen', text: 'Erkek', confidence: 94, bbox: { x0: 360, y0: 145, x1: 418, y1: 167 } },
+    { id: 'r2-brd', text: 'Günd.', confidence: 92, bbox: { x0: 428, y0: 145, x1: 480, y1: 167 } },
+
+    // Row 3
+    { id: 'r3-seq', text: '3.', confidence: 96, bbox: { x0: 40, y0: 190, x1: 60, y1: 212 } },
+    { id: 'r3-num', text: '112', confidence: 97, bbox: { x0: 78, y0: 190, x1: 118, y1: 212 } },
+    { id: 'r3-fn', text: 'ZEYNEP', confidence: 96, bbox: { x0: 160, y0: 190, x1: 240, y1: 212 } },
+    { id: 'r3-ln', text: 'KAYA', confidence: 95, bbox: { x0: 250, y0: 190, x1: 315, y1: 212 } },
+    { id: 'r3-gen', text: 'Kız', confidence: 94, bbox: { x0: 360, y0: 190, x1: 400, y1: 212 } },
+    { id: 'r3-brd', text: 'Yatılı', confidence: 92, bbox: { x0: 410, y0: 190, x1: 470, y1: 212 } },
+  ];
+
+  const analysis = analyzeRosterTableGeometry(cameraScanTokens);
+  assert.equal(analysis.rows.length, 3);
+
+  // Row 1: Sequence=1, StudentNumber="105" (NEVER "1105"), FirstName="AYŞE", LastName="MELEK" (NEVER "Kız Yat.")
+  assert.equal(analysis.rows[0].sequenceNumber, 1);
+  assert.equal(analysis.rows[0].studentNumber, '105');
+  assert.equal(analysis.rows[0].firstName, 'AYŞE');
+  assert.equal(analysis.rows[0].lastName, 'MELEK');
+  assert.equal(analysis.rows[0].fullName, 'AYŞE MELEK');
+
+  // Row 2: Sequence=2, StudentNumber="108" (NEVER "2108"), FirstName="MEHMET", LastName="DEMİR"
+  assert.equal(analysis.rows[1].sequenceNumber, 2);
+  assert.equal(analysis.rows[1].studentNumber, '108');
+  assert.equal(analysis.rows[1].firstName, 'MEHMET');
+  assert.equal(analysis.rows[1].lastName, 'DEMİR');
+
+  // Row 3: Sequence=3, StudentNumber="112" (NEVER "3112"), FirstName="ZEYNEP", LastName="KAYA"
+  assert.equal(analysis.rows[2].sequenceNumber, 3);
+  assert.equal(analysis.rows[2].studentNumber, '112');
+  assert.equal(analysis.rows[2].firstName, 'ZEYNEP');
+  assert.equal(analysis.rows[2].lastName, 'KAYA');
+
+  // Also verify text parser handles raw pasted lines with sequence, gender, and boarding status
+  const textParsed = parseStudentRosterText(
+    '1. 105 Ayşe Melek Kız Yat.\n2. 108 Mehmet Demir Erkek Günd.\n3 112 Zeynep Kaya Kız Yatılı'
+  );
+  assert.equal(textParsed.length, 3);
+  assert.equal(textParsed[0].studentNumber, '105');
+  assert.equal(textParsed[0].firstName, 'Ayşe');
+  assert.equal(textParsed[0].lastName, 'Melek');
+  assert.equal(textParsed[1].studentNumber, '108');
+  assert.equal(textParsed[1].firstName, 'Mehmet');
+  assert.equal(textParsed[1].lastName, 'Demir');
+});
+
+test('OCR #16: Glued sequence + school number tokens ("1105", "2108", "3112" or "1.105") are automatically split into sequenceNumber and studentNumber without corrupting genuine 1001/1002 school numbers', async () => {
+  const { convertMlKitResponseToWordTokens } = await import('./mlKitOcrEngine.ts');
+
+  // Part A: ML Kit returns single glued tokens "1105", "2108", "3112" when vertical divider between Sıra No and Okul No is faint
+  const gluedTokens: OcrWordToken[] = [
+    { id: 'g1-num', text: '1105', confidence: 95, bbox: { x0: 45, y0: 90, x1: 115, y1: 112 } },
+    { id: 'g1-fn', text: 'AYŞE', confidence: 96, bbox: { x0: 170, y0: 90, x1: 235, y1: 112 } },
+    { id: 'g1-ln', text: 'MELEK', confidence: 96, bbox: { x0: 310, y0: 90, x1: 390, y1: 112 } },
+
+    { id: 'g2-num', text: '2108', confidence: 95, bbox: { x0: 45, y0: 135, x1: 115, y1: 157 } },
+    { id: 'g2-fn', text: 'MEHMET', confidence: 96, bbox: { x0: 170, y0: 135, x1: 260, y1: 157 } },
+    { id: 'g2-ln', text: 'DEMİR', confidence: 96, bbox: { x0: 310, y0: 135, x1: 390, y1: 157 } },
+
+    { id: 'g3-num', text: '3112', confidence: 95, bbox: { x0: 45, y0: 180, x1: 115, y1: 202 } },
+    { id: 'g3-fn', text: 'ZEYNEP', confidence: 96, bbox: { x0: 170, y0: 180, x1: 255, y1: 202 } },
+    { id: 'g3-ln', text: 'KAYA', confidence: 96, bbox: { x0: 310, y0: 180, x1: 380, y1: 202 } },
+  ];
+
+  const gluedAnalysis = analyzeRosterTableGeometry(gluedTokens);
+  assert.equal(gluedAnalysis.rows.length, 3);
+  assert.equal(gluedAnalysis.rows[0].sequenceNumber, 1);
+  assert.equal(gluedAnalysis.rows[0].studentNumber, '105');
+  assert.equal(gluedAnalysis.rows[1].sequenceNumber, 2);
+  assert.equal(gluedAnalysis.rows[1].studentNumber, '108');
+  assert.equal(gluedAnalysis.rows[2].sequenceNumber, 3);
+  assert.equal(gluedAnalysis.rows[2].studentNumber, '112');
+
+  // Part B: Genuine 4-digit school numbers 1001, 1002, 1003 (without sequence column) must NOT be split!
+  const genuine1000s: OcrWordToken[] = [
+    { id: 'k1-num', text: '1001', confidence: 98, bbox: { x0: 60, y0: 90, x1: 120, y1: 112 } },
+    { id: 'k1-fn', text: 'ALİ', confidence: 98, bbox: { x0: 180, y0: 90, x1: 230, y1: 112 } },
+    { id: 'k1-ln', text: 'YILMAZ', confidence: 98, bbox: { x0: 310, y0: 90, x1: 390, y1: 112 } },
+
+    { id: 'k2-num', text: '1002', confidence: 98, bbox: { x0: 60, y0: 135, x1: 120, y1: 157 } },
+    { id: 'k2-fn', text: 'VELİ', confidence: 98, bbox: { x0: 180, y0: 135, x1: 235, y1: 157 } },
+    { id: 'k2-ln', text: 'KAYA', confidence: 98, bbox: { x0: 310, y0: 135, x1: 380, y1: 157 } },
+  ];
+  const genuineAnalysis = analyzeRosterTableGeometry(genuine1000s);
+  assert.equal(genuineAnalysis.rows[0].studentNumber, '1001');
+  assert.equal(genuineAnalysis.rows[1].studentNumber, '1002');
+
+  // Part C: ML Kit element with dot-glued "1.105" splits at token conversion level
+  const mlKitDotGlued = convertMlKitResponseToWordTokens({
+    text: '1.105 AYŞE MELEK',
+    imageWidth: 800,
+    imageHeight: 600,
+    elapsedMs: 12,
+    isLocalOnly: true,
+    blocks: [
+      {
+        text: '1.105 AYŞE MELEK',
+        bbox: { x0: 40, y0: 90, x1: 360, y1: 114 },
+        blockIndex: 0,
+        lines: [
+          {
+            text: '1.105 AYŞE MELEK',
+            confidence: 0.95,
+            bbox: { x0: 40, y0: 90, x1: 360, y1: 114 },
+            angle: 0,
+            lineIndex: 0,
+            elements: [
+              {
+                text: '1.105',
+                confidence: 0.95,
+                bbox: { x0: 40, y0: 90, x1: 115, y1: 114 },
+                angle: 0,
+                elementIndex: 0,
+                symbols: [],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(mlKitDotGlued.length, 2);
+  assert.equal(mlKitDotGlued[0].text, '1');
+  assert.equal(mlKitDotGlued[1].text, '105');
+});
+
+test('OCR #17: Full-page e-Okul portrait photo with top school/class title banners and vertical grid lines stays upright (0 deg) and extracts all students', () => {
+  // 1. Verify full-page e-Okul tokens with 3 top banner rows before the table header row
+  const fullPageEokulTokens: OcrWordToken[] = [
+    // Banner Row 1: T.C. MİLLÎ EĞİTİM BAKANLIĞI
+    { id: 'b1-1', text: 'T.C.', confidence: 98, bbox: { x0: 280, y0: 20, x1: 320, y1: 38 } },
+    { id: 'b1-2', text: 'MİLLÎ', confidence: 98, bbox: { x0: 330, y0: 20, x1: 390, y1: 38 } },
+    { id: 'b1-3', text: 'EĞİTİM', confidence: 98, bbox: { x0: 400, y0: 20, x1: 470, y1: 38 } },
+    { id: 'b1-4', text: 'BAKANLIĞI', confidence: 98, bbox: { x0: 480, y0: 20, x1: 590, y1: 38 } },
+
+    // Banner Row 2: ATATÜRK ANADOLU LİSESİ MÜDÜRLÜĞÜ
+    { id: 'b2-1', text: 'ATATÜRK', confidence: 98, bbox: { x0: 250, y0: 48, x1: 340, y1: 66 } },
+    { id: 'b2-2', text: 'LİSESİ', confidence: 98, bbox: { x0: 350, y0: 48, x1: 420, y1: 66 } },
+    { id: 'b2-3', text: 'MÜDÜRLÜĞÜ', confidence: 98, bbox: { x0: 430, y0: 48, x1: 560, y1: 66 } },
+
+    // Banner Row 3: 9. SINIF / A ŞUBESİ ÖĞRENCİ SINIF LİSTESİ (previously misclassified as header row!)
+    { id: 'b3-1', text: '9.', confidence: 98, bbox: { x0: 200, y0: 76, x1: 220, y1: 94 } },
+    { id: 'b3-2', text: 'SINIF', confidence: 98, bbox: { x0: 230, y0: 76, x1: 285, y1: 94 } },
+    { id: 'b3-3', text: 'A', confidence: 98, bbox: { x0: 295, y0: 76, x1: 315, y1: 94 } },
+    { id: 'b3-4', text: 'ŞUBESİ', confidence: 98, bbox: { x0: 325, y0: 76, x1: 395, y1: 94 } },
+    { id: 'b3-5', text: 'ÖĞRENCİ', confidence: 98, bbox: { x0: 405, y0: 76, x1: 490, y1: 94 } },
+    { id: 'b3-6', text: 'SINIF', confidence: 98, bbox: { x0: 500, y0: 76, x1: 555, y1: 94 } },
+    { id: 'b3-7', text: 'LİSTESİ', confidence: 98, bbox: { x0: 565, y0: 76, x1: 645, y1: 94 } },
+
+    // Actual Table Header Row (Cluster #4, index 3)
+    { id: 'th-1', text: 'S.No', confidence: 98, bbox: { x0: 40, y0: 120, x1: 80, y1: 140 } },
+    { id: 'th-2', text: 'Okul No', confidence: 98, bbox: { x0: 100, y0: 120, x1: 170, y1: 140 } },
+    { id: 'th-3', text: 'Adı', confidence: 98, bbox: { x0: 200, y0: 120, x1: 260, y1: 140 } },
+    { id: 'th-4', text: 'Soyadı', confidence: 98, bbox: { x0: 340, y0: 120, x1: 420, y1: 140 } },
+    { id: 'th-5', text: 'Cinsiyeti', confidence: 98, bbox: { x0: 470, y0: 120, x1: 540, y1: 140 } },
+    { id: 'th-6', text: 'Durumu', confidence: 98, bbox: { x0: 570, y0: 120, x1: 640, y1: 140 } },
+
+    // Student Row 1
+    { id: 'sr1-1', text: '1', confidence: 98, bbox: { x0: 45, y0: 160, x1: 65, y1: 180 } },
+    { id: 'sr1-2', text: '105', confidence: 98, bbox: { x0: 110, y0: 160, x1: 155, y1: 180 } },
+    { id: 'sr1-3', text: 'AYŞE', confidence: 98, bbox: { x0: 200, y0: 160, x1: 265, y1: 180 } },
+    { id: 'sr1-4', text: 'MELEK', confidence: 98, bbox: { x0: 340, y0: 160, x1: 415, y1: 180 } },
+    { id: 'sr1-5', text: 'Kız', confidence: 98, bbox: { x0: 480, y0: 160, x1: 520, y1: 180 } },
+    { id: 'sr1-6', text: 'Yat.', confidence: 98, bbox: { x0: 575, y0: 160, x1: 620, y1: 180 } },
+
+    // Footer Row: Okul Müdürü
+    { id: 'ft-1', text: 'Okul', confidence: 95, bbox: { x0: 500, y0: 320, x1: 545, y1: 340 } },
+    { id: 'ft-2', text: 'Müdürü', confidence: 95, bbox: { x0: 555, y0: 320, x1: 630, y1: 340 } },
+  ];
+
+  const analysis = analyzeRosterTableGeometry(fullPageEokulTokens);
+  assert.equal(analysis.headerDetected, true);
+  assert.equal(analysis.rows.length, 1);
+  assert.equal(analysis.rows[0].sequenceNumber, 1);
+  assert.equal(analysis.rows[0].studentNumber, '105');
+  assert.equal(analysis.rows[0].firstName, 'AYŞE');
+  assert.equal(analysis.rows[0].lastName, 'MELEK');
+});
+
+
 
 
 

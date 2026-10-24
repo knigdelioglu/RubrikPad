@@ -72,18 +72,66 @@ export async function runLocalRosterOcrPipeline(
   }
 
   const t0 = nowMs();
-  const ocrOutput = await engine.recognizeImage(image, {
+  let ocrOutput = await engine.recognizeImage(image, {
     language: 'tur',
     preprocessing: options.preprocessing,
   });
-  const t1 = nowMs();
 
-  const tableAnalysis = analyzeRosterTableGeometry(ocrOutput.words, {
+  let tableAnalysis = analyzeRosterTableGeometry(ocrOutput.words, {
     horizontalGridLinesY: ocrOutput.preprocessing.diagnostics.horizontalGridLinesY,
     verticalGridLinesX: ocrOutput.preprocessing.diagnostics.verticalGridLinesX,
     manualColumnRoles: options.manualColumnRoles,
     forceHeaderlessMode: options.forceHeaderlessMode,
   });
+
+  // Automatic Orientation Recovery:
+  // If an uploaded photo yielded 0 extracted student rows on the initial pass and no manual rotation was locked,
+  // try alternative 90°/270°/0° orientations and keep the first one that extracts valid student rows.
+  const extractedCount = tableAnalysis.rows.filter(
+    (r) => r.rowKind === 'extracted' && (r.studentNumber || r.firstName || r.lastName)
+  ).length;
+
+  if (
+    extractedCount === 0 &&
+    options.preprocessing?.manualRotationDeg === undefined &&
+    image.width >= 60 &&
+    image.height >= 60
+  ) {
+    const initialRot = ocrOutput.preprocessing.diagnostics.appliedRotationDeg;
+    const candidateRotations: Array<0 | 90 | 270> =
+      initialRot === 0 ? [90, 270] : [0, 270];
+
+    for (const candidateRot of candidateRotations) {
+      const altOutput = await engine.recognizeImage(image, {
+        language: 'tur',
+        preprocessing: {
+          ...options.preprocessing,
+          autoOrient: false,
+          manualRotationDeg: candidateRot,
+        },
+      });
+      const altAnalysis = analyzeRosterTableGeometry(altOutput.words, {
+        horizontalGridLinesY:
+          altOutput.preprocessing.diagnostics.horizontalGridLinesY,
+        verticalGridLinesX:
+          altOutput.preprocessing.diagnostics.verticalGridLinesX,
+        manualColumnRoles: options.manualColumnRoles,
+        forceHeaderlessMode: options.forceHeaderlessMode,
+      });
+      const altExtractedCount = altAnalysis.rows.filter(
+        (r) =>
+          r.rowKind === 'extracted' &&
+          (r.studentNumber || r.firstName || r.lastName)
+      ).length;
+      if (altExtractedCount > extractedCount) {
+        ocrOutput = altOutput;
+        tableAnalysis = altAnalysis;
+        break;
+      }
+    }
+  }
+
+  const t1 = nowMs();
   const t2 = nowMs();
 
   let verifiedRows = evaluateRosterReliability(

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Plus,
   Trash2,
@@ -7,18 +7,42 @@ import {
   Edit3,
   Copy,
   AlertTriangle,
-  ShieldCheck,
+  BookOpen,
+  School,
 } from 'lucide-react';
-import type { Rubric, RubricCriterion, EvaluationSession } from '../types.ts';
+import type {
+  Classroom,
+  Rubric,
+  RubricCriterion,
+  EvaluationSession,
+} from '../types.ts';
 import {
   validateRubric,
   checkRubricDeletionImpact,
   createUniqueEntityId,
 } from '../utils/rubricLogic.ts';
+import {
+  RubrikService,
+  STANDARD_GRADE_LEVELS,
+  STANDARD_SUBJECTS,
+  getEffectiveRubricGradeLevel,
+  getEffectiveRubricSubject,
+  summarizeRubricCatalogByGradeAndSubject,
+  normalizeGradeLevel,
+  normalizeSubjectName,
+  type CurriculumGroupSummary,
+} from '../services/RubrikService.ts';
 
 interface RubricBuilderProps {
   rubrics: Rubric[];
+  allRubrics?: Rubric[];
+  catalogSummaries?: CurriculumGroupSummary[];
   sessions?: EvaluationSession[];
+  classrooms?: Classroom[];
+  selectedGradeLevel?: string;
+  selectedSubject?: string;
+  onChangeGradeLevel?: (gradeLevel: string) => void;
+  onChangeSubject?: (subject: string) => void;
   onSaveRubric: (rubric: Rubric) => void;
   onDeleteRubric: (rubricId: string) => void;
 }
@@ -58,18 +82,77 @@ const DEFAULT_LEVELS = [
 
 export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   rubrics,
+  allRubrics,
+  catalogSummaries: externalCatalogSummaries,
   sessions = [],
+  classrooms = [],
+  selectedGradeLevel: externalGradeLevel,
+  selectedSubject: externalSubject,
+  onChangeGradeLevel,
+  onChangeSubject,
   onSaveRubric,
   onDeleteRubric,
 }) => {
+  const [internalGradeLevel, setInternalGradeLevel] = useState<string>(
+    RubrikService.DEFAULT_GRADE_LEVEL
+  );
+  const [internalSubject, setInternalSubject] = useState<string>(
+    RubrikService.DEFAULT_SUBJECT
+  );
+
+  const activeGradeFilter =
+    externalGradeLevel !== undefined ? externalGradeLevel : internalGradeLevel;
+  const activeSubjectFilter =
+    externalSubject !== undefined ? externalSubject : internalSubject;
+
+  const handleSetGradeFilter = (grade: string) => {
+    setInternalGradeLevel(grade);
+    onChangeGradeLevel?.(grade);
+  };
+
+  const handleSetSubjectFilter = (subject: string) => {
+    setInternalSubject(subject);
+    onChangeSubject?.(subject);
+  };
+
+  const filteredRubrics = useMemo(
+    () =>
+      RubrikService.filterRubricsForSelection(
+        rubrics,
+        activeGradeFilter,
+        activeSubjectFilter
+      ),
+    [rubrics, activeGradeFilter, activeSubjectFilter]
+  );
+
+  const catalogSummaries = useMemo(
+    () =>
+      externalCatalogSummaries ??
+      summarizeRubricCatalogByGradeAndSubject(allRubrics ?? rubrics),
+    [externalCatalogSummaries, allRubrics, rubrics]
+  );
+
   const [selectedRubricId, setSelectedRubricId] = useState<string>(
-    () => rubrics[0]?.id || ''
+    () => filteredRubrics[0]?.id || ''
   );
   const [isEditing, setIsEditing] = useState(false);
 
+  useEffect(() => {
+    if (
+      filteredRubrics.length > 0 &&
+      !filteredRubrics.some((r) => r.id === selectedRubricId)
+    ) {
+      setSelectedRubricId(filteredRubrics[0].id);
+    } else if (filteredRubrics.length === 0) {
+      setSelectedRubricId('');
+    }
+  }, [filteredRubrics, selectedRubricId]);
+
   const activeRubric = useMemo(
-    () => rubrics.find((r) => r.id === selectedRubricId) || rubrics[0],
-    [rubrics, selectedRubricId]
+    () =>
+      filteredRubrics.find((r) => r.id === selectedRubricId) ||
+      filteredRubrics[0],
+    [filteredRubrics, selectedRubricId]
   );
 
   const [draftRubric, setDraftRubric] = useState<Rubric | null>(null);
@@ -78,16 +161,24 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   const [confirmDeleteRubricId, setConfirmDeleteRubricId] = useState<string | null>(null);
 
   const handleStartEdit = (rubric: Rubric) => {
-    setDraftRubric(JSON.parse(JSON.stringify(rubric)));
+    const cloned: Rubric = JSON.parse(JSON.stringify(rubric));
+    cloned.gradeLevel = getEffectiveRubricGradeLevel(rubric);
+    cloned.subject = getEffectiveRubricSubject(rubric);
+    setDraftRubric(cloned);
     setValidationErrors([]);
     setIsEditing(true);
   };
 
   const handleStartCreateNew = () => {
+    const defaultGrade =
+      normalizeGradeLevel(activeGradeFilter) || '11. Sınıf';
+    const defaultSubject =
+      normalizeSubjectName(activeSubjectFilter) || 'Türk Dili ve Edebiyatı';
     const newRubric: Rubric = {
       id: createUniqueEntityId('rub'),
       title: 'Yeni Değerlendirme Rubriği',
-      subject: 'Genel Değerlendirme',
+      subject: defaultSubject,
+      gradeLevel: defaultGrade,
       description: 'Öğrencilerin süreç ve ürün performanslarını ölçüt temelli değerlendirir.',
       maxLevelPoints: 4,
       createdAt: new Date().toISOString().slice(0, 10),
@@ -123,6 +214,8 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       ...JSON.parse(JSON.stringify(rubric)),
       id: createUniqueEntityId('rub'),
       title: `${rubric.title} (Kopya)`,
+      gradeLevel: getEffectiveRubricGradeLevel(rubric),
+      subject: getEffectiveRubricSubject(rubric),
       createdAt: new Date().toISOString().slice(0, 10),
       version: 1,
     };
@@ -183,11 +276,20 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
     }
 
     const nextVersion = (draftRubric.version || 1) + 1;
-    onSaveRubric({
+    const normalizedGrade =
+      normalizeGradeLevel(draftRubric.gradeLevel) || '11. Sınıf';
+    const normalizedSubj =
+      normalizeSubjectName(draftRubric.subject) || 'Türk Dili ve Edebiyatı';
+    const saved: Rubric = {
       ...draftRubric,
+      gradeLevel: normalizedGrade,
+      subject: normalizedSubj,
       version: nextVersion,
-    });
-    setSelectedRubricId(draftRubric.id);
+    };
+    onSaveRubric(saved);
+    handleSetGradeFilter(normalizedGrade);
+    handleSetSubjectFilter(normalizedSubj);
+    setSelectedRubricId(saved.id);
     setIsEditing(false);
     setDraftRubric(null);
     setValidationErrors([]);
@@ -221,16 +323,13 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
           <h1 className="text-2xl font-bold text-slate-900">
             Rubrik ve Ölçüt Kütüphanesi
           </h1>
-          <p className="text-sm text-slate-600 mt-0.5">
-            100 puan doğrulamalı ölçütler, 0–4 düzey tanımları ve oturum bazında dondurulmuş şablon yönetimi.
-          </p>
         </div>
 
         {!isEditing && (
           <button
             type="button"
             onClick={handleStartCreateNew}
-            className="px-4 py-2.5 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+            className="px-4 py-2.5 text-sm font-semibold text-white bg-blue-900 hover:bg-blue-950 rounded-lg flex items-center gap-1.5 cursor-pointer self-start sm:self-auto shadow-xs"
           >
             <Plus className="w-4 h-4" />
             Yeni Rubrik Oluştur
@@ -238,13 +337,138 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
         )}
       </div>
 
+      {/* Sınıf Bazlı Rubrik Servisi — Kademe & Ders Seçici */}
+      {!isEditing && (
+        <div className="bg-white border border-slate-300 rounded-xl p-4 shadow-2xs space-y-3">
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
+              <div>
+                <label
+                  htmlFor="rubric-grade-filter"
+                  className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5"
+                >
+                  <School className="w-3.5 h-3.5 text-blue-900" />
+                  Sınıf Düzeyi (Kademe)
+                </label>
+                <select
+                  id="rubric-grade-filter"
+                  value={activeGradeFilter}
+                  onChange={(e) => handleSetGradeFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm font-semibold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 cursor-pointer"
+                >
+                  <option value="">Sınıf Düzeyi Seçiniz...</option>
+                  {STANDARD_GRADE_LEVELS.map((grade) => (
+                    <option key={grade} value={grade}>
+                      {grade}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="rubric-subject-filter"
+                  className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5"
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-blue-900" />
+                  Ders / Branş
+                </label>
+                <select
+                  id="rubric-subject-filter"
+                  value={activeSubjectFilter}
+                  onChange={(e) => handleSetSubjectFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm font-semibold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 cursor-pointer"
+                >
+                  <option value="">Ders Seçiniz...</option>
+                  {STANDARD_SUBJECTS.map((subj) => (
+                    <option key={subj} value={subj}>
+                      {subj}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {catalogSummaries.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                {catalogSummaries.map((item) => {
+                  const isActiveGroup =
+                    normalizeGradeLevel(activeGradeFilter) === item.gradeLevel &&
+                    normalizeSubjectName(activeSubjectFilter) === item.subject;
+                  return (
+                    <button
+                      key={`${item.gradeLevel}-${item.subject}`}
+                      type="button"
+                      onClick={() => {
+                        handleSetGradeFilter(item.gradeLevel);
+                        handleSetSubjectFilter(item.subject);
+                      }}
+                      className={`px-3 py-2 rounded-lg text-xs font-bold border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                        isActiveGroup
+                          ? 'bg-blue-900 text-white border-blue-950 shadow-2xs'
+                          : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      <span>
+                        {item.gradeLevel} · {item.subject}
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[11px] font-mono-num ${
+                          isActiveGroup
+                            ? 'bg-blue-950 text-white'
+                            : 'bg-white text-slate-800 border border-slate-300'
+                        }`}
+                      >
+                        {item.rubricCount} Rubrik
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {classrooms.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200 text-xs">
+              <span className="font-semibold text-slate-600 mr-1">
+                Kayıtlı Şubeler:
+              </span>
+              {classrooms.map((cls) => {
+                const isMatched =
+                  normalizeGradeLevel(activeGradeFilter) ===
+                    normalizeGradeLevel(cls.gradeLevel) &&
+                  normalizeSubjectName(activeSubjectFilter) ===
+                    normalizeSubjectName(cls.subject);
+                return (
+                  <button
+                    key={cls.id}
+                    type="button"
+                    onClick={() => {
+                      handleSetGradeFilter(normalizeGradeLevel(cls.gradeLevel));
+                      handleSetSubjectFilter(normalizeSubjectName(cls.subject));
+                    }}
+                    className={`px-2.5 py-1 rounded-md font-bold cursor-pointer border ${
+                      isMatched
+                        ? 'bg-slate-800 text-white border-slate-900'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    {cls.name} ({cls.gradeLevel} · {cls.subject})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {saveNotification && (
         <div
           role="status"
           aria-live="polite"
-          className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2"
+          className="bg-slate-100 border border-slate-300 text-slate-900 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2"
         >
-          <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+          <Check className="w-4 h-4 text-blue-900 shrink-0" />
           {saveNotification}
         </div>
       )}
@@ -258,10 +482,6 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 <h2 className="text-lg font-bold text-slate-900">
                   Rubrik Şablonu Düzenleyici
                 </h2>
-                <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-teal-700" />
-                  Bu şablonda yapılan değişiklikler geçmiş değerlendirme oturumlarının notlarını etkilemez (oturum anlık görüntüsü korunur).
-                </p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -277,7 +497,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-blue-900 rounded-lg hover:bg-blue-950 flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
                   <Check className="w-4 h-4" />
                   Doğrula ve Kaydet
@@ -313,7 +533,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label
                   htmlFor="rubric-title-input"
@@ -329,8 +549,33 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   onChange={(e) =>
                     setDraftRubric({ ...draftRubric, title: e.target.value })
                   }
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
                 />
+              </div>
+              <div>
+                <label
+                  htmlFor="rubric-grade-input"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Sınıf Düzeyi (Kademe)
+                </label>
+                <select
+                  id="rubric-grade-input"
+                  value={draftRubric.gradeLevel || '11. Sınıf'}
+                  onChange={(e) =>
+                    setDraftRubric({
+                      ...draftRubric,
+                      gradeLevel: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+                >
+                  {STANDARD_GRADE_LEVELS.map((grade) => (
+                    <option key={grade} value={grade}>
+                      {grade}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label
@@ -339,15 +584,20 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 >
                   Ders / Alan
                 </label>
-                <input
+                <select
                   id="rubric-subject-input"
-                  type="text"
                   value={draftRubric.subject}
                   onChange={(e) =>
                     setDraftRubric({ ...draftRubric, subject: e.target.value })
                   }
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                />
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+                >
+                  {STANDARD_SUBJECTS.map((subj) => (
+                    <option key={subj} value={subj}>
+                      {subj}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -365,7 +615,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 onChange={(e) =>
                   setDraftRubric({ ...draftRubric, description: e.target.value })
                 }
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
               />
             </div>
 
@@ -380,7 +630,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   <span
                     className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
                       totalDraftPoints === 100
-                        ? 'bg-emerald-100 text-emerald-900'
+                        ? 'bg-blue-900 text-white'
                         : 'bg-amber-100 text-amber-900'
                     }`}
                   >
@@ -394,18 +644,13 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   <span
                     className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
                       totalDraftWeight === 100
-                        ? 'bg-emerald-100 text-emerald-900'
+                        ? 'bg-blue-900 text-white'
                         : 'bg-amber-100 text-amber-900'
                     }`}
                   >
                     %{totalDraftWeight}
                   </span>
                 </div>
-                {(totalDraftPoints !== 100 || totalDraftWeight !== 100) && (
-                  <span className="text-xs font-medium text-amber-800">
-                    (Kaydetmek için toplam puan ve ağırlık tam 100 olmalıdır)
-                  </span>
-                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -419,7 +664,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 <button
                   type="button"
                   onClick={handleAddCriterionToDraft}
-                  className="px-3 py-1.5 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+                  className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-900 border border-blue-900 rounded-lg hover:bg-blue-950 flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Ölçüt Ekle ({draftRubric.criteria.length})
@@ -437,7 +682,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                   <div className="flex items-center gap-2 flex-1">
-                    <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-slate-100 text-slate-800">
+                    <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-slate-100 text-slate-800 border border-slate-300">
                       0{cIdx + 1}
                     </span>
                     <input
@@ -451,7 +696,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                         setDraftRubric({ ...draftRubric, criteria: updated });
                       }}
                       placeholder="Ölçüt Başlığı"
-                      className="flex-1 px-3 py-1.5 text-sm font-bold text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                      className="flex-1 px-3 py-1.5 text-sm font-bold text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
                     />
                     <input
                       type="text"
@@ -464,14 +709,14 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                         setDraftRubric({ ...draftRubric, criteria: updated });
                       }}
                       placeholder="Kategori"
-                      className="w-36 px-3 py-1.5 text-xs text-slate-700 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                      className="w-36 px-3 py-1.5 text-xs text-slate-700 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
                     />
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
                     <label
                       htmlFor={`crit-points-${crit.id}`}
-                      className="text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5"
+                      className="text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-2.5 py-1 rounded-lg flex items-center gap-1.5"
                     >
                       Kriter Puanı:
                       <input
@@ -489,7 +734,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                           );
                           setDraftRubric({ ...draftRubric, criteria: updated });
                         }}
-                        className="w-14 px-2 py-0.5 text-sm font-mono-num font-bold text-teal-950 bg-white border border-teal-300 rounded focus:outline-none focus:ring-2 focus:ring-teal-600 text-right"
+                        className="w-14 px-2 py-0.5 text-sm font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-900 text-right"
                       />
                       <span>Puan</span>
                     </label>
@@ -514,7 +759,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                           );
                           setDraftRubric({ ...draftRubric, criteria: updated });
                         }}
-                        className="w-14 px-2 py-1 text-sm font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600 text-right"
+                        className="w-14 px-2 py-1 text-sm font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 text-right"
                       />
                     </label>
 
@@ -549,7 +794,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                         </span>
                         <label
                           htmlFor={`lvl-pts-${crit.id}-${lvl.level}`}
-                          className="flex items-center gap-1 text-[11px] font-mono-num text-teal-800 shrink-0"
+                          className="flex items-center gap-1 text-[11px] font-mono-num text-blue-900 shrink-0"
                         >
                           <input
                             id={`lvl-pts-${crit.id}-${lvl.level}`}
@@ -574,7 +819,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                                 ),
                               });
                             }}
-                            className="w-12 px-1.5 py-0.5 text-xs font-mono-num font-bold text-teal-900 bg-teal-50 border border-teal-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-teal-600"
+                            className="w-12 px-1.5 py-0.5 text-xs font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded text-right focus:outline-none focus:ring-1 focus:ring-blue-900"
                           />
                           <span>P</span>
                         </label>
@@ -599,7 +844,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                             ),
                           });
                         }}
-                        className="w-full text-xs text-slate-700 border border-slate-200 rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-teal-600"
+                        className="w-full text-xs text-slate-700 border border-slate-200 rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-blue-900"
                       />
                     </div>
                   ))}
@@ -614,16 +859,17 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
           {/* Left: Rubric List */}
           <aside className="lg:col-span-4 bg-white border border-slate-200 rounded-xl p-4 space-y-3">
             <h2 className="text-base font-bold text-slate-900">
-              Kayıtlı Rubrikler ({rubrics.length})
+              Seçili Sınıf ve Ders Rubrikleri ({filteredRubrics.length})
             </h2>
             <div className="space-y-2">
-              {rubrics.map((rub) => {
+              {filteredRubrics.map((rub) => {
                 const isSelected = activeRubric?.id === rub.id;
                 const totalRubricPts = rub.criteria.reduce(
                   (s, c) => s + Number(c.maxPoints ?? c.weight ?? 0),
                   0
                 );
                 const vCheck = validateRubric(rub);
+                const effGrade = getEffectiveRubricGradeLevel(rub);
                 return (
                   <button
                     key={rub.id}
@@ -634,17 +880,17 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                     }}
                     className={`w-full text-left p-3.5 rounded-lg border transition-colors cursor-pointer ${
                       isSelected
-                        ? 'bg-teal-50/90 border-teal-700 text-slate-900'
+                        ? 'bg-slate-100 border-2 border-blue-900 text-slate-900 shadow-2xs'
                         : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
                     }`}
                   >
                     <div className="flex items-center justify-between text-xs text-slate-500 mb-0.5 font-mono-num">
                       <span>
-                        {rub.subject} · {rub.criteria.length} Ölçüt · {totalRubricPts}P
+                        {effGrade} · {rub.subject} · {rub.criteria.length} Ölçüt
                       </span>
                       {vCheck.isValid ? (
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                          100P Doğrulandı
+                        <span className="text-[10px] font-bold text-slate-700 bg-slate-200/80 px-1.5 py-0.5 rounded">
+                          {totalRubricPts}P
                         </span>
                       ) : (
                         <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
@@ -656,6 +902,30 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   </button>
                 );
               })}
+              {filteredRubrics.length === 0 && (
+                <div className="py-6 px-3 text-center text-xs text-slate-600 space-y-2 bg-slate-50 rounded-lg border border-slate-200">
+                  <div className="font-bold text-slate-800">
+                    {!activeGradeFilter || !activeSubjectFilter
+                      ? 'Sınıf Düzeyi ve Ders Seçiniz'
+                      : `${activeGradeFilter} · ${activeSubjectFilter} İçin Rubrik Bulunmuyor`}
+                  </div>
+                  <p>
+                    8 adet Türk Dili ve Edebiyatı rubriği yalnızca{' '}
+                    <strong>11. Sınıf — Türk Dili ve Edebiyatı</strong> dersi
+                    seçildiğinde gösterilir.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSetGradeFilter('11. Sınıf');
+                      handleSetSubjectFilter('Türk Dili ve Edebiyatı');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-blue-900 text-white font-bold hover:bg-blue-950 cursor-pointer inline-flex items-center gap-1"
+                  >
+                    11. Sınıf · Türk Dili ve Edebiyatı Seç
+                  </button>
+                </div>
+              )}
             </div>
           </aside>
 
@@ -666,14 +936,17 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 pb-4 border-b border-slate-200">
                   <div>
                     <div className="text-xs text-slate-500 mb-1 flex flex-wrap items-center gap-2">
-                      <span>
-                        {activeRubric.subject} · Oluşturulma:{' '}
-                        <span className="font-mono-num">{activeRubric.createdAt}</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-950 border border-blue-200 font-bold">
+                        {getEffectiveRubricGradeLevel(activeRubric)}
                       </span>
+                      <span className="font-semibold text-slate-700">
+                        {activeRubric.subject}
+                      </span>
+                      <span>·</span>
+                      <span className="font-mono-num">{activeRubric.createdAt}</span>
                       {deletionImpact && deletionImpact.usedInSessionsCount > 0 && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200 font-semibold">
-                          <ShieldCheck className="w-3 h-3" />
-                          {deletionImpact.usedInSessionsCount} oturumda dondurulmuş kopya ile kullanılıyor
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300 font-semibold">
+                          {deletionImpact.usedInSessionsCount} oturum
                         </span>
                       )}
                     </div>
@@ -689,7 +962,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                     <button
                       type="button"
                       onClick={() => handleStartEdit(activeRubric)}
-                      className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-slate-100 rounded-lg hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                      className="px-3.5 py-2 text-xs font-bold text-white bg-blue-900 border border-blue-900 rounded-lg hover:bg-blue-950 flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-2xs"
                     >
                       <Edit3 className="w-3.5 h-3.5" />
                       Rubriği Düzenle
@@ -702,16 +975,14 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                       <Copy className="w-3.5 h-3.5" />
                       Çoğalt
                     </button>
-                    {rubrics.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteRubricId(activeRubric.id)}
-                        aria-label={`${activeRubric.title} rubriğini sil`}
-                        className="p-2 text-slate-400 hover:text-red-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteRubricId(activeRubric.id)}
+                      aria-label={`${activeRubric.title} rubriğini sil`}
+                      className="p-2 text-slate-400 hover:text-red-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
 
@@ -738,7 +1009,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          const nextRub = rubrics.find(
+                          const nextRub = filteredRubrics.find(
                             (r) => r.id !== activeRubric.id
                           );
                           onDeleteRubric(activeRubric.id);
@@ -759,10 +1030,13 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 <div className="border border-slate-200 rounded-xl overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[720px]">
                     <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700">
+                      <tr className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-800">
                         <th className="py-3 px-4 w-48">Ölçüt · Puan & Ağırlık</th>
                         {(activeRubric.criteria[0]?.levels || []).map((lvl) => (
-                          <th key={lvl.level} className="py-3 px-3">
+                          <th
+                            key={lvl.level}
+                            className="py-3 px-3 border-l border-slate-200 bg-slate-50 text-slate-800"
+                          >
                             {lvl.level}. Düzey — {lvl.label}
                           </th>
                         ))}
@@ -771,24 +1045,26 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                     <tbody className="divide-y divide-slate-200 text-xs">
                       {activeRubric.criteria.map((crit, idx) => (
                         <tr key={crit.id} className="align-top">
-                          <td className="py-3 px-4 bg-slate-50/40">
+                          <td className="py-3 px-4 bg-slate-50/60">
                             <span className="text-[11px] text-slate-500 block">
                               0{idx + 1}. {crit.category}
                             </span>
                             <span className="font-bold text-slate-900 text-sm block mt-0.5">
                               {crit.title}
                             </span>
-                            <span className="font-mono-num text-xs font-bold text-teal-800 mt-1 block">
+                            <span className="font-mono-num text-xs font-bold text-blue-900 mt-1 block">
                               {crit.maxPoints ?? crit.weight} Puan · %{crit.weight}
                             </span>
                           </td>
                           {crit.levels.map((lvl) => (
                             <td
                               key={lvl.level}
-                              className="py-3 px-3 text-slate-600 leading-relaxed"
+                              className="py-3 px-3 text-slate-600 leading-relaxed border-l border-slate-100"
                             >
-                              <div className="font-mono-num text-[11px] font-bold text-slate-800 mb-0.5">
-                                {lvl.points} Puan
+                              <div className="mb-1">
+                                <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
+                                  {lvl.points} Puan
+                                </span>
                               </div>
                               <div>{lvl.description}</div>
                             </td>
@@ -799,7 +1075,42 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   </table>
                 </div>
               </>
-            ) : null}
+            ) : (
+              <div className="py-12 text-center space-y-3">
+                <div className="text-base font-bold text-slate-900">
+                  {!activeGradeFilter || !activeSubjectFilter
+                    ? 'Rubrikleri Görüntülemek İçin Sınıf ve Ders Seçin'
+                    : `${activeGradeFilter} · ${activeSubjectFilter} İçin Kayıtlı Rubrik Bulunmuyor`}
+                </div>
+                <p className="text-xs text-slate-600 max-w-md mx-auto">
+                  Türk Dili ve Edebiyatı dersine ait 8 rubrik yalnızca{' '}
+                  <strong>11. Sınıf — Türk Dili ve Edebiyatı</strong> seçildiğinde
+                  listelenir. Yukarıdan sınıf/ders seçebilir veya yeni bir rubrik
+                  oluşturabilirsiniz.
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSetGradeFilter('11. Sınıf');
+                      handleSetSubjectFilter('Türk Dili ve Edebiyatı');
+                    }}
+                    className="px-4 py-2 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BookOpen className="w-3.5 h-3.5" />
+                    11. Sınıf · Türk Dili ve Edebiyatı (8 Rubrik)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleStartCreateNew}
+                    className="px-4 py-2 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Yeni Rubrik Oluştur
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

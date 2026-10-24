@@ -48,6 +48,12 @@ import {
   MAX_NOTE_LENGTH,
 } from '../utils/rubricLogic.ts';
 import { downloadSessionPdfFile } from '../utils/pdfGenerator.ts';
+import {
+  STANDARD_GRADE_LEVELS,
+  STANDARD_SUBJECTS,
+  getRubricsForClassrooms,
+  getRubricsByGradeAndSubject,
+} from '../utils/rubricService.ts';
 import { FastEvaluationView } from './evaluation/FastEvaluationView.tsx';
 import { MatrixEvaluationView } from './evaluation/MatrixEvaluationView.tsx';
 import { IndividualEvaluationView } from './evaluation/IndividualEvaluationView.tsx';
@@ -61,9 +67,14 @@ interface EvaluationWorkspaceProps {
   rubrics: Rubric[];
   sessions: EvaluationSession[];
   activeSessionId: string;
+  selectedGradeLevel?: string;
+  selectedSubject?: string;
+  onChangeGradeLevel?: (grade: string) => void;
+  onChangeSubject?: (subject: string) => void;
   onSelectSession: (id: string) => void;
   onUpdateSession: (updatedSession: EvaluationSession) => void;
   onCreateSession: (newSession: EvaluationSession) => void;
+  onNavigateTab?: (tab: 'evaluate' | 'classes' | 'rubrics' | 'reports') => void;
 }
 
 export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
@@ -72,9 +83,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   rubrics,
   sessions,
   activeSessionId,
+  selectedGradeLevel = '',
+  selectedSubject = '',
+  onChangeGradeLevel,
+  onChangeSubject,
   onSelectSession,
   onUpdateSession,
   onCreateSession,
+  onNavigateTab,
 }) => {
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) || sessions[0],
@@ -132,12 +148,61 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   // New Session Modal State (with Multi-classroom support P1 #9)
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
   const [newSessionTitle, setNewSessionTitle] = useState('');
-  const [newSessionClassIds, setNewSessionClassIds] = useState<string[]>([
-    classrooms[0]?.id || '',
-  ]);
-  const [newSessionRubricId, setNewSessionRubricId] = useState(
-    rubrics[0]?.id || ''
+  const [newSessionClassIds, setNewSessionClassIds] = useState<string[]>(() =>
+    classrooms[0]?.id ? [classrooms[0].id] : []
   );
+
+  const selectedNewSessionClassrooms = useMemo(
+    () => classrooms.filter((c) => newSessionClassIds.includes(c.id)),
+    [classrooms, newSessionClassIds]
+  );
+
+  const availableNewSessionRubrics = useMemo(
+    () => getRubricsForClassrooms(rubrics, selectedNewSessionClassrooms),
+    [rubrics, selectedNewSessionClassrooms]
+  );
+
+  const sessionClassrooms = useMemo(
+    () => classrooms.filter((c) => sessionClassIds.includes(c.id)),
+    [classrooms, sessionClassIds]
+  );
+
+  const availableSessionRubrics = useMemo(() => {
+    const matched = getRubricsForClassrooms(rubrics, sessionClassrooms);
+    if (activeRubric && !matched.some((r) => r.id === activeRubric.id)) {
+      return [activeRubric, ...matched];
+    }
+    return matched;
+  }, [rubrics, sessionClassrooms, activeRubric]);
+
+  const previewServiceRubrics = useMemo(
+    () =>
+      getRubricsByGradeAndSubject(rubrics, selectedGradeLevel, selectedSubject),
+    [rubrics, selectedGradeLevel, selectedSubject]
+  );
+
+  const [newSessionRubricId, setNewSessionRubricId] = useState(
+    () => availableNewSessionRubrics[0]?.id || ''
+  );
+
+  useEffect(() => {
+    setNewSessionClassIds((prev) => {
+      const valid = prev.filter((id) => classrooms.some((c) => c.id === id));
+      if (valid.length > 0) return valid;
+      return classrooms[0]?.id ? [classrooms[0].id] : [];
+    });
+  }, [classrooms]);
+
+  useEffect(() => {
+    if (
+      availableNewSessionRubrics.length > 0 &&
+      !availableNewSessionRubrics.some((r) => r.id === newSessionRubricId)
+    ) {
+      setNewSessionRubricId(availableNewSessionRubrics[0].id);
+    } else if (availableNewSessionRubrics.length === 0) {
+      setNewSessionRubricId('');
+    }
+  }, [availableNewSessionRubrics, newSessionRubricId]);
 
   // Scored-Session Rubric Change Protection state (Issue #6)
   const [pendingRubricChange, setPendingRubricChange] = useState<{
@@ -646,7 +711,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       MAX_SESSION_TITLE_LENGTH
     );
     if (!cleanedTitle || newSessionClassIds.length === 0) return;
-    const selectedRubric = rubricsById[newSessionRubricId] || rubrics[0];
+    const selectedRubric = availableNewSessionRubrics.find(
+      (r) => r.id === newSessionRubricId
+    );
+    if (!selectedRubric) return;
     const newSession: EvaluationSession = {
       id: createUniqueEntityId('ses'),
       title: cleanedTitle,
@@ -707,9 +775,237 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   };
 
   if (!activeSession || !activeRubric) {
+    const canCreateSession = classrooms.length > 0 && rubrics.length > 0;
     return (
-      <div className="p-8 text-center text-slate-600">
-        Aktif bir değerlendirme oturumu bulunamadı.
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12">
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-xs space-y-6">
+          <div className="text-center space-y-2">
+            <h1 className="text-xl font-bold text-slate-900">
+              Aktif Değerlendirme Oturumu Bulunmuyor
+            </h1>
+            <p className="text-sm text-slate-600">
+              {canCreateSession
+                ? 'Şube seçerek sınıf düzeyine ve derse uygun rubriklerle yeni bir oturum başlatabilirsiniz.'
+                : 'Değerlendirme başlatmak için önce sınıf tanımlayın veya sınıf bazlı rubrik servisinden ders seçin.'}
+            </p>
+          </div>
+
+          {/* Sınıf Bazlı Rubrik Servisi — Kademe ve Ders Kontrolü */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-800">
+                Sınıf Bazlı Rubrik Servisi (Kademe &amp; Ders Seçimi)
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  onChangeGradeLevel?.('11. Sınıf');
+                  onChangeSubject?.('Türk Dili ve Edebiyatı');
+                }}
+                className="px-2.5 py-1 rounded-md text-xs font-bold bg-blue-900 text-white hover:bg-blue-950 cursor-pointer"
+              >
+                11. Sınıf · Türk Dili ve Edebiyatı Seç
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="eval-service-grade-select"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Sınıf Düzeyi (Kademe)
+                </label>
+                <select
+                  id="eval-service-grade-select"
+                  value={selectedGradeLevel}
+                  onChange={(e) => onChangeGradeLevel?.(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-semibold bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+                >
+                  <option value="">Sınıf Düzeyi Seçiniz...</option>
+                  {STANDARD_GRADE_LEVELS.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label
+                  htmlFor="eval-service-subject-select"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Ders / Branş
+                </label>
+                <select
+                  id="eval-service-subject-select"
+                  value={selectedSubject}
+                  onChange={(e) => onChangeSubject?.(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-semibold bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+                >
+                  <option value="">Ders Seçiniz...</option>
+                  {STANDARD_SUBJECTS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {previewServiceRubrics.length > 0 ? (
+              <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                <div className="text-xs font-bold text-slate-800">
+                  {selectedGradeLevel} · {selectedSubject} Rubrikleri (
+                  {previewServiceRubrics.length} Adet · 100 Puan):
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {previewServiceRubrics.map((r) => (
+                    <span
+                      key={r.id}
+                      className="px-2.5 py-1 rounded-md bg-white border border-slate-300 text-xs font-semibold text-slate-800"
+                    >
+                      {r.title}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-600 pt-1">
+                {!selectedGradeLevel || !selectedSubject
+                  ? 'Rubrikleri listelemek için yukarıdan sınıf düzeyi ve ders seçin.'
+                  : `${selectedGradeLevel} · ${selectedSubject} için tanımlı rubrik bulunmuyor. (8 Türk Dili ve Edebiyatı rubriği yalnızca 11. Sınıf Türk Dili ve Edebiyatı seçildiğinde gösterilir.)`}
+              </div>
+            )}
+          </div>
+
+          {!canCreateSession ? (
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {classrooms.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab?.('classes')}
+                  className="px-4 py-2.5 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Sınıf ve Öğrenci Ekle
+                </button>
+              )}
+              {rubrics.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab?.('rubrics')}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Rubrik Oluştur
+                </button>
+              )}
+            </div>
+          ) : (
+            <form
+              onSubmit={handleCreateNewSessionSubmit}
+              className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end pt-2 border-t border-slate-200"
+            >
+              <div className="md:col-span-4">
+                <label
+                  htmlFor="empty-new-session-title"
+                  className="block text-xs font-semibold text-slate-700 mb-1"
+                >
+                  Etkinlik / Performans Başlığı
+                </label>
+                <input
+                  id="empty-new-session-title"
+                  type="text"
+                  required
+                  placeholder="Örn: İletişim Engelleri Draması"
+                  value={newSessionTitle}
+                  onChange={(e) => setNewSessionTitle(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+                />
+              </div>
+
+              <div className="md:col-span-4">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Şubeler
+                </label>
+                <div className="flex flex-wrap gap-1.5 p-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+                  {classrooms.map((c) => {
+                    const checked = newSessionClassIds.includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setNewSessionClassIds((prev) =>
+                            prev.includes(c.id)
+                              ? prev.length > 1
+                                ? prev.filter((id) => id !== c.id)
+                                : prev
+                              : [...prev, c.id]
+                          );
+                        }}
+                        className={`px-2.5 py-1 rounded text-xs font-bold cursor-pointer ${
+                          checked
+                            ? 'bg-blue-900 text-white'
+                            : 'bg-white text-slate-700 border border-slate-300'
+                        }`}
+                      >
+                        {checked ? '✓ ' : ''}
+                        {c.name} ({c.gradeLevel})
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="md:col-span-4 flex items-center gap-2">
+                <div className="flex-1">
+                  <label
+                    htmlFor="empty-new-session-rubric"
+                    className="block text-xs font-semibold text-slate-700 mb-1"
+                  >
+                    Değerlendirme Rubriği ({availableNewSessionRubrics.length})
+                  </label>
+                  <select
+                    id="empty-new-session-rubric"
+                    value={newSessionRubricId}
+                    disabled={availableNewSessionRubrics.length === 0}
+                    onChange={(e) => setNewSessionRubricId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-100 disabled:text-slate-500"
+                  >
+                    {availableNewSessionRubrics.length === 0 ? (
+                      <option value="">
+                        Seçili sınıf/ders için rubrik bulunmuyor
+                      </option>
+                    ) : (
+                      availableNewSessionRubrics.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.title}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <button
+                  type="submit"
+                  disabled={availableNewSessionRubrics.length === 0}
+                  className="px-4 py-2 bg-blue-900 text-white text-sm font-semibold rounded-lg hover:bg-blue-950 disabled:opacity-40 cursor-pointer shrink-0"
+                >
+                  Başlat
+                </button>
+              </div>
+              {availableNewSessionRubrics.length === 0 && (
+                <div className="md:col-span-12 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                  Seçili şube için uygun rubrik bulunmuyor. 8 adet Türk Dili ve
+                  Edebiyatı rubriği yalnızca{' '}
+                  <strong>11. Sınıf — Türk Dili ve Edebiyatı</strong> şubesi
+                  seçildiğinde gösterilir.
+                </div>
+              )}
+            </form>
+          )}
+        </div>
       </div>
     );
   }
@@ -844,7 +1140,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         <FastEvaluationView
           activeSession={activeSession}
           activeRubric={activeRubric}
-          allRubrics={rubrics}
+          allRubrics={availableSessionRubrics}
           classrooms={classrooms}
           classStudents={classStudents}
           selectedStudent={selectedStudent}
@@ -897,8 +1193,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         {statusAnnouncement}
       </div>
 
-      {/* Top Session Control Strip */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+      {/* Top Session Control Strip — Low Visual Stimuli, High-Contrast Navy Primary Controls */}
+      <div className="bg-white border border-slate-300 rounded-2xl p-4 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 pb-3 border-b border-slate-200">
           <div className="flex flex-wrap items-center gap-2.5">
             <label htmlFor="session-select" className="sr-only">
@@ -908,7 +1204,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               id="session-select"
               value={activeSession.id}
               onChange={(e) => onSelectSession(e.target.value)}
-              className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-600"
+              className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-900"
             >
               {sessions.map((ses) => {
                 const clsNames = classrooms
@@ -931,17 +1227,17 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => setShowNewSessionModal(true)}
-              className="px-3 py-2 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 py-2 text-xs font-bold text-white bg-blue-900 border border-blue-950 rounded-xl hover:bg-blue-950 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
             >
-              <Plus className="w-3.5 h-3.5" />
-              Yeni Oturum (Çoklu Şube Destekli)
+              <Plus className="w-3.5 h-3.5 text-white" />
+              Yeni Oturum
             </button>
           </div>
 
           {/* Right Mode Switcher + Undo + PDF/CSV Export */}
           <div className="flex flex-wrap items-center gap-2">
             <div
-              className="inline-flex rounded-lg bg-slate-100 p-1 border border-slate-200"
+              className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-300 gap-1"
               role="group"
               aria-label="Değerlendirme Modu"
             >
@@ -950,10 +1246,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 onClick={() =>
                   onUpdateSession({ ...activeSession, mode: 'individual' })
                 }
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                   activeSession.mode === 'individual'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-blue-900 text-white shadow-xs'
+                    : 'text-slate-700 hover:text-slate-950 hover:bg-white/80'
                 }`}
               >
                 <UserCheck className="w-3.5 h-3.5" />
@@ -964,10 +1260,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 onClick={() =>
                   onUpdateSession({ ...activeSession, mode: 'group' })
                 }
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                   activeSession.mode === 'group'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-blue-900 text-white shadow-xs'
+                    : 'text-slate-700 hover:text-slate-950 hover:bg-white/80'
                 }`}
               >
                 <Users className="w-3.5 h-3.5" />
@@ -979,10 +1275,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                   setFastFlowSubMode('matrix');
                   onUpdateSession({ ...activeSession, mode: 'grid' });
                 }}
-                className="px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 text-slate-700 hover:text-slate-950 hover:bg-white/80 transition-colors cursor-pointer"
                 title="İkincil toplu sınıf matrisi ve odak görünümü"
               >
-                <Grid className="w-3.5 h-3.5" />
+                <Grid className="w-3.5 h-3.5 text-slate-600" />
                 Toplu Matris Özeti
               </button>
             </div>
@@ -991,7 +1287,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               type="button"
               disabled={undoCount === 0}
               onClick={handleUndoLastAction}
-              className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
               title="Son puanlama veya grup işlemini geri al"
             >
               <Undo2 className="w-3.5 h-3.5" />
@@ -1003,16 +1299,16 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               onClick={handleExportPdf}
               data-testid="download-active-session-pdf-btn"
               title="Aktif oturum sonuçlarını yapılandırılmış bir tablo halinde PDF olarak indir"
-              className="px-3 py-1.5 text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-bold text-slate-900 bg-slate-100 border border-slate-300 rounded-xl hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
             >
-              <FileDown className="w-3.5 h-3.5" />
+              <FileDown className="w-3.5 h-3.5 text-blue-900" />
               PDF İndir
             </button>
 
             <button
               type="button"
               onClick={handleExportCsv}
-              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               CSV İndir
@@ -1024,7 +1320,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         <div className="pt-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div className="space-y-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-              <span className="font-semibold text-teal-900 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
+              <span className="font-bold text-slate-800">
                 {sessionClassNames}
               </span>
               <span>·</span>
@@ -1035,28 +1331,23 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 id="session-rubric-select"
                 value={activeRubric.id}
                 onChange={(e) => handleChangeSessionRubric(e.target.value)}
-                className="font-medium text-slate-800 bg-slate-100 border border-slate-200 rounded px-2 py-0.5 text-xs cursor-pointer"
+                className="font-semibold text-slate-900 bg-slate-50 border border-slate-300 rounded-md px-2.5 py-0.5 text-xs cursor-pointer"
               >
-                {rubrics.map((r) => (
+                {availableSessionRubrics.map((r) => (
                   <option key={r.id} value={r.id}>
                     Rubrik: {r.title} ({r.criteria.length} Ölçüt)
                   </option>
                 ))}
               </select>
-              <span
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200"
-                title="Bu oturumun rubrik ölçütleri ve ağırlıkları oturum bazında dondurulmuştur"
-              >
-                <ShieldCheck className="w-3 h-3" />
-                Oturum Rubriği Donduruldu
-              </span>
             </div>
-            <h1 className="text-lg font-bold text-slate-900">
-              {activeSession.title}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-lg font-bold text-slate-900">
+                {activeSession.title}
+              </h1>
+            </div>
           </div>
 
-          <div className="flex items-center gap-4 bg-slate-50 px-3.5 py-2 rounded-lg border border-slate-200">
+          <div className="flex items-center gap-4 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200">
             <div>
               <div className="text-[11px] font-medium text-slate-500">
                 Tamamlanan Öğrenci
@@ -1067,9 +1358,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 )
               </div>
             </div>
-            <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div className="w-24 h-2.5 bg-slate-200 rounded-full overflow-hidden">
               <div
-                className="h-full bg-teal-700 transition-all duration-300"
+                className="h-full transition-all duration-300 bg-blue-900"
                 style={{ width: `${progressStats.completionPercent}%` }}
               />
             </div>
@@ -1084,15 +1375,15 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                       : 'completed',
                 })
               }
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
                 activeSession.status === 'completed'
-                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                  : 'bg-slate-900 text-white hover:bg-slate-800'
+                  ? 'bg-slate-800 text-white border border-slate-900'
+                  : 'bg-blue-900 text-white hover:bg-blue-950'
               }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
               {activeSession.status === 'completed'
-                ? 'Tamamlandı'
+                ? 'Oturum Tamamlandı'
                 : 'Oturumu Tamamla'}
             </button>
           </div>
@@ -1118,7 +1409,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                     pendingRubricChange.targetRubric
                   )
                 }
-                className="px-3 py-1.5 rounded-lg bg-teal-700 text-white font-bold hover:bg-teal-800 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-blue-900 text-white font-bold hover:bg-blue-950 cursor-pointer"
               >
                 Yeni Rubrikle Yeni Oturum Başlat (Mevcut Notları Koru)
               </button>
@@ -1147,10 +1438,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
 
       {/* New Session Modal (Multi-Classroom Support P1 #9) */}
       {showNewSessionModal && (
-        <div className="bg-white border-2 border-teal-700 rounded-xl p-5 shadow-md space-y-4">
+        <div className="bg-white border-2 border-blue-900 rounded-xl p-5 shadow-md space-y-4">
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <h2 className="text-base font-bold text-slate-900">
-              Yeni Değerlendirme Oturumu Başlat (Tek veya Çoklu Şube)
+              Yeni Değerlendirme Oturumu
             </h2>
             <button
               type="button"
@@ -1175,16 +1466,16 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 id="new-session-title"
                 type="text"
                 required
-                placeholder="Örn: 4. Ünite: Elektrik Devreleri Deneyi"
+                placeholder="Örn: İletişim Engelleri Draması"
                 value={newSessionTitle}
                 onChange={(e) => setNewSessionTitle(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
               />
             </div>
 
             <div className="md:col-span-4">
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Uygulanacak Şubeler (Çoklu Sınıf Seçilebilir)
+                Şubeler
               </label>
               <div className="flex flex-wrap gap-1.5 p-1.5 bg-slate-50 border border-slate-300 rounded-lg">
                 {classrooms.map((c) => {
@@ -1204,12 +1495,12 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                       }}
                       className={`px-2.5 py-1 rounded text-xs font-bold cursor-pointer ${
                         checked
-                          ? 'bg-teal-700 text-white'
+                          ? 'bg-blue-900 text-white'
                           : 'bg-white text-slate-700 border border-slate-300'
                       }`}
                     >
                       {checked ? '✓ ' : ''}
-                      {c.name}
+                      {c.name} ({c.gradeLevel})
                     </button>
                   );
                 })}
@@ -1222,28 +1513,44 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                   htmlFor="new-session-rubric"
                   className="block text-xs font-semibold text-slate-700 mb-1"
                 >
-                  Değerlendirme Rubriği
+                  Değerlendirme Rubriği ({availableNewSessionRubrics.length})
                 </label>
                 <select
                   id="new-session-rubric"
                   value={newSessionRubricId}
+                  disabled={availableNewSessionRubrics.length === 0}
                   onChange={(e) => setNewSessionRubricId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 disabled:bg-slate-100 disabled:text-slate-500"
                 >
-                  {rubrics.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.title}
+                  {availableNewSessionRubrics.length === 0 ? (
+                    <option value="">
+                      Seçili sınıf/ders için rubrik bulunmuyor
                     </option>
-                  ))}
+                  ) : (
+                    availableNewSessionRubrics.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.title}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
               <button
                 type="submit"
-                className="px-4 py-2 bg-teal-700 text-white text-sm font-semibold rounded-lg hover:bg-teal-800 cursor-pointer shrink-0"
+                disabled={availableNewSessionRubrics.length === 0}
+                className="px-4 py-2 bg-blue-900 text-white text-sm font-semibold rounded-lg hover:bg-blue-950 disabled:opacity-40 cursor-pointer shrink-0"
               >
                 Başlat
               </button>
             </div>
+            {availableNewSessionRubrics.length === 0 && (
+              <div className="md:col-span-12 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+                Seçili şube için uygun rubrik bulunmuyor. 8 adet Türk Dili ve
+                Edebiyatı rubriği yalnızca{' '}
+                <strong>11. Sınıf — Türk Dili ve Edebiyatı</strong> şubesi
+                seçildiğinde gösterilir.
+              </div>
+            )}
           </form>
         </div>
       )}

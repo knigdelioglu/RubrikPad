@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -27,15 +27,21 @@ import type {
 import {
   canApplyGroupScoresToMembers,
   findDuplicateGroupMemberships,
+  getFocusModeStepSummary,
   getGroupLifecycleStatus,
   getGroupProgressHistory,
+  getNextFocusedCriterionIndexAfterScore,
   getNextPendingGroup,
   getStudentEvaluationBreakdown,
   hasGroupEvaluationData,
   isScoreAssigned,
   redistributeGroupsSafely,
+  resolveFocusedCriterionIndex,
+  type CriterionFocusDisplayMode,
 } from '../../utils/rubricLogic.ts';
 import {
+  CriterionFocusToolbar,
+  FocusModeStepperBar,
   RubricCriterionCard,
   RubricViewModeToggle,
   type RubricCardViewMode,
@@ -136,12 +142,44 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   const [showMemberPicker, setShowMemberPicker] = useState(false);
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [showPortraitGroupDrawer, setShowPortraitGroupDrawer] = useState(false);
+  const [focusModeEnabled, setFocusModeEnabled] = useState(true);
+  const [focusDisplayMode, setFocusDisplayMode] =
+    useState<CriterionFocusDisplayMode>('hide_others');
+  const [focusedCriterionIndex, setFocusedCriterionIndex] = useState(0);
 
   const selectedGroup = useMemo(
     () =>
       activeSession.groups.find((g) => g.id === selectedGroupId) ||
       activeSession.groups[0],
     [activeSession.groups, selectedGroupId]
+  );
+
+  useEffect(() => {
+    setFocusedCriterionIndex(
+      resolveFocusedCriterionIndex(
+        activeRubric.criteria,
+        0,
+        selectedGroup?.criterionScores,
+        selectedGroup?.directCriterionScores,
+        true
+      )
+    );
+  }, [selectedGroup?.id, activeRubric.id]);
+
+  const focusStepSummary = useMemo(
+    () =>
+      getFocusModeStepSummary(
+        activeRubric.criteria,
+        focusedCriterionIndex,
+        selectedGroup?.criterionScores,
+        selectedGroup?.directCriterionScores
+      ),
+    [
+      activeRubric.criteria,
+      focusedCriterionIndex,
+      selectedGroup?.criterionScores,
+      selectedGroup?.directCriterionScores,
+    ]
   );
 
   const selectedGroupIndex = useMemo(
@@ -310,16 +348,12 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   return (
     <div className="space-y-4">
       {/* Top Group Action Bar */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+      <div className="bg-white border border-slate-300 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
         <div>
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-            <Users className="w-4 h-4 text-teal-700" />
-            Grup Değerlendirmesi ve Öğrencilere Aktarım Merkezi
+            <Users className="w-4 h-4 text-blue-900" />
+            Grup Değerlendirmesi
           </h2>
-          <p className="text-xs text-slate-600">
-            Grubu ortak rubrikle grup olarak değerlendirin; tamamlanan grup
-            değerlendirmesi gruptaki tüm öğrencilere aktarılır.
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -331,13 +365,13 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
               title="Grup değerlendirmesinin tüm ölçütleri tamamlandığında puan ve gözlem notunu gruptaki öğrencilere otomatik aktarır"
               className={`px-3 py-1.5 text-xs font-bold rounded-xl border flex items-center gap-1.5 cursor-pointer min-h-[38px] transition-colors ${
                 autoTransferToMembers
-                  ? 'bg-emerald-50 text-emerald-950 border-emerald-300'
+                  ? 'bg-slate-800 text-white border-slate-900'
                   : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
               }`}
             >
               <CheckCircle2
                 className={`w-3.5 h-3.5 ${
-                  autoTransferToMembers ? 'text-emerald-700' : 'text-slate-400'
+                  autoTransferToMembers ? 'text-blue-300' : 'text-slate-400'
                 }`}
               />
               Otomatik Öğrenciye Aktarım:{' '}
@@ -351,8 +385,8 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
               onClick={onTransferAllCompletedGroups}
               className={`px-3 py-1.5 text-xs font-bold rounded-xl border flex items-center gap-1.5 cursor-pointer min-h-[38px] transition-colors ${
                 unappliedCompletedGroupsCount > 0
-                  ? 'bg-teal-700 text-white border-teal-800 hover:bg-teal-800 shadow-xs'
-                  : 'bg-teal-50 text-teal-900 border-teal-200 hover:bg-teal-100'
+                  ? 'bg-blue-900 text-white border-blue-950 hover:bg-blue-950 shadow-xs'
+                  : 'bg-slate-100 text-slate-900 border-slate-300 hover:bg-slate-200'
               }`}
             >
               <Send className="w-3.5 h-3.5" />
@@ -368,7 +402,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
               setRandomRedistributeWarning(null);
               setShowRandomModal(!showRandomModal);
             }}
-            className="px-3 py-1.5 text-xs font-bold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl flex items-center gap-1.5 cursor-pointer min-h-[38px]"
+            className="px-3 py-1.5 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl flex items-center gap-1.5 cursor-pointer min-h-[38px]"
           >
             <Shuffle className="w-3.5 h-3.5" />
             Dengeli Rastgele Grup Oluştur
@@ -379,7 +413,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
             onClick={() => setShowGroupHistory(!showGroupHistory)}
             className={`px-3 py-1.5 text-xs font-bold rounded-xl border flex items-center gap-1.5 cursor-pointer min-h-[38px] ${
               showGroupHistory
-                ? 'bg-slate-900 text-white border-slate-900'
+                ? 'bg-blue-900 text-white border-blue-950'
                 : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
             }`}
           >
@@ -391,23 +425,17 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
 
       {/* Balanced Random Group Modal/Drawer */}
       {showRandomModal && (
-        <div className="bg-teal-50/80 border border-teal-300 rounded-2xl p-4 space-y-3">
+        <div className="bg-slate-100 border border-slate-300 rounded-2xl p-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="text-sm font-bold text-teal-950">
-                Güvenli Dengeli Rastgele Grup Dağıtımı ({classStudents.length}{' '}
-                Aktif Öğrenci)
+            <div>
+              <div className="text-sm font-bold text-slate-900">
+                Dengeli Rastgele Grup Dağıtımı ({classStudents.length} Öğrenci)
               </div>
-              <p className="text-xs text-teal-900">
-                Varsayılan olarak puanlanmış veya not girilmiş grupları (
-                {evaluatedGroupsCount} grup) korur ve yalnızca kalan öğrencileri
-                yeni gruplara dağıtır.
-              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               <label
                 htmlFor="rand-group-size"
-                className="text-xs font-bold text-teal-950"
+                className="text-xs font-bold text-slate-900"
               >
                 Grup Başına Öğrenci:
               </label>
@@ -415,7 +443,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                 id="rand-group-size"
                 value={randomTargetSize}
                 onChange={(e) => setRandomTargetSize(Number(e.target.value))}
-                className="px-2.5 py-1.5 text-xs font-bold bg-white border border-teal-300 rounded-lg"
+                className="px-2.5 py-1.5 text-xs font-bold bg-white border border-slate-300 rounded-lg"
               >
                 <option value={2}>2 Kişilik Eşli Gruplar</option>
                 <option value={3}>3 Kişilik Takımlar</option>
@@ -425,7 +453,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
               <button
                 type="button"
                 onClick={handleGenerateBalancedRandom}
-                className="px-3.5 py-1.5 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer"
+                className="px-3.5 py-1.5 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 rounded-lg cursor-pointer"
               >
                 Grupları Dağıt
               </button>
@@ -440,9 +468,9 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
           </div>
 
           {evaluatedGroupsCount > 0 && (
-            <div className="pt-2 border-t border-teal-200/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex flex-wrap items-center gap-4">
-                <label className="flex items-center gap-1.5 font-semibold text-teal-950 cursor-pointer">
+                <label className="flex items-center gap-1.5 font-semibold text-slate-900 cursor-pointer">
                   <input
                     type="radio"
                     name="group-redistribute-mode"
@@ -497,14 +525,11 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
 
       {/* Longitudinal Group Evaluation History (P1 #6) */}
       {showGroupHistory && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs">
+        <div className="bg-white border border-slate-300 rounded-2xl p-4 space-y-3 shadow-xs">
           <div className="flex items-center justify-between border-b border-slate-200 pb-2">
             <h3 className="text-sm font-bold text-slate-900">
-              Grupların Dönemsel Değerlendirme Geçmişi
+              Grup Değerlendirme Geçmişi
             </h3>
-            <span className="text-xs text-slate-500">
-              Tüm oturumlardaki grup performans kayıtları
-            </span>
           </div>
           {groupHistory.length === 0 ? (
             <p className="text-xs text-slate-500 py-4 text-center">
@@ -528,7 +553,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     {item.sessionTitle}
                   </div>
                   <div className="pt-1 flex items-center justify-between">
-                    <span className="font-mono-num font-bold text-teal-800">
+                    <span className="font-mono-num font-bold text-blue-900">
                       {item.isComplete && item.scoreOutOf100 !== null
                         ? `${item.scoreOutOf100} / 100`
                         : 'Taslak (Eksik Ölçüt)'}
@@ -559,10 +584,10 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
         <button
           type="button"
           onClick={() => setShowPortraitGroupDrawer(!showPortraitGroupDrawer)}
-          className="flex-1 min-h-[42px] px-3 py-1.5 rounded-lg bg-teal-50/80 border border-teal-200 text-left flex items-center justify-between gap-2 cursor-pointer"
+          className="flex-1 min-h-[42px] px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-300 text-left flex items-center justify-between gap-2 cursor-pointer"
         >
           <div className="min-w-0">
-            <div className="text-[11px] font-bold text-teal-800">
+            <div className="text-[11px] font-bold text-blue-900">
               Takım Seçici ({selectedGroupIndex + 1}/
               {activeSession.groups.length})
             </div>
@@ -570,7 +595,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
               {selectedGroup ? selectedGroup.name : 'Grup Seçin'}
             </div>
           </div>
-          <span className="text-xs font-bold text-teal-900 bg-white px-2.5 py-1 rounded-md border border-teal-200 shrink-0">
+          <span className="text-xs font-bold text-blue-900 bg-white px-2.5 py-1 rounded-md border border-slate-300 shrink-0">
             {showPortraitGroupDrawer ? 'Listeyi Kapat' : 'Takımlar'}
           </span>
         </button>
@@ -591,21 +616,18 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
         <aside
           className={`${
             showPortraitGroupDrawer ? 'block' : 'hidden'
-          } lg:block lg:col-span-4 bg-white border border-slate-200 rounded-2xl p-4 space-y-4 shadow-xs lg:sticky lg:top-4`}
+          } lg:block lg:col-span-4 bg-white border border-slate-300 rounded-2xl p-4 space-y-4 shadow-xs lg:sticky lg:top-4`}
         >
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
                 Çalışma Takımları ({activeSession.groups.length})
               </h3>
-              <p className="text-xs text-slate-500">
-                Puanlanıyor → Tamamlandı → Üyelere Uygulandı
-              </p>
             </div>
             <button
               type="button"
               onClick={() => setShowNewGroupForm(!showNewGroupForm)}
-              className="px-3 py-1.5 text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-xl hover:bg-teal-100 flex items-center gap-1 cursor-pointer min-h-[36px]"
+              className="px-3 py-1.5 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 rounded-xl flex items-center gap-1 cursor-pointer min-h-[36px]"
             >
               <Plus className="w-3.5 h-3.5" />
               Yeni Grup
@@ -631,7 +653,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
                   placeholder="Örn: Grup 4: Yenilenebilir Enerji"
-                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
                 />
               </div>
 
@@ -664,7 +686,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                                   : [...prev, stu.id]
                               );
                             }}
-                            className="rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                            className="rounded border-slate-300 text-blue-900 focus:ring-blue-900"
                           />
                           <span className="font-mono-num text-[11px] text-slate-400">
                             #{stu.studentNumber}
@@ -694,7 +716,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="submit"
-                  className="flex-1 py-2 text-xs font-bold text-white bg-teal-700 rounded-lg hover:bg-teal-800 cursor-pointer"
+                  className="flex-1 py-2 text-xs font-bold text-white bg-blue-900 rounded-lg hover:bg-blue-950 cursor-pointer"
                 >
                   Grubu Oluştur
                 </button>
@@ -731,11 +753,11 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   }}
                   className={`p-3.5 rounded-2xl border transition-all cursor-pointer space-y-2.5 ${
                     isSelected
-                      ? 'bg-teal-50/90 border-2 border-teal-700 shadow-xs'
+                      ? 'bg-blue-50/90 border-2 border-blue-900 shadow-xs'
                       : lifecycle.state === 'applied'
-                      ? 'bg-emerald-50/30 border-emerald-200 hover:bg-emerald-50/60'
+                      ? 'bg-slate-50 border-slate-300 hover:bg-slate-100'
                       : lifecycle.state === 'completed_unapplied'
-                      ? 'bg-sky-50/50 border-sky-300 hover:bg-sky-50/80'
+                      ? 'bg-white border-blue-800 hover:bg-slate-50'
                       : 'bg-white border-slate-200 hover:bg-slate-50'
                   }`}
                 >
@@ -757,9 +779,9 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       lifecycle.finalScoreOutOf100 !== null ? (
                         <span
                           className={`font-mono-num text-xs font-bold px-2.5 py-0.5 rounded-lg border ${
-                            lifecycle.state === 'applied'
-                              ? 'bg-emerald-100 text-emerald-950 border-emerald-300'
-                              : 'bg-sky-100 text-sky-950 border-sky-300'
+                            isSelected
+                              ? 'bg-blue-900 text-white border-blue-950'
+                              : 'bg-slate-100 text-slate-900 border-slate-300'
                           }`}
                         >
                           {lifecycle.finalScoreOutOf100} Puan
@@ -788,7 +810,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                           key={stu.id}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-[11px] font-medium text-slate-700"
                         >
-                          <span className="w-4 h-4 rounded-full bg-teal-700 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                          <span className="w-4 h-4 rounded-full bg-slate-800 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
                             {getInitials(stu.fullName)}
                           </span>
                           <span className="truncate max-w-[115px]">
@@ -806,19 +828,19 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   {/* Explicit 3-Stage Lifecycle Status Badge */}
                   <div className="pt-1 border-t border-slate-200/70 flex items-center justify-between gap-2">
                     {lifecycle.state === 'applied' ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-900 bg-emerald-100/90 px-2.5 py-1 rounded-lg border border-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-800 bg-slate-200/80 px-2.5 py-1 rounded-lg border border-slate-300">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-slate-700" />
                         Üyelere Uygulandı ({lifecycle.appliedMemberCount}/
                         {lifecycle.totalMemberCount})
                       </span>
                     ) : lifecycle.state === 'completed_unapplied' ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-sky-950 bg-sky-100 px-2.5 py-1 rounded-lg border border-sky-300">
-                        <Send className="w-3 h-3 text-sky-700" />
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-blue-900 px-2.5 py-1 rounded-lg border border-blue-950">
+                        <Send className="w-3 h-3 text-blue-200" />
                         Tamamlandı · Üyelere Uygulanmayı Bekliyor
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-900 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                        <Clock className="w-3 h-3 text-amber-700" />
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-300">
+                        <Clock className="w-3 h-3 text-slate-500" />
                         Puanlanıyor ({lifecycle.completedCriteriaCount}/
                         {lifecycle.totalCriteriaCount} Ölçüt)
                       </span>
@@ -837,10 +859,10 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
             <div
               role="status"
               aria-live="polite"
-              className="bg-emerald-950 text-white rounded-2xl p-3.5 shadow-sm border border-emerald-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+              className="bg-slate-900 text-white rounded-2xl p-3.5 shadow-sm border border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
             >
               <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                <CheckCircle2 className="w-5 h-5 text-blue-300 shrink-0" />
                 <div>
                   <div className="text-xs sm:text-sm font-bold">
                     {lastAppliedGroupBanner.previousGroupName} puanları{' '}
@@ -850,7 +872,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       : ''}
                   </div>
                   {lastAppliedGroupBanner.nextGroupName && (
-                    <div className="text-[11px] text-emerald-200">
+                    <div className="text-[11px] text-slate-300">
                       Sıradaki gruba geçildi:{' '}
                       {lastAppliedGroupBanner.nextGroupName}
                     </div>
@@ -867,7 +889,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       onSelectGroup(lastAppliedGroupBanner.previousGroupId);
                       onDismissGroupBanner?.();
                     }}
-                    className="px-3.5 py-2 rounded-xl bg-white text-emerald-950 text-xs font-bold hover:bg-emerald-50 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    className="px-3.5 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold hover:bg-slate-100 flex items-center gap-1.5 cursor-pointer shadow-xs"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
                     {lastAppliedGroupBanner.previousGroupName} Grubuna Dön
@@ -878,7 +900,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     type="button"
                     onClick={onDismissGroupBanner}
                     aria-label="Grup bildirimini kapat"
-                    className="p-1.5 text-emerald-300 hover:text-white cursor-pointer"
+                    className="p-1.5 text-slate-400 hover:text-white cursor-pointer"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -888,12 +910,12 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
           )}
 
           {selectedGroup && activeGroupLifecycle ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
+            <div className="bg-white border border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
               {/* Group Header & Shared View Mode Controls */}
               <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 pb-3.5 border-b border-slate-200">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 px-2.5 py-0.5 rounded-lg">
+                    <span className="text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-2.5 py-0.5 rounded-lg">
                       Takım Değerlendirmesi
                     </span>
                     <h2 className="text-xl font-bold text-slate-900">
@@ -903,28 +925,50 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     {/* Definitive Group Score vs Draft Status */}
                     {activeGroupLifecycle.isComplete &&
                     activeGroupLifecycle.finalScoreOutOf100 !== null ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-emerald-100 text-emerald-950 border border-emerald-300 font-mono-num">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
                         Kesin Grup Notu:{' '}
                         {activeGroupLifecycle.finalScoreOutOf100} / 100 ·{' '}
                         {activeGroupLifecycle.performanceLabel}
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-amber-100 text-amber-950 border border-amber-300 font-mono-num">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300 font-mono-num">
                         Puanlanıyor (
                         {activeGroupLifecycle.completedCriteriaCount}/
-                        {activeGroupLifecycle.totalCriteriaCount} Ölçüt) · Kesin
-                        not için tüm ölçütleri tamamlayın
+                        {activeGroupLifecycle.totalCriteriaCount})
                       </span>
                     )}
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <RubricViewModeToggle
-                    viewMode={cardViewMode}
-                    onChangeViewMode={onChangeCardViewMode}
+                  <CriterionFocusToolbar
+                    focusModeEnabled={focusModeEnabled}
+                    onToggleFocusMode={() => {
+                      const nextEnabled = !focusModeEnabled;
+                      setFocusModeEnabled(nextEnabled);
+                      if (nextEnabled) {
+                        setFocusedCriterionIndex(
+                          resolveFocusedCriterionIndex(
+                            activeRubric.criteria,
+                            focusedCriterionIndex,
+                            selectedGroup.criterionScores,
+                            selectedGroup.directCriterionScores,
+                            true
+                          )
+                        );
+                      }
+                    }}
+                    focusDisplayMode={focusDisplayMode}
+                    onChangeFocusDisplayMode={setFocusDisplayMode}
                   />
+
+                  {!focusModeEnabled && (
+                    <RubricViewModeToggle
+                      viewMode={cardViewMode}
+                      onChangeViewMode={onChangeCardViewMode}
+                    />
+                  )}
 
                   <button
                     type="button"
@@ -932,7 +976,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     aria-pressed={precisionScoringMode}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[38px] ${
                       precisionScoringMode
-                        ? 'bg-teal-700 text-white border-teal-700'
+                        ? 'bg-blue-900 text-white border-blue-950'
                         : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
                     }`}
                   >
@@ -956,9 +1000,9 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
               <div
                 className={`rounded-2xl border p-3.5 space-y-3 ${
                   activeGroupLifecycle.state === 'applied'
-                    ? 'bg-emerald-50/70 border-emerald-300'
+                    ? 'bg-slate-50 border-slate-300'
                     : activeGroupLifecycle.state === 'completed_unapplied'
-                    ? 'bg-sky-50/90 border-2 border-sky-400 shadow-xs'
+                    ? 'bg-blue-50/70 border-2 border-blue-900 shadow-xs'
                     : 'bg-slate-50 border-slate-200'
                 }`}
               >
@@ -967,15 +1011,15 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   <div
                     className={`px-3 py-2 rounded-xl border flex items-center gap-2 text-xs font-bold ${
                       activeGroupLifecycle.state === 'in_progress'
-                        ? 'bg-amber-100/90 border-amber-400 text-amber-950'
-                        : 'bg-white border-emerald-200 text-emerald-900'
+                        ? 'bg-blue-900 border-blue-950 text-white'
+                        : 'bg-white border-slate-300 text-slate-800'
                     }`}
                   >
                     <span
                       className={`w-5 h-5 rounded-full text-[11px] flex items-center justify-center shrink-0 ${
                         activeGroupLifecycle.state === 'in_progress'
-                          ? 'bg-amber-600 text-white'
-                          : 'bg-emerald-600 text-white'
+                          ? 'bg-white text-blue-950'
+                          : 'bg-slate-700 text-white'
                       }`}
                     >
                       {activeGroupLifecycle.isComplete ? (
@@ -997,18 +1041,18 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   <div
                     className={`px-3 py-2 rounded-xl border flex items-center gap-2 text-xs font-bold ${
                       activeGroupLifecycle.state === 'completed_unapplied'
-                        ? 'bg-sky-600 border-sky-700 text-white shadow-xs'
+                        ? 'bg-blue-900 border-blue-950 text-white shadow-xs'
                         : activeGroupLifecycle.state === 'applied'
-                        ? 'bg-white border-emerald-200 text-emerald-900'
+                        ? 'bg-white border-slate-300 text-slate-800'
                         : 'bg-white/60 border-slate-200 text-slate-400'
                     }`}
                   >
                     <span
                       className={`w-5 h-5 rounded-full text-[11px] flex items-center justify-center shrink-0 ${
                         activeGroupLifecycle.state === 'completed_unapplied'
-                          ? 'bg-white text-sky-900'
+                          ? 'bg-white text-blue-950'
                           : activeGroupLifecycle.state === 'applied'
-                          ? 'bg-emerald-600 text-white'
+                          ? 'bg-slate-700 text-white'
                           : 'bg-slate-200 text-slate-500'
                       }`}
                     >
@@ -1033,14 +1077,14 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   <div
                     className={`px-3 py-2 rounded-xl border flex items-center gap-2 text-xs font-bold ${
                       activeGroupLifecycle.state === 'applied'
-                        ? 'bg-emerald-700 border-emerald-800 text-white shadow-xs'
+                        ? 'bg-slate-800 border-slate-900 text-white shadow-xs'
                         : 'bg-white/60 border-slate-200 text-slate-500'
                     }`}
                   >
                     <span
                       className={`w-5 h-5 rounded-full text-[11px] flex items-center justify-center shrink-0 ${
                         activeGroupLifecycle.state === 'applied'
-                          ? 'bg-white text-emerald-900'
+                          ? 'bg-white text-slate-900'
                           : 'bg-slate-200 text-slate-600'
                       }`}
                     >
@@ -1077,14 +1121,14 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       </span>
                     )}
                     {activeGroupLifecycle.state === 'completed_unapplied' && (
-                      <span className="text-sky-950 font-bold">
+                      <span className="text-slate-900 font-bold">
                         {activeGroupLifecycle.hasStaleMemberScores
                           ? 'Grup değerlendirmesi güncellendi. Güncel grup değerlendirmesini gruptaki öğrencilere aktarın:'
                           : 'Grup değerlendirmesi tamamlandı! Bu değerlendirmeyi gruptaki öğrencilere aktarın:'}
                       </span>
                     )}
                     {activeGroupLifecycle.state === 'applied' && (
-                      <span className="text-emerald-950 font-semibold">
+                      <span className="text-slate-800 font-semibold">
                         Bu grubun değerlendirmesi (
                         {activeGroupLifecycle.finalScoreOutOf100}
                         /100) gruptaki tüm öğrencilere (
@@ -1113,9 +1157,9 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       }
                       className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all min-h-[42px] disabled:opacity-40 disabled:cursor-not-allowed ${
                         activeGroupLifecycle.state === 'completed_unapplied'
-                          ? 'bg-teal-700 hover:bg-teal-800 text-white shadow-sm'
+                          ? 'bg-blue-900 hover:bg-blue-950 text-white shadow-sm'
                           : activeGroupLifecycle.state === 'applied'
-                          ? 'bg-white border border-emerald-300 text-emerald-900 hover:bg-emerald-100'
+                          ? 'bg-white border border-slate-300 text-slate-800 hover:bg-slate-100'
                           : 'bg-slate-800 hover:bg-slate-900 text-white'
                       }`}
                     >
@@ -1135,7 +1179,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                               advanceToNextGroup: true,
                             })
                           }
-                          className="px-4 py-2.5 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm min-h-[42px]"
+                          className="px-4 py-2.5 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm min-h-[42px]"
                         >
                           <Send className="w-3.5 h-3.5 shrink-0" />
                           <span>Öğrencilere Aktar ve Sıradaki Gruba Geç</span>
@@ -1150,9 +1194,9 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                 <div
                   role="status"
                   aria-live="polite"
-                  className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center gap-2"
+                  className="p-3 rounded-xl bg-slate-100 border border-slate-300 text-slate-900 text-xs font-semibold flex items-center gap-2"
                 >
-                  <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <Check className="w-4 h-4 text-blue-900 shrink-0" />
                   {groupAppliedFeedback}
                 </div>
               )}
@@ -1164,17 +1208,14 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     <span className="text-xs font-bold text-slate-800">
                       Takım Üyeleri ({selectedGroup.studentIds.length} Öğrenci)
                     </span>
-                    <span className="text-[11px] text-slate-500">
-                      · Üye eklemek veya çıkarmak için dokunun
-                    </span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowMemberPicker(!showMemberPicker)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[36px] ${
                       showMemberPicker
-                        ? 'bg-slate-900 text-white border-slate-900'
-                        : 'bg-white text-teal-900 border-teal-200 hover:bg-teal-50'
+                        ? 'bg-blue-900 text-white border-blue-950'
+                        : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100'
                     }`}
                   >
                     <UserPlus className="w-3.5 h-3.5" />
@@ -1198,9 +1239,9 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                             onToggleGroupMember(selectedGroup.id, stu.id)
                           }
                           title="Gruptan çıkarmak için dokunun"
-                          className="px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-semibold flex items-center gap-2 hover:bg-slate-800 cursor-pointer min-h-[38px]"
+                          className="px-3 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold flex items-center gap-2 hover:bg-slate-900 cursor-pointer min-h-[38px]"
                         >
-                          <span className="w-5 h-5 rounded-full bg-teal-500 text-slate-950 text-[10px] font-bold flex items-center justify-center">
+                          <span className="w-5 h-5 rounded-full bg-blue-900 text-white text-[10px] font-bold flex items-center justify-center">
                             {getInitials(stu.fullName)}
                           </span>
                           <span>
@@ -1232,7 +1273,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                         placeholder="Öğrenci ara..."
                         value={memberSearchQuery}
                         onChange={(e) => setMemberSearchQuery(e.target.value)}
-                        className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600 w-44"
+                        className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 w-44"
                       />
                     </div>
                     <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto p-1">
@@ -1260,10 +1301,10 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                             }
                             className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors min-h-[38px] flex items-center gap-1.5 ${
                               isMember
-                                ? 'bg-teal-700 text-white border-teal-800 cursor-pointer'
+                                ? 'bg-blue-900 text-white border-blue-950 cursor-pointer'
                                 : assignedOther
                                 ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                                : 'bg-white text-slate-700 border-slate-200 hover:border-teal-400 hover:bg-teal-50/40 cursor-pointer'
+                                : 'bg-white text-slate-700 border-slate-200 hover:border-blue-900 hover:bg-slate-50 cursor-pointer'
                             }`}
                           >
                             <span>
@@ -1283,33 +1324,155 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                 )}
               </div>
 
-              {/* Shared Rubric Criterion Cards List (Identical component to IndividualEvaluationView!) */}
+              {/* Single-Criterion Focus Mode Stepper Bar */}
+              {focusModeEnabled && (
+                <FocusModeStepperBar
+                  steps={focusStepSummary.steps}
+                  activeIndex={focusStepSummary.activeIndex}
+                  totalCount={focusStepSummary.totalCount}
+                  completedCount={focusStepSummary.completedCount}
+                  canGoPrev={focusStepSummary.canGoPrev}
+                  canGoNext={focusStepSummary.canGoNext}
+                  focusDisplayMode={focusDisplayMode}
+                  onSelectStep={(idx) => setFocusedCriterionIndex(idx)}
+                  onPrevStep={() =>
+                    setFocusedCriterionIndex(
+                      Math.max(0, focusStepSummary.activeIndex - 1)
+                    )
+                  }
+                  onNextStep={() =>
+                    setFocusedCriterionIndex(
+                      Math.min(
+                        focusStepSummary.totalCount - 1,
+                        focusStepSummary.activeIndex + 1
+                      )
+                    )
+                  }
+                  onExitFocusMode={() => setFocusModeEnabled(false)}
+                />
+              )}
+
+              {/* Shared Rubric Criterion Cards List / Single-Criterion Focus Stage */}
               <div
                 className={
-                  cardViewMode === 'compact' ? 'space-y-2' : 'space-y-3.5'
+                  !focusModeEnabled && cardViewMode === 'compact'
+                    ? 'space-y-2'
+                    : 'space-y-3.5'
                 }
               >
-                {activeRubric.criteria.map((criterion, cIdx) => {
-                  const selectedPts =
-                    selectedGroup.criterionScores[criterion.id];
-                  const directPts =
-                    selectedGroup.directCriterionScores?.[criterion.id];
-
-                  return (
-                    <RubricCriterionCard
-                      key={criterion.id}
-                      criterion={criterion}
-                      criterionIndex={cIdx}
-                      selectedPoints={selectedPts}
-                      directPoints={directPts}
-                      viewMode={cardViewMode}
-                      precisionScoringMode={precisionScoringMode}
-                      onSelectLevel={onSelectGroupCriterionLevel}
-                      onSetDirectScore={onSetGroupDirectCriterionScore}
-                      onClearScore={onClearGroupCriterionScore}
-                    />
+                {(() => {
+                  const firstUnscoredCrit = activeRubric.criteria.find(
+                    (crit) =>
+                      !isScoreAssigned(
+                        selectedGroup.directCriterionScores?.[crit.id]
+                      ) &&
+                      !isScoreAssigned(selectedGroup.criterionScores[crit.id])
                   );
-                })}
+                  return activeRubric.criteria.map((criterion, cIdx) => {
+                    const isFocused = cIdx === focusStepSummary.activeIndex;
+
+                    if (
+                      focusModeEnabled &&
+                      focusDisplayMode === 'hide_others' &&
+                      !isFocused
+                    ) {
+                      return null;
+                    }
+
+                    const selectedPts =
+                      selectedGroup.criterionScores[criterion.id];
+                    const directPts =
+                      selectedGroup.directCriterionScores?.[criterion.id];
+
+                    return (
+                      <RubricCriterionCard
+                        key={criterion.id}
+                        criterion={criterion}
+                        criterionIndex={cIdx}
+                        selectedPoints={selectedPts}
+                        directPoints={directPts}
+                        viewMode={cardViewMode}
+                        precisionScoringMode={precisionScoringMode}
+                        isNextUnscored={
+                          !focusModeEnabled &&
+                          firstUnscoredCrit?.id === criterion.id
+                        }
+                        adhdFocusMode={!focusModeEnabled}
+                        isFocusedStage={focusModeEnabled && isFocused}
+                        isDimmedByFocus={
+                          focusModeEnabled &&
+                          focusDisplayMode === 'dim_others' &&
+                          !isFocused
+                        }
+                        onFocusSelect={() => setFocusedCriterionIndex(cIdx)}
+                        focusStageNav={
+                          focusModeEnabled && isFocused
+                            ? {
+                                currentStep: focusStepSummary.activeIndex + 1,
+                                totalSteps: focusStepSummary.totalCount,
+                                canGoPrev: focusStepSummary.canGoPrev,
+                                canGoNext: focusStepSummary.canGoNext,
+                                onPrev: () =>
+                                  setFocusedCriterionIndex(
+                                    Math.max(0, focusStepSummary.activeIndex - 1)
+                                  ),
+                                onNext: () =>
+                                  setFocusedCriterionIndex(
+                                    Math.min(
+                                      focusStepSummary.totalCount - 1,
+                                      focusStepSummary.activeIndex + 1
+                                    )
+                                  ),
+                              }
+                            : undefined
+                        }
+                        onSelectLevel={(critId, pts) => {
+                          onSelectGroupCriterionLevel(critId, pts);
+                          if (focusModeEnabled) {
+                            const nextScores = {
+                              ...(selectedGroup.criterionScores || {}),
+                              [critId]: pts,
+                            };
+                            const nextDirect = {
+                              ...(selectedGroup.directCriterionScores || {}),
+                            };
+                            delete nextDirect[critId];
+                            const nextFocus =
+                              getNextFocusedCriterionIndexAfterScore(
+                                activeRubric.criteria,
+                                cIdx,
+                                nextScores,
+                                nextDirect
+                              );
+                            if (!nextFocus.allCompleted) {
+                              setFocusedCriterionIndex(nextFocus.nextIndex);
+                            }
+                          }
+                        }}
+                        onSetDirectScore={(critId, dPts) => {
+                          onSetGroupDirectCriterionScore(critId, dPts);
+                          if (focusModeEnabled && dPts !== null) {
+                            const nextDirect = {
+                              ...(selectedGroup.directCriterionScores || {}),
+                              [critId]: dPts,
+                            };
+                            const nextFocus =
+                              getNextFocusedCriterionIndexAfterScore(
+                                activeRubric.criteria,
+                                cIdx,
+                                selectedGroup.criterionScores || {},
+                                nextDirect
+                              );
+                            if (!nextFocus.allCompleted) {
+                              setFocusedCriterionIndex(nextFocus.nextIndex);
+                            }
+                          }
+                        }}
+                        onClearScore={onClearGroupCriterionScore}
+                      />
+                    );
+                  });
+                })()}
               </div>
 
               {/* Group Common Observation Note */}
@@ -1318,8 +1481,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   htmlFor="group-obs-note"
                   className="block text-xs font-bold text-slate-700 mb-1.5"
                 >
-                  Grup Ortak Gözlem Notu (Gruptaki öğrencilere grup
-                  değerlendirmesiyle birlikte aktarılır; bireysel notlar korunur)
+                  Grup Gözlem Notu
                 </label>
                 <textarea
                   id="group-obs-note"
@@ -1327,7 +1489,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   value={selectedGroup.groupNote}
                   onChange={(e) => onUpdateGroupNote(e.target.value)}
                   placeholder="Grubun işbirliği, görev paylaşımı ve ortak çıktısına dair gözlem notu..."
-                  className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-900"
                 />
               </div>
 
@@ -1336,14 +1498,10 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <Users className="w-4 h-4 text-teal-700" />
+                      <Users className="w-4 h-4 text-blue-900" />
                       Gruptaki Öğrencilere Aktarılan Değerlendirme Özeti (
                       {selectedGroup.studentIds.length} Öğrenci)
                     </h3>
-                    <p className="text-xs text-slate-500">
-                      Grup olarak yapılan değerlendirmenin gruptaki her bir
-                      öğrenciye yansıyan ölçüt puanları ve kesin not durumu
-                    </p>
                   </div>
 
                   {activeGroupLifecycle.isComplete &&
@@ -1356,7 +1514,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                             advanceToNextGroup: false,
                           })
                         }
-                        className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
+                        className="px-3.5 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
                       >
                         <Send className="w-3.5 h-3.5" />
                         Şimdi Öğrencilere Aktar
@@ -1414,7 +1572,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                               key={stu.id}
                               className={
                                 isTransferred
-                                  ? 'bg-emerald-50/25'
+                                  ? 'bg-slate-50/70'
                                   : 'hover:bg-slate-50'
                               }
                             >
@@ -1453,7 +1611,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                               <td className="py-2.5 px-3 text-right font-mono-num">
                                 {isTransferred &&
                                 grpCalc.finalScoreOutOf100 !== null ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-950 border border-emerald-300 font-bold">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-blue-900 text-white font-bold">
                                     {grpCalc.finalScoreOutOf100} / 100
                                   </span>
                                 ) : (
@@ -1463,16 +1621,16 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
 
                               <td className="py-2.5 px-3">
                                 {isTransferred ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-900 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                                    <Check className="w-3 h-3 text-emerald-700 stroke-[2.5]" />
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-300">
+                                    <Check className="w-3 h-3 text-blue-900 stroke-[2.5]" />
                                     Öğrenciye Aktarıldı
                                   </span>
                                 ) : activeGroupLifecycle.isComplete ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-900 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200">
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-900 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
                                     Aktarım Bekliyor
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 text-[11px] text-amber-900 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-300">
                                     Grup Puanlanıyor (
                                     {
                                       activeGroupLifecycle.completedCriteriaCount
@@ -1489,7 +1647,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                                     onClick={() =>
                                       onInspectStudentInIndividualMode(stu.id)
                                     }
-                                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:border-teal-600 hover:text-teal-900 text-[11px] font-bold text-slate-700 cursor-pointer"
+                                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:border-blue-900 hover:text-blue-900 text-[11px] font-bold text-slate-700 cursor-pointer"
                                   >
                                     Öğrenci Kartı →
                                   </button>

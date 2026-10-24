@@ -47,6 +47,7 @@ export interface Rubric {
   id: string;
   title: string;
   subject: string;
+  gradeLevel?: string;
   description: string;
   maxLevelPoints: number;
   criteria: RubricCriterion[];

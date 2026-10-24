@@ -5,12 +5,22 @@
     --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
+
+    /* DEHB Dostu Nötr & Yüksek Kontrastlı Renk Paleti (Lacivert, Slate ve Yumuşak Gri) */
+    --bg-canvas: #F1F5F9;        /* slate-100: Göz yormayan yumuşak gri arka plan */
+    --bg-surface: #FFFFFF;       /* Temiz çalışma kartı yüzeyi */
+    --bg-surface-muted: #F8FAFC; /* slate-50: İkincil nötr yüzey */
+    --border-subtle: #CBD5E1;    /* slate-300: Net ama sakin sınır çizgisi */
+    --text-primary: #0F172A;     /* slate-900: Yüksek kontrastlı ana metin */
+    --text-secondary: #334155;   /* slate-700: Okunaklı ikincil metin */
+    --accent-navy: #1E3A8A;      /* blue-900: Ana eylem ve aktif odak laciverti */
+    --accent-navy-hover: #172554;/* blue-950: Vurgulu buton hover durumu */
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: #F8FAFC;
-    color: #0F172A;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
   }
 
@@ -22,16 +32,81 @@
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--accent-navy);
+    outline-offset: 2px;
+  }
+}
+
+/* Profesyonel PDF ve Veli Paylaşım Raporu Stil Entegrasyonu */
+.pdf-report-sheet {
+  background-color: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  border-radius: 1rem;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.06);
+  color: #0F172A;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.pdf-report-banner {
+  background: linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%);
+  color: #FFFFFF;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.pdf-report-card {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.pdf-signature-box {
+  border-top: 1.5px dashed #64748B;
+  padding-top: 0.5rem;
+  min-height: 3.5rem;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
 }
 
 @media print {
+  html,
   body {
     background: #FFFFFF !important;
+    color: #0F172A !important;
+    font-size: 11pt;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
+
   .no-print {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
+  }
+
+  .pdf-report-sheet {
+    border: 1px solid #94A3B8 !important;
+    border-radius: 0.5rem !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 1.25rem !important;
+    width: 100% !important;
+  }
+
+  .pdf-report-card,
+  tr,
+  .pdf-signature-grid {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }

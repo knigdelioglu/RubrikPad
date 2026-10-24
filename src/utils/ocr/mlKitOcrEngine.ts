@@ -447,6 +447,18 @@ export function convertMlKitResponseToWordTokens(
               flushSyms();
               continue;
             }
+            // If a punctuation separator ('.', '-', ')', ':') sits between a 1-2 digit sequence number and a school number (e.g. "1.105"), split them!
+            if (
+              /^[.,:)\-/]$/.test(sym.text) &&
+              curSyms.length >= 1 &&
+              curSyms.length <= 2 &&
+              curSyms.every((cs) => /^\d$/.test(cs.text)) &&
+              sIdx + 1 < symbols.length &&
+              /^\d$/.test(symbols[sIdx + 1].text)
+            ) {
+              flushSyms();
+              continue;
+            }
             if (curSyms.length > 0) {
               const prevSym = curSyms[curSyms.length - 1];
               const symGap = sym.bbox.x0 - prevSym.bbox.x1;
@@ -455,7 +467,12 @@ export function convertMlKitResponseToWordTokens(
                 prevSym.bbox.x1,
                 sym.bbox.x0
               );
-              const wideGap = symGap > symH * 0.85;
+              const isSeqToNumTransition =
+                curSyms.length <= 2 &&
+                curSyms.every((cs) => /^\d$/.test(cs.text)) &&
+                /^\d$/.test(sym.text);
+              const wideGap =
+                symGap > symH * (isSeqToNumTransition ? 0.36 : 0.85);
               if (crossedGrid || wideGap) {
                 flushSyms();
               }
@@ -464,8 +481,14 @@ export function convertMlKitResponseToWordTokens(
           }
           flushSyms();
         } else {
-          // Fallback if symbols list is empty: split on '|' if present
-          const parts = (elem.text || '').split(/[|¦]+/).filter(Boolean);
+          // Fallback if symbols list is empty: split on '|' or sequence-number punctuation ("1.105", "1-105", "1 105")
+          const rawElemText = (elem.text || '').trim();
+          const seqNumMatch = rawElemText.match(
+            /^(\d{1,2})(?:\s*[.|¦,:)\-/]\s*|\s+)(\d{2,6})$/
+          );
+          const parts = seqNumMatch
+            ? [seqNumMatch[1], seqNumMatch[2]]
+            : rawElemText.split(/[|¦]+/).filter(Boolean);
           if (parts.length <= 1) {
             subElements.push({
               text: elem.text,
@@ -501,6 +524,71 @@ export function convertMlKitResponseToWordTokens(
         }
 
         for (const sub of subElements) {
+          // Secondary check: if a subElement still has "1.105" or "1-105" (e.g. when symbols didn't split it), split it here too
+          const subSeqMatch = sub.text
+            .trim()
+            .match(/^(\d{1,2})\s*[.,:)\-/]\s*(\d{2,6})$/);
+          if (subSeqMatch) {
+            const seqPart = subSeqMatch[1];
+            const numPart = subSeqMatch[2];
+            const midX = Math.round(
+              sub.bbox.x0 +
+                ((sub.bbox.x1 - sub.bbox.x0) * seqPart.length) /
+                  Math.max(2, sub.text.length)
+            );
+            const normSeq = normalizeMlKitTurkishToken(
+              seqPart,
+              sub.confidence,
+              'sequence'
+            );
+            const normNum = normalizeMlKitTurkishToken(
+              numPart,
+              sub.confidence,
+              'studentNumber'
+            );
+            if (normSeq.text) {
+              tokens.push({
+                id: `mlkit-tok-${tokCounter++}`,
+                text: normSeq.text,
+                confidence: normSeq.confidence,
+                bbox: {
+                  x0: sub.bbox.x0,
+                  y0: sub.bbox.y0,
+                  x1: Math.max(sub.bbox.x0 + 4, midX - 2),
+                  y1: sub.bbox.y1,
+                },
+                baselineY: sub.bbox.y1,
+                skewDeg: elem.angle ?? line.angle ?? 0,
+                blockIndex: block.blockIndex,
+                lineIndex: line.lineIndex,
+                elementIndex: elem.elementIndex,
+                symbolConfidences: [],
+                alternatives: normSeq.alternatives,
+              });
+            }
+            if (normNum.text) {
+              tokens.push({
+                id: `mlkit-tok-${tokCounter++}`,
+                text: normNum.text,
+                confidence: normNum.confidence,
+                bbox: {
+                  x0: Math.min(sub.bbox.x1 - 4, midX + 2),
+                  y0: sub.bbox.y0,
+                  x1: sub.bbox.x1,
+                  y1: sub.bbox.y1,
+                },
+                baselineY: sub.bbox.y1,
+                skewDeg: elem.angle ?? line.angle ?? 0,
+                blockIndex: block.blockIndex,
+                lineIndex: line.lineIndex,
+                elementIndex: elem.elementIndex,
+                symbolConfidences: [],
+                alternatives: normNum.alternatives,
+              });
+            }
+            continue;
+          }
+
           const normalized = normalizeMlKitTurkishToken(
             sub.text,
             sub.confidence
@@ -527,6 +615,41 @@ export function convertMlKitResponseToWordTokens(
   }
 
   return tokens;
+}
+
+function encodeGrayImageForCapacitorBridge(image: RawGrayImage): string {
+  // For large photos in browser/Android WebView, use native Canvas JPEG compression (quality 0.92)
+  // so 3-5MP uploaded photos are ~350KB instead of 10MB uncompressed PNG over the WebView IPC bridge.
+  if (
+    typeof document !== 'undefined' &&
+    image.width * image.height > 400_000
+  ) {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const rgba = new Uint8ClampedArray(image.width * image.height * 4);
+        for (let i = 0, p = 0; i < image.data.length; i++, p += 4) {
+          const v = image.data[i];
+          rgba[p] = v;
+          rgba[p + 1] = v;
+          rgba[p + 2] = v;
+          rgba[p + 3] = 255;
+        }
+        ctx.putImageData(new ImageData(rgba, image.width, image.height), 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+        const commaIdx = dataUrl.indexOf(',');
+        if (commaIdx !== -1 && dataUrl.length > commaIdx + 32) {
+          return dataUrl.slice(commaIdx + 1);
+        }
+      }
+    } catch {
+      // Fallback to pure TS PNG encoder
+    }
+  }
+  return encodeGrayImageToPngBase64(image);
 }
 
 /**
@@ -599,17 +722,25 @@ export class CapacitorMlKitOcrEngine implements OcrEngineAdapter {
       };
     }
 
-    // Preserve high resolution (up to 3200px) so ML Kit gets crisp Turkish diacritics & small digits
+    // Preserve upright gallery EXIF orientation (`autoOrient: false` unless explicitly requested),
+    // cap resolution at 2048px for fast WebView IPC, and let ML Kit v2 handle skew natively.
     const preprocessing = preprocessRosterImage(image, {
       ...options.preprocessing,
+      autoOrient:
+        options.preprocessing?.manualRotationDeg !== undefined
+          ? false
+          : false,
+      autoDeskew: options.preprocessing?.autoDeskew ?? false,
       targetMaxDimension:
-        options.preprocessing?.targetMaxDimension ?? 3200,
+        options.preprocessing?.targetMaxDimension ?? 2048,
     });
 
     try {
-      const base64Png = encodeGrayImageToPngBase64(preprocessing.grayImage);
+      const base64Payload = encodeGrayImageForCapacitorBridge(
+        preprocessing.grayImage
+      );
       const mlkitResponse = await this.getBridge().recognizeText({
-        base64Image: base64Png,
+        base64Image: base64Payload,
         rotationDegrees: 0,
       });
 

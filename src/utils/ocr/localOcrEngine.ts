@@ -2238,14 +2238,16 @@ export class SelfContainedTurkishOcrEngine implements OcrEngineAdapter {
 export class LocalOcrEngineRegistry {
   private adapters = new Map<string, OcrEngineAdapter>();
   private activeEngineId: string;
+  private mlKitEngine: CapacitorMlKitOcrEngine;
+  private manuallySelected = false;
 
   constructor(defaultAdapter?: OcrEngineAdapter) {
     const browserEngine = defaultAdapter ?? new SelfContainedTurkishOcrEngine();
-    const mlKitEngine = new CapacitorMlKitOcrEngine(browserEngine);
+    this.mlKitEngine = new CapacitorMlKitOcrEngine(browserEngine);
     this.registerAdapter(browserEngine);
-    this.registerAdapter(mlKitEngine);
-    this.activeEngineId = mlKitEngine.isNativeAndroidAvailable()
-      ? mlKitEngine.engineId
+    this.registerAdapter(this.mlKitEngine);
+    this.activeEngineId = this.mlKitEngine.isNativeAndroidAvailable()
+      ? this.mlKitEngine.engineId
       : browserEngine.engineId;
   }
 
@@ -2263,9 +2265,13 @@ export class LocalOcrEngineRegistry {
       throw new Error(`OCR motoru bulunamadı: ${engineId}`);
     }
     this.activeEngineId = engineId;
+    this.manuallySelected = true;
   }
 
   public getActiveEngine(): OcrEngineAdapter {
+    if (!this.manuallySelected && this.mlKitEngine.isNativeAndroidAvailable()) {
+      this.activeEngineId = this.mlKitEngine.engineId;
+    }
     const adapter = this.adapters.get(this.activeEngineId);
     if (!adapter) {
       throw new Error('Aktif yerel OCR motoru tanımlı değil.');

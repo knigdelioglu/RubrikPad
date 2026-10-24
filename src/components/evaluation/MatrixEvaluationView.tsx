@@ -13,8 +13,8 @@ import {
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
   hasStudentObservationData,
-  isScoreAssigned,
 } from '../../utils/rubricLogic.ts';
+import { getScoreLevelVisualTheme } from './RubricCriterionCard.tsx';
 
 interface MatrixEvaluationViewProps {
   activeSession: EvaluationSession;
@@ -72,13 +72,13 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
 
   return (
     <div className="max-w-[1880px] mx-auto px-3 sm:px-5 py-2">
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-76px)] min-h-[500px] shadow-xs">
+      <div className="bg-white border border-slate-300 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-76px)] min-h-[500px] shadow-xs">
         <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={onBackToFastCards}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-900 text-white hover:bg-blue-950 flex items-center gap-1.5 cursor-pointer shadow-2xs"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               Değerlendirme Kartlarına Dön
@@ -87,36 +87,39 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
               <h2 className="text-sm font-bold text-slate-900">
                 Tam Ekran Sınıf Matrisi — {activeRubric.title}
               </h2>
-              <p className="text-[11px] text-slate-500">
-                0 geçerli puandır, &ldquo;-&rdquo; henüz puanlanmadı anlamına gelir.
-                Tüm ölçütler bitmeden kesin 100&apos;lük not üretilmez.
-              </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {currentCriterion && (
-              <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1">
-                <span className="text-[11px] font-semibold text-slate-600 flex items-center gap-1 mr-1">
-                  <Zap className="w-3.5 h-3.5 text-teal-700" />
+              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-2 py-1">
+                <span className="text-[11px] font-semibold text-slate-700 flex items-center gap-1 mr-1">
+                  <Zap className="w-3.5 h-3.5 text-blue-900" />
                   Boş Olanlara ({currentCriterion.title.slice(0, 18)}):
                 </span>
-                {currentCriterion.levels.map((lvl) => (
-                  <button
-                    key={lvl.level}
-                    type="button"
-                    onClick={() =>
-                      onBulkAssignCriterion(
-                        currentCriterion.id,
-                        lvl.points,
-                        true
-                      )
-                    }
-                    className="px-2 py-0.5 text-[11px] font-mono-num font-bold rounded bg-slate-100 hover:bg-teal-700 hover:text-white text-slate-700 transition-colors cursor-pointer"
-                  >
-                    {lvl.points}P
-                  </button>
-                ))}
+                {currentCriterion.levels.map((lvl) => {
+                  const maxPts = Math.max(
+                    ...currentCriterion.levels.map((l) => l.points),
+                    4
+                  );
+                  const theme = getScoreLevelVisualTheme(lvl.points, maxPts);
+                  return (
+                    <button
+                      key={lvl.level}
+                      type="button"
+                      onClick={() =>
+                        onBulkAssignCriterion(
+                          currentCriterion.id,
+                          lvl.points,
+                          true
+                        )
+                      }
+                      className={`px-2 py-0.5 text-[11px] font-mono-num font-bold rounded border transition-colors cursor-pointer ${theme.compactUnselected}`}
+                    >
+                      {lvl.points}P
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -135,9 +138,9 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                 type="button"
                 onClick={onExportPdf}
                 data-testid="download-active-session-pdf-btn"
-                className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-teal-900 bg-teal-50 border border-teal-200 hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-800 bg-white border border-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
               >
-                <FileDown className="w-3.5 h-3.5" />
+                <FileDown className="w-3.5 h-3.5 text-blue-900" />
                 PDF İndir
               </button>
             )}
@@ -157,13 +160,13 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                     onClick={() => onSelectCell(selectedStudentId, idx)}
                     className={`py-2 px-2.5 border-r border-slate-200 cursor-pointer transition-colors ${
                       idx === safeCriterionIdx
-                        ? 'bg-teal-100/90 text-teal-950'
+                        ? 'bg-blue-50 text-blue-950 border-b-2 border-b-blue-900'
                         : 'hover:bg-slate-200/60'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1 text-[10px] font-mono-num text-slate-500">
                       <span>ÖLÇÜT 0{idx + 1}</span>
-                      <span className="font-bold text-teal-800">
+                      <span className="font-bold text-slate-800">
                         {c.maxPoints ?? c.weight}P
                       </span>
                     </div>
@@ -193,16 +196,16 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                     key={stu.id}
                     className={`transition-colors ${
                       isActiveRow
-                        ? 'bg-teal-50/50'
+                        ? 'bg-blue-50/40'
                         : calc.isComplete
-                        ? 'bg-emerald-50/20 hover:bg-slate-50'
+                        ? 'bg-slate-50/60 hover:bg-slate-100/60'
                         : 'hover:bg-slate-50/70'
                     }`}
                   >
                     <td
                       onClick={() => onSelectCell(stu.id, safeCriterionIdx)}
                       className={`py-2 px-3 sticky left-0 z-10 border-r border-slate-200 cursor-pointer ${
-                        isActiveRow ? 'bg-teal-50' : 'bg-white'
+                        isActiveRow ? 'bg-blue-50/80' : 'bg-white'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-1.5">
@@ -241,12 +244,12 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                           )}
                           {activeSource === 'group' &&
                             calc.completedCriteriaCount > 0 && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-300">
                                 Grup
                               </span>
                             )}
                           {calc.isComplete && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-700 text-white">
                               <Check className="w-2.5 h-2.5" />
                             </span>
                           )}
@@ -268,8 +271,8 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                               }
                               className={`p-1 rounded border transition-colors cursor-pointer relative ${
                                 hasStudentObservationData(ev)
-                                  ? 'bg-teal-600 text-white border-teal-700 hover:bg-teal-700'
-                                  : 'bg-white text-slate-500 border-slate-200 hover:border-teal-300 hover:text-teal-700'
+                                  ? 'bg-slate-800 text-white border-slate-900 hover:bg-slate-900'
+                                  : 'bg-white text-slate-500 border-slate-200 hover:border-blue-900 hover:text-blue-900'
                               }`}
                             >
                               <MessageSquare className="w-3 h-3" />
@@ -286,6 +289,10 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                           : ev?.criterionScores?.[c.id];
                       const isTargetCell =
                         isActiveRow && colIdx === safeCriterionIdx;
+                      const maxLvlPts = Math.max(
+                        ...c.levels.map((l) => l.points),
+                        4
+                      );
 
                       return (
                         <td
@@ -293,13 +300,17 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                           onClick={() => onSelectCell(stu.id, colIdx)}
                           className={`py-1.5 px-2 border-r border-slate-100 ${
                             isTargetCell
-                              ? 'ring-2 ring-inset ring-teal-600 bg-teal-50/60'
+                              ? 'ring-2 ring-inset ring-blue-900 bg-blue-50/40'
                               : ''
                           }`}
                         >
                           <div className="flex items-center gap-1">
                             {c.levels.map((lvl) => {
                               const active = selectedPts === lvl.points;
+                              const lvlTheme = getScoreLevelVisualTheme(
+                                lvl.points,
+                                maxLvlPts
+                              );
                               return (
                                 <button
                                   key={lvl.level}
@@ -314,12 +325,10 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                                     );
                                   }}
                                   title={`${lvl.label} (${lvl.points} Puan)`}
-                                  className={`flex-1 py-1 rounded font-mono-num text-[11px] font-bold transition-all cursor-pointer min-h-[28px] ${
+                                  className={`flex-1 py-1 rounded font-mono-num text-[11px] font-bold transition-all cursor-pointer min-h-[28px] border ${
                                     active
-                                      ? lvl.points === 0
-                                        ? 'bg-rose-700 text-white shadow-xs'
-                                        : 'bg-teal-700 text-white shadow-xs'
-                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                      ? lvlTheme.compactSelected
+                                      : lvlTheme.compactUnselected
                                   }`}
                                 >
                                   {lvl.points}
@@ -333,11 +342,11 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
 
                     <td className="py-2 px-3 text-right font-mono-num">
                       {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
-                        <span className="font-bold text-slate-900 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                        <span className="font-bold text-white bg-blue-900 border border-blue-950 px-2 py-0.5 rounded">
                           {calc.finalScoreOutOf100}
                         </span>
                       ) : calc.completedCriteriaCount > 0 ? (
-                        <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                        <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded">
                           Eksik ({calc.completedCriteriaCount}/
                           {calc.totalCriteriaCount})
                         </span>

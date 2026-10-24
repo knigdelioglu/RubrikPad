@@ -49,6 +49,9 @@ import {
   checkClassroomDeletionImpact,
   hasStudentObservationData,
   upsertStudentQuickObservation,
+  resolveFocusedCriterionIndex,
+  getNextFocusedCriterionIndexAfterScore,
+  getFocusModeStepSummary,
 } from './rubricLogic.ts';
 import {
   STORAGE_KEY,
@@ -82,7 +85,15 @@ import {
   __setMemoryIndexedDbSnapshotForTests,
   __getMemoryIndexedDbSnapshotForTests,
   __setSimulateIndexedDbFailureForTests,
+  stripSyntheticSeedEntities,
+  purgeSyntheticSeedDataSync,
 } from './storageLayer.ts';
+import {
+  INITIAL_CLASSROOMS,
+  INITIAL_STUDENTS,
+  INITIAL_RUBRICS,
+  INITIAL_SESSIONS,
+} from '../data/seedData.ts';
 import {
   generatePaginatedSessionPdfBytes,
   decodePdfTextWithToUnicode,
@@ -3109,9 +3120,369 @@ test('Quick Observation Note: upsertStudentQuickObservation saves sanitized note
   assert.equal(noOp.undoHistory?.length, 2);
 });
 
+test('Focus Mode (Odak Modu): resolveFocusedCriterionIndex, getNextFocusedCriterionIndexAfterScore, and getFocusModeStepSummary navigate single-criterion workflow accurately', () => {
+  const fourCriteria = [
+    {
+      id: 'crit-1',
+      title: '1. Hipotez Kurma',
+      category: 'Deney',
+      weight: 25,
+      maxPoints: 25,
+      levels: sampleRubric.criteria[0].levels,
+    },
+    {
+      id: 'crit-2',
+      title: '2. Düzenek Hazırlama',
+      category: 'Deney',
+      weight: 25,
+      maxPoints: 25,
+      levels: sampleRubric.criteria[0].levels,
+    },
+    {
+      id: 'crit-3',
+      title: '3. Veri Kaydetme',
+      category: 'Deney',
+      weight: 25,
+      maxPoints: 25,
+      levels: sampleRubric.criteria[0].levels,
+    },
+    {
+      id: 'crit-4',
+      title: '4. Sonuç Çıkarma',
+      category: 'Deney',
+      weight: 25,
+      maxPoints: 25,
+      levels: sampleRubric.criteria[0].levels,
+    },
+  ];
 
+  // 1. Clamping & preferFirstUnscored
+  assert.equal(resolveFocusedCriterionIndex(fourCriteria, -5), 0);
+  assert.equal(resolveFocusedCriterionIndex(fourCriteria, 99), 3);
+  assert.equal(
+    resolveFocusedCriterionIndex(
+      fourCriteria,
+      0,
+      { 'crit-1': 4, 'crit-2': 0 }, // 0 is a valid score! First unscored is crit-3 (index 2)
+      undefined,
+      true
+    ),
+    2
+  );
 
+  // 2. Auto-progression after scoring a criterion in Focus Mode
+  // Scoring crit-1 (index 0) advances to crit-2 (index 1)
+  const afterCrit1 = getNextFocusedCriterionIndexAfterScore(
+    fourCriteria,
+    0,
+    { 'crit-1': 3 }
+  );
+  assert.deepEqual(afterCrit1, {
+    nextIndex: 1,
+    allCompleted: false,
+    advancedToUnscored: true,
+  });
 
+  // Scoring crit-3 (index 2) when crit-2 is still unscored wraps around to crit-2 (index 1) after crit-4 is scored
+  const afterCrit4WithCrit2Missing = getNextFocusedCriterionIndexAfterScore(
+    fourCriteria,
+    3,
+    { 'crit-1': 4, 'crit-3': 3, 'crit-4': 4 }
+  );
+  assert.deepEqual(afterCrit4WithCrit2Missing, {
+    nextIndex: 1,
+    allCompleted: false,
+    advancedToUnscored: true,
+  });
 
+  // Scoring the final missing criterion reports allCompleted: true
+  const afterAllScored = getNextFocusedCriterionIndexAfterScore(
+    fourCriteria,
+    1,
+    { 'crit-1': 4, 'crit-2': 3, 'crit-3': 3, 'crit-4': 4 }
+  );
+  assert.deepEqual(afterAllScored, {
+    nextIndex: 1,
+    allCompleted: true,
+    advancedToUnscored: false,
+  });
 
+  // 3. Step summary for Focus Mode stepper UI
+  const summary = getFocusModeStepSummary(
+    fourCriteria,
+    2,
+    { 'crit-1': 4, 'crit-2': 0 },
+    { 'crit-4': 20 }
+  );
+  assert.equal(summary.activeIndex, 2);
+  assert.equal(summary.activeCriterion?.id, 'crit-3');
+  assert.equal(summary.totalCount, 4);
+  assert.equal(summary.completedCount, 3);
+  assert.equal(summary.remainingCount, 1);
+  assert.equal(summary.canGoPrev, true);
+  assert.equal(summary.canGoNext, true);
+  assert.equal(summary.steps[0].scoreLabel, '4P');
+  assert.equal(summary.steps[1].scoreLabel, '0P');
+  assert.equal(summary.steps[2].isScored, false);
+  assert.equal(summary.steps[2].isActive, true);
+  assert.equal(summary.steps[3].scoreLabel, '20/25');
+});
+
+test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: classrooms/students/sessions are empty, all 8 rubrics total 100 points and pass validation', async () => {
+  // 1. Classrooms, students, and sessions seed arrays must be completely empty
+  assert.deepEqual(INITIAL_CLASSROOMS, []);
+  assert.deepEqual(INITIAL_STUDENTS, []);
+  assert.deepEqual(INITIAL_SESSIONS, []);
+
+  // 2. Verify all 8 Türk Dili ve Edebiyatı rubrics and their exact criterion point totals
+  assert.equal(INITIAL_RUBRICS.length, 8);
+
+  const expectedSpecs: Array<{
+    title: string;
+    criteria: Array<[string, number]>;
+  }> = [
+    {
+      title: 'İletişim Engelleri — Grup Draması',
+      criteria: [
+        ['Konu, amaç ve iletişim engeliyle uyum', 10],
+        ['İçeriğin doğruluğu ve çözümün gösterilmesi', 20],
+        ['Planlama ve hazırlık', 15],
+        ['Canlandırma becerisi ve dramatik akış', 20],
+        ['Sözü, Türkçeyi ve beden dilini etkili kullanma', 20],
+        ['Grupla uyum ve izleyiciyle iletişim', 10],
+        ['Özgünlük', 5],
+      ],
+    },
+    {
+      title: 'E-posta',
+      criteria: [
+        ['Türkçenin doğru kullanımı', 16],
+        ['Dil ve üslup', 18],
+        ['Özgünlük', 16],
+        ['Gerekli durumlarda öznel ve nesnel ifadelere yer verme', 16],
+        ['Başlık ve hitap kullanımı', 18],
+        ['Yazım ve noktalama', 16],
+      ],
+    },
+    {
+      title: 'Türk Dünyası Konuşma',
+      criteria: [
+        ['Konuya hâkimiyet', 20],
+        ['Söz varlığını etkili ve güzel kullanma', 20],
+        ['Beden dili ve sesle anlam oluşturma', 20],
+        ['Zamanı ve mekânı konuşmaya uygun şekilde yönetme', 20],
+        ['Seyircinin ilgisini çekme', 20],
+      ],
+    },
+    {
+      title: 'Müze İzlenim Yazısı',
+      criteria: [
+        ['Dil ve üslup', 20],
+        ['Özgünlük', 20],
+        ['Öznel ve nesnel ifadelere yer verme', 20],
+        ['Görsellerden yararlanma', 20],
+        ['Yazım ve noktalama', 20],
+      ],
+    },
+    {
+      title: 'Kemal Tahir Mülakat',
+      criteria: [
+        ['Düşünceyi geliştirme yollarından yararlanma', 12],
+        ['Anlatım ilkelerine (akıcılık, duruluk vb.) uygunluk', 16],
+        ['Beden dilinin kullanımı', 16],
+        ['Ses ve diksiyon', 16],
+        ['Zaman yönetimi', 12],
+        ['Mekânı etkili kullanma', 12],
+        ['Türkçenin doğru kullanımı', 16],
+      ],
+    },
+    {
+      title: 'Diyalog Dönüştürme',
+      criteria: [
+        ['Dil ve üslup', 18],
+        ['Başlık kullanımı', 18],
+        ['Özgünlük', 16],
+        ['Konunun uygunluğu', 16],
+        ['Yazım ve noktalama', 16],
+        ['Öznel ve nesnel ifadelere yer verme', 16],
+      ],
+    },
+    {
+      title: 'Tiyatro Canlandırma',
+      criteria: [
+        ['İçeriğe uygunluk', 15],
+        ['Grupla uyum içinde çalışma', 20],
+        ['Özgünlük', 15],
+        ['Canlandırma becerisi', 15],
+        ['Türkçenin doğru kullanımı', 15],
+        ['Sözü ve beden dilini etkili kullanma', 20],
+      ],
+    },
+    {
+      title: 'Afiş',
+      criteria: [
+        ['Konuya uygunluk', 15],
+        ['Yaratıcılık', 20],
+        ['Özgünlük', 15],
+        ['Görsel/işitsel ögelerin seçimi', 15],
+        ['Türkçenin doğru kullanımı', 15],
+        ['Etkileyicilik', 20],
+      ],
+    },
+  ];
+
+  INITIAL_RUBRICS.forEach((rubric, idx) => {
+    const spec = expectedSpecs[idx];
+    assert.equal(rubric.title, spec.title);
+    assert.equal(rubric.subject, 'Türk Dili ve Edebiyatı');
+    const validation = validateRubric(rubric);
+    assert.equal(
+      validation.isValid,
+      true,
+      `Rubric ${rubric.title} failed validation: ${validation.errors.join(', ')}`
+    );
+    assert.equal(rubric.criteria.length, spec.criteria.length);
+
+    let totalWeight = 0;
+    let totalMaxPoints = 0;
+    rubric.criteria.forEach((crit, cIdx) => {
+      const [expectedTitle, expectedPts] = spec.criteria[cIdx];
+      assert.equal(crit.title, expectedTitle);
+      assert.equal(crit.weight, expectedPts);
+      assert.equal(crit.maxPoints, expectedPts);
+      totalWeight += crit.weight;
+      totalMaxPoints += crit.maxPoints ?? 0;
+    });
+    assert.equal(totalWeight, 100);
+    assert.equal(totalMaxPoints, 100);
+  });
+
+  // 3. Empty application state is valid
+  const emptyValidation = validateFullAppDataStructure({
+    classrooms: [],
+    students: [],
+    rubrics: [],
+    sessions: [],
+  });
+  assert.equal(emptyValidation.isValid, true);
+
+  // 4. stripSyntheticSeedEntities removes synthetic classes, students, rubrics, and sessions while keeping real user data
+  const customClassroom: Classroom = {
+    id: 'cls-user-1',
+    name: '9/A',
+    gradeLevel: '9. Sınıf',
+    subject: 'Türk Dili ve Edebiyatı',
+    academicYear: '2026-2027',
+  };
+  const customStudent: Student = {
+    id: 'stu-user-1',
+    studentNumber: '501',
+    fullName: 'Zeynep Kaya',
+    classId: 'cls-user-1',
+  };
+  const mixedPayload = {
+    classrooms: [
+      {
+        id: 'cls-7a',
+        name: '7/A',
+        gradeLevel: '7. Sınıf',
+        subject: 'Fen Bilimleri',
+        academicYear: '2026-2027',
+      },
+      customClassroom,
+    ],
+    students: [
+      {
+        id: 'stu-101',
+        studentNumber: '101',
+        fullName: 'Elif Yılmaz',
+        classId: 'cls-7a',
+      },
+      customStudent,
+    ],
+    rubrics: [
+      {
+        ...sampleRubric,
+        id: 'rub-lab',
+      },
+      sampleRubric,
+    ],
+    sessions: [
+      {
+        id: 'ses-hist-1',
+        title: 'Sentetik Oturum',
+        classId: 'cls-7a',
+        rubricId: 'rub-lab',
+        date: '2026-10-01',
+        status: 'completed' as const,
+        mode: 'individual' as const,
+        generalSessionNote: '',
+        groups: [],
+        evaluations: {},
+      },
+    ],
+  };
+
+  const stripped = stripSyntheticSeedEntities(mixedPayload);
+  assert.equal(stripped.hadSynthetic, true);
+  assert.equal(stripped.cleaned.classrooms.length, 1);
+  assert.equal(stripped.cleaned.classrooms[0].id, 'cls-user-1');
+  assert.equal(stripped.cleaned.students.length, 1);
+  assert.equal(stripped.cleaned.students[0].id, 'stu-user-1');
+  assert.equal(stripped.cleaned.rubrics.length, 1);
+  assert.equal(stripped.cleaned.rubrics[0].id, 'rub-test');
+  assert.equal(stripped.cleaned.sessions.length, 0);
+
+  // 5. purgeSyntheticSeedDataSync wipes backup keys and purges synthetic localStorage data without creating any backup
+  const mockStore = new Map<string, string>();
+  const prevWindow = (globalThis as unknown as { window?: unknown }).window;
+  (globalThis as unknown as { window: unknown }).window = {
+    localStorage: {
+      getItem: (k: string) => mockStore.get(k) ?? null,
+      setItem: (k: string, v: string) => mockStore.set(k, v),
+      removeItem: (k: string) => mockStore.delete(k),
+    },
+  };
+
+  try {
+    const bundle = await createVerifiedBackupBundle({
+      classrooms: [
+        {
+          id: 'cls-7a',
+          name: '7/A',
+          gradeLevel: '7. Sınıf',
+          subject: 'Fen Bilimleri',
+          academicYear: '2026-2027',
+        },
+      ],
+      students: [
+        {
+          id: 'stu-101',
+          studentNumber: '101',
+          fullName: 'Elif Yılmaz',
+          classId: 'cls-7a',
+        },
+      ],
+      rubrics: [{ ...sampleRubric, id: 'rub-lab' }],
+      sessions: [],
+    });
+    mockStore.set(STORAGE_KEY, JSON.stringify(bundle));
+    mockStore.set(PRE_RESET_ROLLBACK_KEY, JSON.stringify(bundle));
+    mockStore.set(LEGACY_V3_ROLLBACK_KEY, JSON.stringify(bundle));
+    mockStore.set(STORAGE_CONFLICT_BACKUP_KEY, JSON.stringify(bundle));
+
+    purgeSyntheticSeedDataSync();
+
+    assert.equal(mockStore.has(PRE_RESET_ROLLBACK_KEY), false);
+    assert.equal(mockStore.has(LEGACY_V3_ROLLBACK_KEY), false);
+    assert.equal(mockStore.has(STORAGE_CONFLICT_BACKUP_KEY), false);
+    assert.equal(mockStore.has(STORAGE_KEY), false);
+  } finally {
+    if (prevWindow === undefined) {
+      delete (globalThis as unknown as { window?: unknown }).window;
+    } else {
+      (globalThis as unknown as { window: unknown }).window = prevWindow;
+    }
+  }
+});
 

@@ -1259,13 +1259,6 @@ export function validateFullAppDataStructure(payload: unknown): {
     };
   }
 
-  if (p.classrooms.length === 0 || p.rubrics.length === 0) {
-    return {
-      isValid: false,
-      error: 'Yedek dosyasında en az bir sınıf ve bir rubrik bulunmalıdır.',
-    };
-  }
-
   if (
     p.classrooms.length > 500 ||
     p.students.length > 20000 ||
@@ -2961,4 +2954,262 @@ export async function loadInitialStateWithRecovery(
     error: idbInspect.error || syncResult.error,
   };
 }
+
+const SYNTHETIC_CLASSROOM_IDS = new Set(['cls-7a', 'cls-8b', 'cls-6c']);
+const SYNTHETIC_STUDENT_IDS = new Set([
+  'stu-101',
+  'stu-102',
+  'stu-103',
+  'stu-104',
+  'stu-105',
+  'stu-106',
+  'stu-107',
+  'stu-108',
+  'stu-201',
+  'stu-202',
+  'stu-203',
+  'stu-204',
+  'stu-205',
+  'stu-301',
+  'stu-302',
+  'stu-303',
+  'stu-304',
+]);
+const SYNTHETIC_RUBRIC_IDS = new Set([
+  'rub-lab',
+  'rub-pres',
+  'rub-group',
+  'rub-stem-8',
+]);
+const SYNTHETIC_SESSION_IDS = new Set([
+  'ses-hist-1',
+  'ses-hist-2',
+  'ses-active-3',
+]);
+
+export function stripSyntheticSeedEntities(state: AppDataState): {
+  cleaned: AppDataState;
+  hadSynthetic: boolean;
+} {
+  const classrooms = (state.classrooms || []).filter(
+    (c) => !SYNTHETIC_CLASSROOM_IDS.has(c.id)
+  );
+  const students = (state.students || []).filter(
+    (s) =>
+      !SYNTHETIC_STUDENT_IDS.has(s.id) &&
+      !SYNTHETIC_CLASSROOM_IDS.has(s.classId)
+  );
+  const rubrics = (state.rubrics || []).filter(
+    (r) => !SYNTHETIC_RUBRIC_IDS.has(r.id)
+  );
+  const sessions = (state.sessions || []).filter(
+    (ses) =>
+      !SYNTHETIC_SESSION_IDS.has(ses.id) &&
+      !SYNTHETIC_CLASSROOM_IDS.has(ses.classId) &&
+      !SYNTHETIC_RUBRIC_IDS.has(ses.rubricId)
+  );
+
+  const hadSynthetic =
+    classrooms.length !== (state.classrooms || []).length ||
+    students.length !== (state.students || []).length ||
+    rubrics.length !== (state.rubrics || []).length ||
+    sessions.length !== (state.sessions || []).length;
+
+  return {
+    cleaned: { classrooms, students, rubrics, sessions },
+    hadSynthetic,
+  };
+}
+
+/**
+ * Synchronously purges synthetic seed data and removes all backup/rollback keys from localStorage without creating a backup.
+ * When `seedRubrics` is provided, also clears completely empty persisted states or merges missing built-in rubrics.
+ */
+export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
+  memoryV3RollbackSnapshot = null;
+  memoryConflictBackupSnapshot = null;
+  memoryPreResetBackupSnapshot = null;
+  memoryIndexedDbQuarantineSnapshot = null;
+
+  const storage =
+    typeof localStorage !== 'undefined'
+      ? localStorage
+      : typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage
+        : undefined;
+  if (!storage) return;
+  try {
+    storage.removeItem(LEGACY_V3_ROLLBACK_KEY);
+    storage.removeItem(STORAGE_CONFLICT_BACKUP_KEY);
+    storage.removeItem(PRE_RESET_ROLLBACK_KEY);
+    storage.removeItem(LOCALSTORAGE_QUARANTINE_KEY);
+    storage.removeItem(INDEXEDDB_QUARANTINE_KEY);
+    storage.removeItem(LEGACY_V2_BUNDLE_KEY);
+    for (const keyList of Object.values(LEGACY_V2_KEYS)) {
+      for (const k of keyList) {
+        storage.removeItem(k);
+      }
+    }
+
+    const rawV3 = storage.getItem(STORAGE_KEY);
+    if (rawV3) {
+      const parsed = parseJsonSafelyWithoutPrototypePollution<
+        Partial<VerifiedBackupBundle> & Partial<AppDataState>
+      >(rawV3);
+      const rawPayload = (parsed?.payload || parsed) as AppDataState | undefined;
+      if (rawPayload && typeof rawPayload === 'object') {
+        const { cleaned, hadSynthetic } = stripSyntheticSeedEntities(rawPayload);
+        const isAllEmpty =
+          cleaned.classrooms.length === 0 &&
+          cleaned.students.length === 0 &&
+          cleaned.rubrics.length === 0 &&
+          cleaned.sessions.length === 0;
+
+        if (isAllEmpty) {
+          storage.removeItem(STORAGE_KEY);
+          return;
+        }
+
+        const seedById = new Map(seedRubrics.map((sr) => [sr.id, sr]));
+        let gradeBackfilled = false;
+        const syncedRubrics = cleaned.rubrics.map((r) => {
+          const seedMatch = seedById.get(r.id);
+          if (seedMatch?.gradeLevel && r.gradeLevel !== seedMatch.gradeLevel) {
+            gradeBackfilled = true;
+            return { ...r, gradeLevel: seedMatch.gradeLevel };
+          }
+          return r;
+        });
+
+        const existingIds = new Set(syncedRubrics.map((r) => r.id));
+        const missingSeedRubrics = seedRubrics.filter(
+          (sr) => !existingIds.has(sr.id)
+        );
+
+        if (hadSynthetic || missingSeedRubrics.length > 0 || gradeBackfilled) {
+          const nextState: AppDataState = {
+            ...cleaned,
+            rubrics: [...syncedRubrics, ...missingSeedRubrics],
+          };
+          const newBundle = createVerifiedBackupBundle(nextState);
+          storage.setItem(STORAGE_KEY, JSON.stringify(newBundle));
+        }
+      }
+    }
+  } catch {
+    // ignore storage access errors
+  }
+}
+
+/**
+ * Asynchronously purges synthetic seed data and backup keys from IndexedDB without creating a backup.
+ * When `seedRubrics` is provided, also clears completely empty persisted states or merges missing built-in rubrics.
+ */
+export async function purgeSyntheticSeedDataAsync(
+  seedRubrics: Rubric[] = []
+): Promise<void> {
+  purgeSyntheticSeedDataSync(seedRubrics);
+
+  if (typeof indexedDB === 'undefined' || simulateIndexedDbFailure) return;
+  try {
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.close();
+          resolve();
+          return;
+        }
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        const store = tx.objectStore(IDB_STORE);
+        store.delete('v3_rollback_backup');
+        store.delete('pre_reset_backup');
+        store.delete('conflict_backup');
+        store.delete('quarantine_corrupted_v3');
+
+        const getReq = store.get('latest');
+        getReq.onsuccess = () => {
+          const val = getReq.result;
+          if (val) {
+            try {
+              const obj = typeof val === 'string' ? JSON.parse(val) : val;
+              const rawPayload = (obj?.payload || obj) as AppDataState | undefined;
+              if (rawPayload && typeof rawPayload === 'object') {
+                const { cleaned, hadSynthetic } =
+                  stripSyntheticSeedEntities(rawPayload);
+                const isAllEmpty =
+                  cleaned.classrooms.length === 0 &&
+                  cleaned.students.length === 0 &&
+                  cleaned.rubrics.length === 0 &&
+                  cleaned.sessions.length === 0;
+
+                if (isAllEmpty) {
+                  store.delete('latest');
+                  memoryIndexedDbSnapshot = null;
+                  return;
+                }
+
+                const seedById = new Map(seedRubrics.map((sr) => [sr.id, sr]));
+                let gradeBackfilled = false;
+                const syncedRubrics = cleaned.rubrics.map((r) => {
+                  const seedMatch = seedById.get(r.id);
+                  if (
+                    seedMatch?.gradeLevel &&
+                    r.gradeLevel !== seedMatch.gradeLevel
+                  ) {
+                    gradeBackfilled = true;
+                    return { ...r, gradeLevel: seedMatch.gradeLevel };
+                  }
+                  return r;
+                });
+
+                const existingIds = new Set(syncedRubrics.map((r) => r.id));
+                const missingSeedRubrics = seedRubrics.filter(
+                  (sr) => !existingIds.has(sr.id)
+                );
+
+                if (
+                  hadSynthetic ||
+                  missingSeedRubrics.length > 0 ||
+                  gradeBackfilled
+                ) {
+                  const nextState: AppDataState = {
+                    ...cleaned,
+                    rubrics: [...syncedRubrics, ...missingSeedRubrics],
+                  };
+                  const newBundle = createVerifiedBackupBundle(nextState);
+                  store.put(newBundle, 'latest');
+                  memoryIndexedDbSnapshot = JSON.stringify(newBundle);
+                }
+              }
+            } catch {
+              store.delete('latest');
+              memoryIndexedDbSnapshot = null;
+            }
+          }
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => {
+          db.close();
+          resolve();
+        };
+      };
+      req.onerror = () => resolve();
+    });
+  } catch {
+    // ignore
+  }
+}
+
+
 

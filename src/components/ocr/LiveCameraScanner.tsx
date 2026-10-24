@@ -249,27 +249,23 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
   return (
     <div
       data-testid="live-camera-scanner-panel"
-      className="border-2 border-teal-600 bg-slate-950 text-white rounded-2xl overflow-hidden shadow-lg space-y-3 p-3.5 sm:p-4"
+      className="border-2 border-blue-900 bg-slate-950 text-white rounded-2xl overflow-hidden shadow-lg space-y-3 p-3.5 sm:p-4"
     >
       {/* Top Scanner Header & Controls */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-teal-600/20 border border-teal-500/40 flex items-center justify-center text-teal-400">
+          <div className="w-8 h-8 rounded-lg bg-blue-900/40 border border-blue-400/40 flex items-center justify-center text-blue-300">
             <ScanLine className="w-4 h-4" />
           </div>
           <div>
             <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
-              <span>Canlı Kamera ve Sınıf Listesi Tarayıcı</span>
-              <span className="text-[11px] font-mono-num font-semibold text-teal-300">
+              <span>Canlı Kamera Tarayıcı</span>
+              <span className="text-[11px] font-mono-num font-semibold text-blue-200">
                 {cameraMode === 'hardware'
-                  ? 'Cihaz Kamerası Aktif'
-                  : 'Canlı Tarama Vizörü Aktif'}
+                  ? 'Kamera Aktif'
+                  : 'Vizör Aktif'}
               </span>
             </h3>
-            <p className="text-[11px] text-slate-300">
-              Basılı sınıf listesini kılavuz çerçeveye hizalayın; tablo satırları
-              algılandığında tek dokunuşla veya otomatik tarayın.
-            </p>
           </div>
         </div>
 
@@ -299,7 +295,7 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
           >
             {scanCropMode === 'full_table' ? (
               <>
-                <Minimize2 className="w-3.5 h-3.5 text-teal-400" />
+                <Minimize2 className="w-3.5 h-3.5 text-blue-300" />
                 Tam Tablo Çerçevesi
               </>
             ) : (
@@ -319,7 +315,7 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
             aria-pressed={autoScanEnabled}
             className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer border ${
               autoScanEnabled
-                ? 'bg-emerald-600 text-white border-emerald-400'
+                ? 'bg-blue-700 text-white border-blue-400'
                 : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
             }`}
           >
@@ -343,7 +339,7 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
       </div>
 
       {cameraError && (
-        <div className="bg-slate-900/90 border border-teal-500/40 rounded-xl px-3 py-2 text-[11px] text-teal-200 flex items-center justify-between gap-2">
+        <div className="bg-slate-900/90 border border-slate-700 rounded-xl px-3 py-2 text-[11px] text-slate-200 flex items-center justify-between gap-2">
           <span>{cameraError}</span>
           <button
             type="button"
@@ -380,8 +376,8 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
         <div
           className={`pointer-events-none absolute transition-all duration-200 border-2 rounded-xl ${
             readiness.isReadyToScan
-              ? 'border-emerald-400 shadow-[0_0_0_9999px_rgba(2,6,23,0.45)]'
-              : 'border-teal-400/80 shadow-[0_0_0_9999px_rgba(2,6,23,0.45)]'
+              ? 'border-blue-400 shadow-[0_0_0_9999px_rgba(2,6,23,0.45)]'
+              : 'border-slate-400/80 shadow-[0_0_0_9999px_rgba(2,6,23,0.45)]'
           } ${
             scanCropMode === 'tight_rows'
               ? 'inset-x-[6%] inset-y-[8%]'
@@ -389,21 +385,21 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
           }`}
         >
           {/* Corner Brackets */}
-          <div className="absolute -top-0.5 -left-0.5 w-6 h-6 border-t-4 border-l-4 border-emerald-400 rounded-tl-lg" />
-          <div className="absolute -top-0.5 -right-0.5 w-6 h-6 border-t-4 border-r-4 border-emerald-400 rounded-tr-lg" />
-          <div className="absolute -bottom-0.5 -left-0.5 w-6 h-6 border-b-4 border-l-4 border-emerald-400 rounded-bl-lg" />
-          <div className="absolute -bottom-0.5 -right-0.5 w-6 h-6 border-b-4 border-r-4 border-emerald-400 rounded-br-lg" />
+          <div className="absolute -top-0.5 -left-0.5 w-6 h-6 border-t-4 border-l-4 border-blue-400 rounded-tl-lg" />
+          <div className="absolute -top-0.5 -right-0.5 w-6 h-6 border-t-4 border-r-4 border-blue-400 rounded-tr-lg" />
+          <div className="absolute -bottom-0.5 -left-0.5 w-6 h-6 border-b-4 border-l-4 border-blue-400 rounded-bl-lg" />
+          <div className="absolute -bottom-0.5 -right-0.5 w-6 h-6 border-b-4 border-r-4 border-blue-400 rounded-br-lg" />
 
           {/* Column Guide Headers inside Viewfinder */}
-          <div className="grid grid-cols-12 border-b border-teal-400/30 bg-slate-950/65 text-[10px] font-mono-num text-teal-200 px-2 py-1">
+          <div className="grid grid-cols-12 border-b border-slate-500/40 bg-slate-950/75 text-[10px] font-mono-num text-slate-200 px-2 py-1">
             <div className="col-span-2">Sıra</div>
-            <div className="col-span-3 border-l border-teal-400/30 pl-2">
+            <div className="col-span-3 border-l border-slate-500/40 pl-2">
               Okul No
             </div>
-            <div className="col-span-4 border-l border-teal-400/30 pl-2">
+            <div className="col-span-4 border-l border-slate-500/40 pl-2">
               Öğrenci Adı
             </div>
-            <div className="col-span-3 border-l border-teal-400/30 pl-2">
+            <div className="col-span-3 border-l border-slate-500/40 pl-2">
               Soyadı
             </div>
           </div>
@@ -415,7 +411,7 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2 text-xs font-mono-num">
             {readiness.isReadyToScan ? (
-              <span className="text-emerald-400 font-bold flex items-center gap-1">
+              <span className="text-blue-300 font-bold flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 {readiness.statusLabel}
               </span>
@@ -426,7 +422,7 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
               </span>
             )}
             {autoScanEnabled && readiness.isReadyToScan && (
-              <span className="text-emerald-300 font-bold">
+              <span className="text-blue-200 font-bold">
                 · Otomatik Kilit ({steadyReadyTicks}/3)
               </span>
             )}
@@ -448,7 +444,7 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
               onClick={() => startSimulationCamera()}
               className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+              <Sparkles className="w-3.5 h-3.5 text-blue-300" />
               Örnek Kamera Akışı
             </button>
           )}
@@ -458,7 +454,7 @@ export const LiveCameraScanner: React.FC<LiveCameraScannerProps> = ({
             onClick={handleCaptureAndScan}
             disabled={disabled || !cameraActive}
             data-testid="capture-and-scan-roster-btn"
-            className="px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-40"
+            className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-40"
           >
             <Camera className="w-4 h-4 stroke-[2.5]" />
             Fotoğraf Çek ve Listeyi Tara

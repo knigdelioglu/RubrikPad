@@ -106,13 +106,13 @@ export const QuickObservationNoteModal: React.FC<
         aria-labelledby="quick-observation-modal-title"
         data-testid="quick-observation-note-modal"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className="w-full max-w-lg bg-white border border-slate-300 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
       >
         {/* Compact Modal Header */}
         <div className="px-4 py-3 bg-slate-900 text-white flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center shrink-0">
+              <span className="w-7 h-7 rounded-lg bg-blue-900 text-white border border-blue-700 flex items-center justify-center shrink-0">
                 <MessageSquare className="w-4 h-4" />
               </span>
               <div>
@@ -142,9 +142,9 @@ export const QuickObservationNoteModal: React.FC<
 
         <form onSubmit={handleSubmit} className="p-4 space-y-3.5">
           {/* Student Identity Strip */}
-          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-100 border border-slate-300">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded-md bg-teal-100 text-teal-950 border border-teal-300">
+              <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded-md bg-blue-900 text-white">
                 #{student.studentNumber}
               </span>
               <span
@@ -154,9 +154,6 @@ export const QuickObservationNoteModal: React.FC<
                 {student.fullName}
               </span>
             </div>
-            <span className="text-[11px] font-semibold text-slate-500">
-              Bu oturuma özel bireysel kayıt
-            </span>
           </div>
 
           {/* Low-score Consecutive Reminder Callout if applicable */}
@@ -176,11 +173,10 @@ export const QuickObservationNoteModal: React.FC<
 
           {/* Read-only Group Note context if student also has a group note */}
           {evaluation?.groupNote && (
-            <div className="px-3 py-2 rounded-xl bg-teal-50/70 border border-teal-200 text-[11px] text-teal-950 flex items-center gap-2">
-              <Users className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+            <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-[11px] text-slate-800 flex items-center gap-2">
+              <Users className="w-3.5 h-3.5 text-slate-700 shrink-0" />
               <span className="truncate">
-                <strong>Grup Ortak Notu:</strong> &ldquo;{evaluation.groupNote}
-                &rdquo; (Bireysel not bundan bağımsız korunur)
+                <strong>Grup Notu:</strong> &ldquo;{evaluation.groupNote}&rdquo;
               </span>
             </div>
           )}
@@ -188,7 +184,7 @@ export const QuickObservationNoteModal: React.FC<
           {/* Quick Observation Tags */}
           <div>
             <label className="block text-[11px] font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-              <Tag className="w-3 h-3 text-slate-500" />
+              <Tag className="w-3 h-3 text-slate-700" />
               Hızlı Gözlem Etiketleri
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -202,8 +198,8 @@ export const QuickObservationNoteModal: React.FC<
                     data-testid={`quick-modal-tag-${tag}`}
                     className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
                       active
-                        ? 'bg-teal-700 text-white border-teal-700 shadow-2xs'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                        ? 'bg-blue-900 text-white border-blue-950 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-white hover:border-blue-900'
                     }`}
                   >
                     {active ? '✓ ' : '+ '}
@@ -221,7 +217,7 @@ export const QuickObservationNoteModal: React.FC<
                 htmlFor="quick-obs-modal-textarea"
                 className="text-xs font-bold text-slate-800 flex items-center gap-1.5"
               >
-                <MessageSquare className="w-3.5 h-3.5 text-teal-700" />
+                <MessageSquare className="w-3.5 h-3.5 text-slate-700" />
                 Öğretmen Gözlem Notu
               </label>
               <span className="font-mono-num text-[11px] text-slate-500">
@@ -248,12 +244,9 @@ export const QuickObservationNoteModal: React.FC<
                 }
               }}
               data-testid="quick-observation-note-textarea"
-              placeholder={`${student.fullName} için bu oturuma özel süreç gözlemi, katılım durumu veya geri bildirim notu yazın...`}
-              className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-600 text-slate-900"
+              placeholder={`${student.fullName} için gözlem notu yazın...`}
+              className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-900 text-slate-900"
             />
-            <p className="mt-1 text-[11px] text-slate-500">
-              İpucu: <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono-num">Ctrl + Enter</kbd> ile hızlıca kaydedebilirsiniz.
-            </p>
           </div>
 
           {/* Compact Footer Actions */}
@@ -284,7 +277,7 @@ export const QuickObservationNoteModal: React.FC<
               <button
                 type="submit"
                 data-testid="save-quick-observation-note-btn"
-                className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                className="px-4 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
               >
                 <Check className="w-3.5 h-3.5 stroke-[2.5]" />
                 Notu Kaydet

@@ -930,10 +930,65 @@ export function splitTurkishFullName(rawFullName: string): {
   };
 }
 
+function stripTrailingRosterGenderAndStatusTokens(rawName: string): string {
+  const words = rawName
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+
+  const isTrailingMetaWord = (w: string): boolean => {
+    const cleaned = w.replace(/^[(\[]+|[.):,\-\]]+$/g, '').trim();
+    if (!cleaned) return true;
+    const norm = cleaned
+      .toLocaleUpperCase('tr-TR')
+      .replace(/İ/g, 'I')
+      .replace(/İ/g, 'I')
+      .replace(/Ş/g, 'S')
+      .replace(/Ç/g, 'C')
+      .replace(/Ğ/g, 'G')
+      .replace(/Ö/g, 'O')
+      .replace(/Ü/g, 'U');
+    return (
+      norm === 'K' ||
+      norm === 'E' ||
+      norm === 'KIZ' ||
+      norm === 'ERKEK' ||
+      norm === 'KADIN' ||
+      norm === 'BAY' ||
+      norm === 'BAYAN' ||
+      norm === 'YAT' ||
+      norm === 'YATILI' ||
+      norm === 'YATILILIK' ||
+      norm === 'GUND' ||
+      norm === 'GUNDUZLU' ||
+      norm === 'PARALI' ||
+      norm === 'PARASIZ' ||
+      norm === 'PANSIYON' ||
+      norm === 'PANSIYONLU' ||
+      norm === 'BURSLU' ||
+      norm === 'ORGUN' ||
+      norm === 'KAYITLI' ||
+      norm === 'DEVAMLI' ||
+      norm === 'DEVAMSIZ' ||
+      norm === 'MISAFIR' ||
+      norm === 'NAKIL'
+    );
+  };
+
+  while (words.length > 1 && isTrailingMetaWord(words[words.length - 1])) {
+    words.pop();
+  }
+
+  return words.join(' ').trim();
+}
+
 /**
  * Parses OCR or raw pasted classroom roster lines into structured, validated student records.
  * P0 #5 & P1 #3:
  * - NEVER invents fake sequential student numbers when a number is missing.
+ * - Handles optional leading row sequence numbers ("1. 105 Ayşe Melek") without merging "1" and "105".
+ * - Strips trailing e-Okul gender ("Kız"/"Erkek") and boarding status ("Yat."/"Günd.") columns from surname.
  * - Splits firstName and lastName and validates each field separately.
  * - Flags missing school numbers, missing surnames, or duplicate student numbers.
  */
@@ -950,6 +1005,11 @@ export function parseStudentRosterText(
   const seenInBatch = new Set<string>();
 
   for (const line of lines) {
+    // 1. Check for Sequence No + School No + Name (e.g. "1. 105 Ayşe Melek Kız Yat." or "1 105 Ayşe Melek")
+    const matchSeqAndNum = line.match(
+      /^(?:Sıra[:.]?\s*)?\d{1,3}(?:\s*[-–—:.\t|)]+\s*|\s+)(?:No[:.]?\s*)?(\d{1,6})(?:\s*[-–—:.\t|)]+\s*|\s+)([A-Za-zÇĞİÖŞÜçğıöşü].+)$/i
+    );
+    // 2. Check for School No + Name (e.g. "105 Ayşe Melek")
     const matchWithNum = line.match(
       /^(?:No[:.]?\s*)?(\d{1,6})(?:\s*[-–—:.\t|)]+\s*|\s+)([A-Za-zÇĞİÖŞÜçğıöşü].+)$/i
     );
@@ -957,11 +1017,16 @@ export function parseStudentRosterText(
     let studentNumber = '';
     let rawName = '';
 
-    if (matchWithNum) {
+    if (matchSeqAndNum) {
+      studentNumber = matchSeqAndNum[1].trim();
+      rawName = stripTrailingRosterGenderAndStatusTokens(matchSeqAndNum[2]);
+    } else if (matchWithNum) {
       studentNumber = matchWithNum[1].trim();
-      rawName = matchWithNum[2].replace(/\s+/g, ' ').trim();
+      rawName = stripTrailingRosterGenderAndStatusTokens(matchWithNum[2]);
     } else {
-      rawName = line.replace(/^[*•-]\s*/, '').replace(/\s+/g, ' ').trim();
+      rawName = stripTrailingRosterGenderAndStatusTokens(
+        line.replace(/^[*•-]\s*/, '')
+      );
     }
 
     const { firstName, lastName, fullName } = splitTurkishFullName(rawName);
@@ -971,7 +1036,10 @@ export function parseStudentRosterText(
       validationErrors.push('Okul numarası eksik');
     } else if (!/^\d+$/.test(studentNumber)) {
       validationErrors.push('Okul numarası yalnızca rakam olmalıdır');
-    } else if (existingNumbers.has(studentNumber) || seenInBatch.has(studentNumber)) {
+    } else if (
+      existingNumbers.has(studentNumber) ||
+      seenInBatch.has(studentNumber)
+    ) {
       validationErrors.push('Mükerrer okul numarası');
     }
 
@@ -2668,6 +2736,207 @@ export function upsertStudentQuickObservation(
       },
     },
     undoHistory,
+  };
+}
+
+export type CriterionFocusDisplayMode = 'hide_others' | 'dim_others';
+
+/**
+ * Resolves a valid criterion index for Focus Mode (Odak Modu).
+ * When `preferFirstUnscored` is true (e.g. when switching students/groups or turning on Focus Mode),
+ * jumps directly to the first unscored criterion so the teacher can immediately continue grading.
+ */
+export function resolveFocusedCriterionIndex(
+  criteria: RubricCriterion[],
+  requestedIndex: number,
+  criterionScores?: Record<string, number | null | undefined>,
+  directCriterionScores?: Record<string, number | null | undefined>,
+  preferFirstUnscored = false
+): number {
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    return 0;
+  }
+
+  if (preferFirstUnscored) {
+    const firstUnscored = getNextUnscoredCriterion(
+      criteria,
+      criterionScores || {},
+      directCriterionScores
+    );
+    if (firstUnscored) {
+      return firstUnscored.index;
+    }
+    return 0;
+  }
+
+  if (
+    typeof requestedIndex !== 'number' ||
+    Number.isNaN(requestedIndex) ||
+    requestedIndex < 0
+  ) {
+    return 0;
+  }
+
+  if (requestedIndex >= criteria.length) {
+    return criteria.length - 1;
+  }
+
+  return Math.floor(requestedIndex);
+}
+
+/**
+ * Computes the next criterion index to focus after scoring a criterion in Focus Mode (Odak Modu).
+ * Searches forward from `currentCriterionIndex + 1` for the next unscored criterion, then wraps around
+ * from `0` to `currentCriterionIndex - 1`. If all criteria are now scored, keeps the index bounded
+ * and reports `allCompleted: true`.
+ */
+export function getNextFocusedCriterionIndexAfterScore(
+  criteria: RubricCriterion[],
+  currentCriterionIndex: number,
+  updatedCriterionScores: Record<string, number | null | undefined>,
+  updatedDirectScores?: Record<string, number | null | undefined>
+): {
+  nextIndex: number;
+  allCompleted: boolean;
+  advancedToUnscored: boolean;
+} {
+  const total = Array.isArray(criteria) ? criteria.length : 0;
+  if (total === 0) {
+    return { nextIndex: 0, allCompleted: true, advancedToUnscored: false };
+  }
+
+  const safeCurrent = resolveFocusedCriterionIndex(criteria, currentCriterionIndex);
+
+  const isCritScored = (crit: RubricCriterion): boolean =>
+    isScoreAssigned(updatedDirectScores?.[crit.id]) ||
+    isScoreAssigned(updatedCriterionScores?.[crit.id]);
+
+  // 1. Look forward after safeCurrent for an unscored criterion
+  for (let i = safeCurrent + 1; i < total; i++) {
+    if (!isCritScored(criteria[i])) {
+      return {
+        nextIndex: i,
+        allCompleted: false,
+        advancedToUnscored: true,
+      };
+    }
+  }
+
+  // 2. Wrap around from 0 to safeCurrent - 1 for any earlier unscored criterion
+  for (let i = 0; i < safeCurrent; i++) {
+    if (!isCritScored(criteria[i])) {
+      return {
+        nextIndex: i,
+        allCompleted: false,
+        advancedToUnscored: true,
+      };
+    }
+  }
+
+  // 3. Check if current itself is unscored (e.g. score was cleared)
+  if (!isCritScored(criteria[safeCurrent])) {
+    return {
+      nextIndex: safeCurrent,
+      allCompleted: false,
+      advancedToUnscored: false,
+    };
+  }
+
+  return {
+    nextIndex: safeCurrent,
+    allCompleted: true,
+    advancedToUnscored: false,
+  };
+}
+
+export interface FocusModeCriterionStep {
+  id: string;
+  index: number;
+  numberLabel: string;
+  title: string;
+  weight: number;
+  maxPoints: number;
+  isActive: boolean;
+  isScored: boolean;
+  scoreLabel: string | null;
+}
+
+/**
+ * Builds the step-by-step progress and navigation state for Single-Criterion Focus Mode (Odak Modu).
+ */
+export function getFocusModeStepSummary(
+  criteria: RubricCriterion[],
+  activeIndex: number,
+  criterionScores?: Record<string, number | null | undefined>,
+  directCriterionScores?: Record<string, number | null | undefined>
+): {
+  activeIndex: number;
+  activeCriterion: RubricCriterion | null;
+  totalCount: number;
+  completedCount: number;
+  remainingCount: number;
+  canGoPrev: boolean;
+  canGoNext: boolean;
+  steps: FocusModeCriterionStep[];
+} {
+  const totalCount = Array.isArray(criteria) ? criteria.length : 0;
+  if (totalCount === 0) {
+    return {
+      activeIndex: 0,
+      activeCriterion: null,
+      totalCount: 0,
+      completedCount: 0,
+      remainingCount: 0,
+      canGoPrev: false,
+      canGoNext: false,
+      steps: [],
+    };
+  }
+
+  const safeIndex = resolveFocusedCriterionIndex(criteria, activeIndex);
+  let completedCount = 0;
+
+  const steps: FocusModeCriterionStep[] = criteria.map((crit, idx) => {
+    const maxPts = crit.maxPoints ?? crit.weight;
+    const directVal = directCriterionScores?.[crit.id];
+    const levelVal = criterionScores?.[crit.id];
+    const hasDirect = isScoreAssigned(directVal);
+    const hasLevel = isScoreAssigned(levelVal);
+    const isScored = hasDirect || hasLevel;
+
+    if (isScored) {
+      completedCount += 1;
+    }
+
+    let scoreLabel: string | null = null;
+    if (hasDirect) {
+      scoreLabel = `${directVal}/${maxPts}`;
+    } else if (hasLevel) {
+      scoreLabel = `${levelVal}P`;
+    }
+
+    return {
+      id: crit.id,
+      index: idx,
+      numberLabel: idx + 1 < 10 ? `0${idx + 1}` : `${idx + 1}`,
+      title: crit.title,
+      weight: crit.weight,
+      maxPoints: maxPts,
+      isActive: idx === safeIndex,
+      isScored,
+      scoreLabel,
+    };
+  });
+
+  return {
+    activeIndex: safeIndex,
+    activeCriterion: criteria[safeIndex] || null,
+    totalCount,
+    completedCount,
+    remainingCount: Math.max(0, totalCount - completedCount),
+    canGoPrev: safeIndex > 0,
+    canGoNext: safeIndex < totalCount - 1,
+    steps,
   };
 }
 
