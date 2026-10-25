@@ -777,7 +777,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   if (!activeSession || !activeRubric) {
     const canCreateSession = classrooms.length > 0 && rubrics.length > 0;
     return (
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12">
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
         <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-xs space-y-6">
           <div className="text-center space-y-2">
             <h1 className="text-xl font-bold text-slate-900">
@@ -1188,7 +1188,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     .join(' + ');
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 space-y-4">
+    <div className="w-full px-4 sm:px-6 lg:px-8 py-4 space-y-4">
       <div className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement}
       </div>

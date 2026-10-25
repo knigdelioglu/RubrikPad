@@ -135,7 +135,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   const undoCount = activeSession.undoHistory?.length || 0;
 
   return (
-    <div className="max-w-[1880px] mx-auto px-3 sm:px-5 py-2">
+    <div className="w-full px-3 sm:px-5 py-2">
       <div className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement}
       </div>

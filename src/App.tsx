@@ -548,7 +548,7 @@ export function App() {
     <div className="min-h-screen flex flex-col bg-slate-100 text-slate-900">
       {/* Top Navigation Bar — DEHB Dostu Nötr & Yüksek Kontrastlı Gezinme */}
       <header className="no-print sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-300 shadow-2xs">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-15 flex items-center justify-between gap-3">
+        <div className="w-full px-4 sm:px-6 lg:px-8 h-15 flex items-center justify-between gap-3">
           {/* Brand Identity */}
           <div className="flex items-center gap-2.5">
             <img
@@ -661,7 +661,7 @@ export function App() {
           role="alert"
           className="bg-red-50 border-b border-red-200 px-4 py-2.5 text-xs text-red-900"
         >
-          <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
+          <div className="w-full px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-semibold">
               <AlertTriangle className="w-4 h-4 text-red-700 shrink-0" />
               <span>Veri Kaydetme Uyarısı: {storageSaveError}</span>
@@ -700,7 +700,7 @@ export function App() {
           aria-live="polite"
           className="bg-slate-200/80 border-b border-slate-300 px-4 py-2 text-xs text-slate-900"
         >
-          <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-2">
+          <div className="w-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-semibold">
               <Check className="w-4 h-4 text-blue-900 shrink-0" />
               <span>{recoveryBanner}</span>

@@ -334,7 +334,7 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
   }, [studentHistory]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
       {/* Header, Class Switcher & Primary 'Rapor İndir' Action */}
       <div className="no-print flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
