@@ -65,13 +65,12 @@ interface LocalOcrVerificationPanelProps {
   onCommitStudents: (createdStudents: Student[]) => void;
 }
 
-const COLUMN_ROLE_LABELS: Record<ColumnRole, string> = {
+const COLUMN_ROLE_LABELS: Record<Exclude<ColumnRole, 'gender'>, string> = {
   sequence: 'Sıra No',
   studentNumber: 'Okul Numarası',
   firstName: 'Öğrenci Adı',
   lastName: 'Öğrenci Soyadı',
   fullName: 'Adı Soyadı (Birleşik)',
-  gender: 'Cinsiyet (K/E)',
   auxiliary: 'Yardımcı / Ek Sütun',
   ignore: 'Yoksay',
 };
@@ -224,7 +223,6 @@ export const LocalOcrVerificationPanel: React.FC<
       drawCellBox(inspectedRow.cellBboxes.studentNumber, '#1e3a8a', 'Okul No');
       drawCellBox(inspectedRow.cellBboxes.firstName, '#0369a1', 'Adı');
       drawCellBox(inspectedRow.cellBboxes.lastName, '#334155', 'Soyadı');
-      drawCellBox(inspectedRow.cellBboxes.gender, '#64748b', 'Cinsiyet');
     }
   }, [ocrOutput, inspectedRow, zoomScale]);
 
@@ -580,6 +578,11 @@ export const LocalOcrVerificationPanel: React.FC<
     setSourceGrayImage(null);
   };
 
+  const emptyGapCount = rows.filter(
+    (r) => r.rowKind === 'missing_gap_candidate' &&
+      !r.studentNumber.trim() && !r.firstName.trim() && !r.lastName.trim()
+  ).length;
+  const studentCandidateCount = rows.length - emptyGapCount;
   const highReliabilityCount = rows.filter(
     (r) => r.reliabilityLevel === 'high'
   ).length;
@@ -690,7 +693,7 @@ export const LocalOcrVerificationPanel: React.FC<
             rows={4}
             value={groundTruthInput}
             onChange={(e) => setGroundTruthInput(e.target.value)}
-            placeholder="Her satıra: OkulNo | Adı | Soyadı | Cinsiyet (Örn: 245 | AYŞE NUR | ÇELİK | K)"
+            placeholder="Her satıra: OkulNo | Adı | Soyadı (Örn: 245 | AYŞE NUR | ÇELİK)"
             className="w-full p-2.5 text-xs font-mono-num border border-slate-300 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-900"
           />
 
@@ -981,7 +984,7 @@ export const LocalOcrVerificationPanel: React.FC<
               <span>·</span>
               <span>{tableAnalysis.columns.length} Sütun</span>
               <span>·</span>
-              <span>{rows.length} Satır</span>
+              <span>{studentCandidateCount} Öğrenci Adayı{emptyGapCount > 0 ? ` · ${emptyGapCount} Okunamayan Boşluk` : ''}</span>
               {performanceMetrics && (
                 <>
                   <span>·</span>
@@ -1063,7 +1066,7 @@ export const LocalOcrVerificationPanel: React.FC<
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
-                {tableAnalysis.columns.map((col) => (
+                {tableAnalysis.columns.filter((col) => col.role !== 'gender').map((col) => (
                   <div
                     key={col.columnIndex}
                     className="p-2 rounded-lg border border-slate-200 bg-slate-50 space-y-1"
@@ -1178,8 +1181,8 @@ export const LocalOcrVerificationPanel: React.FC<
           <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                Öğretmen Doğrulama ve Satır Eşleştirme Tablosu ({rows.length}{' '}
-                Satır)
+                Öğretmen Doğrulama Tablosu ({studentCandidateCount} Öğrenci Adayı)
+                {emptyGapCount > 0 && ` · ${emptyGapCount} Okunamayan Boşluk`}
               </h3>
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mt-0.5 font-mono-num">
                 <span className="text-slate-800 font-semibold">
@@ -1345,7 +1348,7 @@ export const LocalOcrVerificationPanel: React.FC<
                     </div>
                   </div>
 
-                  {/* Editable Identity Inputs (Okul No, Ad, Soyad, Cinsiyet) */}
+                  {/* Editable Identity Inputs (Okul No, Ad, Soyad) */}
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                     <div className="sm:col-span-3">
                       <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
@@ -1379,7 +1382,7 @@ export const LocalOcrVerificationPanel: React.FC<
                       />
                     </div>
 
-                    <div className="sm:col-span-4">
+                    <div className="sm:col-span-5">
                       <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
                         Adı (Çok Sözcüklü Destekli)
                       </label>
@@ -1408,7 +1411,7 @@ export const LocalOcrVerificationPanel: React.FC<
                       />
                     </div>
 
-                    <div className="sm:col-span-3">
+                    <div className="sm:col-span-4">
                       <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
                         Soyadı
                       </label>
@@ -1434,31 +1437,6 @@ export const LocalOcrVerificationPanel: React.FC<
                             ? 'border-red-400 bg-white'
                             : 'border-slate-300 bg-white'
                         }`}
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
-                        Cinsiyet
-                      </label>
-                      <input
-                        type="text"
-                        aria-label={`${row.rowIndex}. Satır Cinsiyet`}
-                        value={row.gender}
-                        placeholder="K / E"
-                        onChange={(e) =>
-                          setRows((prev) =>
-                            updateOcrRowIdentityField(
-                              prev,
-                              row.rowId,
-                              'gender',
-                              e.target.value,
-                              ocrOutput?.words ?? [],
-                              existingClassroomStudents
-                            )
-                          )
-                        }
-                        className="w-full px-2.5 py-1.5 text-xs font-mono-num rounded-lg border border-slate-300 bg-white"
                       />
                     </div>
                   </div>

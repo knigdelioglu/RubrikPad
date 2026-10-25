@@ -1099,3 +1099,84 @@ test('OCR #17: Full-page e-Okul portrait photo with top school/class title banne
 
 
 
+
+// Coordinate fixtures isolate parsing regressions from character recognition.
+function rosterCoordinateFixture(sequences: number[], positions: number[]): OcrWordToken[] {
+  const token = (id: string, text: string, x: number, y: number): OcrWordToken => ({
+    id, text, confidence: 98, bbox: { x0: x, y0: y, x1: x + 65, y1: y + 20 },
+  });
+  return [
+    token('header-seq', 'Sıra', 30, 20),
+    token('header-no', 'Okul No', 150, 20),
+    token('header-first', 'Adı', 320, 20),
+    token('header-last', 'Soyadı', 550, 20),
+    token('header-note', 'Açıklama', 750, 20),
+    ...sequences.flatMap((seq, i) => [
+      token(`seq-${i}`, String(seq), 30, positions[i]),
+      token(`no-${i}`, String(200 + i), 150, positions[i]),
+      token(`first-${i}`, 'AYŞE NUR', 320, positions[i]),
+      token(`last-${i}`, 'ÇELİK', 550, positions[i]),
+    ]),
+  ];
+}
+
+test('27 students with five displaced auxiliary notes and a repeated header stay 27 identities', () => {
+  const sequences = Array.from({ length: 27 }, (_, i) => i + 1);
+  const words = rosterCoordinateFixture(sequences, sequences.map((n) => 40 + n * 50));
+  for (let i = 0; i < 5; i++) {
+    words.push({ id: `note-${i}`, text: 'KONTROL', confidence: 97,
+      bbox: { x0: 750, x1: 820, y0: 117 + i * 150, y1: 137 + i * 150 } });
+  }
+  for (const header of words.filter((w) => w.id.startsWith('header-'))) {
+    words.push({ ...header, id: `repeated-${header.id}`,
+      bbox: { ...header.bbox, y0: 715, y1: 735 } });
+  }
+  const analysis = analyzeRosterTableGeometry(words);
+  assert.equal(analysis.rows.length, 27);
+  assert.deepEqual(analysis.rows.map((r) => r.studentNumber), sequences.map((_, i) => String(200 + i)));
+  assert.ok(analysis.rows.every((r) => r.firstName === 'AYŞE NUR' && r.lastName === 'ÇELİK'));
+});
+
+test('Consecutive printed sequences override large physical spacing; sequence OCR errors cannot invent students', () => {
+  for (const sequences of [[1, 2, 3, 4, 5], [1, 2, 6, 4, 5]]) {
+    const positions = sequences[2] === 3 ? [90, 140, 190, 340, 390] : [90, 140, 190, 240, 290];
+    const analysis = analyzeRosterTableGeometry(rosterCoordinateFixture(sequences, positions));
+    assert.equal(analysis.rows.length, 5);
+    assert.ok(analysis.rows.every((r) => r.rowKind === 'extracted'));
+  }
+});
+
+test('Single OCR element containing a full name is split into first name and surname', () => {
+  const words = rosterCoordinateFixture([1, 2], [90, 140])
+    .filter((w) => !w.id.startsWith('last-') && w.id !== 'header-last');
+  words.find((w) => w.id === 'header-first')!.text = 'Adı Soyadı';
+  for (const word of words.filter((w) => w.id.startsWith('first-'))) {
+    word.text = 'AYŞE NUR ÇELİK';
+  }
+  const analysis = analyzeRosterTableGeometry(words);
+  assert.equal(analysis.rows.length, 2);
+  assert.ok(analysis.rows.every((r) => r.firstName === 'AYŞE NUR' && r.lastName === 'ÇELİK'));
+});
+
+test('Repeated detections of five physical rows do not turn 27 students into 32', () => {
+  const sequences = Array.from({ length: 27 }, (_, i) => i + 1);
+  const original = rosterCoordinateFixture(sequences, sequences.map((n) => 40 + n * 50));
+  const duplicates = original.filter((w) => /^(seq|no|first|last)-[0-4]$/.test(w.id)).map((w) => ({
+    ...w, id: `duplicate-${w.id}`, confidence: 85, blockIndex: 9, lineIndex: 99,
+    bbox: { x0: w.bbox.x0 + 1, x1: w.bbox.x1 + 1, y0: w.bbox.y0 + 1, y1: w.bbox.y1 + 1 },
+  }));
+  const analysis = analyzeRosterTableGeometry([...duplicates, ...original]);
+  assert.equal(analysis.rows.length, 27);
+  assert.deepEqual(analysis.rows.map((r) => r.studentNumber), sequences.map((_, i) => String(200 + i)));
+  assert.ok(analysis.rows.every((r) => r.firstName === 'AYŞE NUR' && r.lastName === 'ÇELİK'));
+  assert.ok(analysis.rows.every((r) => r.sourceTokenIds.every((id) => !id.startsWith('duplicate-'))));
+});
+
+test('A genuine four-digit school number on a single row is never shortened by guessing a sequence', () => {
+  const words = rosterCoordinateFixture([1], [90]).filter((w) => w.id !== 'seq-0' && w.id !== 'header-seq');
+  words.find((w) => w.id === 'no-0')!.text = '1234';
+  const analysis = analyzeRosterTableGeometry(words);
+  assert.equal(analysis.rows.length, 1);
+  assert.equal(analysis.rows[0].studentNumber, '1234');
+  assert.equal(analysis.rows[0].sequenceNumber, null);
+});

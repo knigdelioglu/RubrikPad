@@ -1032,7 +1032,9 @@ function splitGluedSequenceAndStudentNumbers(
   // Determine if the table exhibits sequential row-prefix gluing:
   // Case A: >= 2 rows match sequential prefixes AND at least one has expectedSeq >= 2 (disproving constant '100x' school numbers)
   const hasMultiRowSequentialEvidence =
-    candidates.length >= 2 && candidates.some((c) => c.expectedSeq >= 2);
+    candidates.length >= 2 &&
+    candidates.length >= Math.ceil(rows.filter((r) => r.sequenceNumber === null && r.studentNumber).length * 0.7) &&
+    candidates.some((c) => c.expectedSeq >= 2);
 
   // Case B: Other rows already have explicit sequenceNumber and a consistent studentNumber digit length
   const rowsWithExplicitSeq = rows.filter(
@@ -1052,17 +1054,8 @@ function splitGluedSequenceAndStudentNumbers(
       medianExplicitStuLen >= 2 &&
       cand.remainder.length === medianExplicitStuLen;
 
-    const singleRowObviousGlue =
-      rows.length === 1 &&
-      cand.expectedSeq === 1 &&
-      rows[0].studentNumber.length >= 4 &&
-      !cand.remainder.startsWith('0');
-
-    if (
-      hasMultiRowSequentialEvidence ||
-      matchesExplicitLengthPattern ||
-      singleRowObviousGlue
-    ) {
+    // A single school number such as 1234 cannot prove a glued sequence.
+    if (hasMultiRowSequentialEvidence || matchesExplicitLengthPattern) {
       const targetRow = rows[cand.idx];
       targetRow.sequenceNumber = cand.expectedSeq;
       targetRow.studentNumber = cand.remainder;
@@ -1098,6 +1091,9 @@ function matchTokenItemToColumnBand(
     const overlapRatio = overlapW / Math.max(1, item.width);
     const centerInside = item.cx >= effX0 && item.cx <= effX1;
     const distToCenter = Math.abs(item.cx - effCenter);
+
+    // Being the nearest column is insufficient when the token is outside it.
+    if (overlapRatio < 0.15 && !centerInside) continue;
 
     const score =
       overlapRatio * 120 + (centerInside ? 50 : 0) - distToCenter * 0.25;
@@ -1371,6 +1367,32 @@ export function matchSurnamesOrderPreservingOneToOne(
   };
 }
 
+/** Collapse repeated detections of the same ink, never equal names on different rows. */
+function deduplicateOverlappingWords(words: OcrWordToken[]): OcrWordToken[] {
+  const byText = new Map<string, OcrWordToken[]>();
+  // Keep the strongest observation's original coordinates and provenance.
+  for (const word of [...words].sort((a, b) => b.confidence - a.confidence)) {
+    const key = word.text.trim().normalize('NFC').toLocaleUpperCase('tr-TR').replace(/\s+/g, ' ');
+    if (!key) continue;
+    const peers = byText.get(key) ?? [];
+    const duplicate = peers.some((peer) => {
+      const a = word.bbox;
+      const b = peer.bbox;
+      const intersection = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) *
+        Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+      const areaA = Math.max(1, (a.x1 - a.x0) * (a.y1 - a.y0));
+      const areaB = Math.max(1, (b.x1 - b.x0) * (b.y1 - b.y0));
+      return intersection / Math.max(areaA, areaB) >= 0.8;
+    });
+    if (!duplicate) {
+      peers.push(word);
+      byText.set(key, peers);
+    }
+  }
+  const retained = new Set([...byText.values()].flat());
+  return words.filter((word) => retained.has(word));
+}
+
 /**
  * Core Geometric Table Structure Analyzer.
  * Analyzes word coordinates, physical table headers, dynamic column bands,
@@ -1381,7 +1403,7 @@ export function analyzeRosterTableGeometry(
   words: OcrWordToken[],
   options: GeometricTableParseOptions = {}
 ): GeometricTableAnalysisResult {
-  const validWords = words.filter((w) => w.text.trim().length > 0);
+  const validWords = deduplicateOverlappingWords(words);
   if (validWords.length === 0) {
     return {
       headerDetected: false,
@@ -1449,7 +1471,8 @@ export function analyzeRosterTableGeometry(
     ? allPhysicalRows.slice(headerRowIdx + 1)
     : allPhysicalRows;
   const rawBodyClusters = candidateBodyClusters.filter(
-    (cluster) => !isNonStudentBannerOrFooterRow(cluster)
+    (cluster) =>
+      !isNonStudentBannerOrFooterRow(cluster) && scoreClusterAsHeaderRow(cluster) === 0
   );
 
   // 4. Build dynamic column bands from headers OR headerless statistical inference
@@ -1503,7 +1526,12 @@ export function analyzeRosterTableGeometry(
   // 5. Separate dedicated Surname (`lastName`) and Gender (`gender`) column tokens from Left Anchor tokens
   //    so vertically shifted surname cells never merge into neighbor student rows before Puanla's 1-to-1 matcher runs.
   //    Also intercept gender ("Kız"/"Erkek") and boarding/status ("Yat."/"Günd.") tokens so they NEVER enter surnameBodyItems.
-  const allBodyItems = rawBodyClusters.flatMap((c) => c.items);
+  // Auxiliary cells must not become row anchors: a displaced note can steal a
+  // surname from a real student during the one-to-one matching pass.
+  const allBodyItems = rawBodyClusters.flatMap((c) => c.items).filter((item) => {
+    const { matchedCol } = matchTokenItemToColumnBand(item, columns, headerRefY);
+    return matchedCol && matchedCol.role !== 'ignore' && matchedCol.role !== 'auxiliary';
+  });
   const anchorBodyItems: InternalTokenWithCorrectedY[] = [];
   const surnameBodyItems: InternalTokenWithCorrectedY[] = [];
   const genderBodyItems: InternalTokenWithCorrectedY[] = [];
@@ -1876,8 +1904,11 @@ export function analyzeRosterTableGeometry(
     const studentNumber =
       rawStuNum ||
       (!hasDedicatedStuNumCol && /^\d+$/.test(rawSeqText) ? rawSeqText : '');
-    const firstName = sortedFirst.map((t) => t.text).join(' ').trim();
-    const lastName = sortedLast.map((t) => t.text).join(' ').trim();
+    const combinedSingleName = sortedFull.length === 1 && sortedLast.length === 0
+      ? splitTurkishFullName(sortedFull[0].text)
+      : null;
+    const firstName = combinedSingleName?.firstName ?? sortedFirst.map((t) => t.text).join(' ').trim();
+    const lastName = combinedSingleName?.lastName ?? sortedLast.map((t) => t.text).join(' ').trim();
     const gender = sortedGender.map((t) => t.text).join(' ').trim();
 
     if (!studentNumber && !firstName && !lastName && parsedSeq === null) {
@@ -1917,6 +1948,9 @@ export function analyzeRosterTableGeometry(
     }
     if (sortedLast.length > 0) {
       cellBboxes.lastName = unionBbox(sortedLast.map((t) => t.bbox));
+    } else if (combinedSingleName?.lastName) {
+      // Both fields came from the same OCR element; retain its crop for review.
+      cellBboxes.lastName = sortedFull[0].bbox;
     }
     if (sortedGender.length > 0) {
       cellBboxes.gender = unionBbox(sortedGender.map((t) => t.bbox));
@@ -2057,6 +2091,19 @@ export function analyzeRosterTableGeometry(
   // 6c. Split OCR-glued row sequence numbers + student school numbers (e.g. Row 1: "1105" -> seq=1, no="105")
   splitGluedSequenceAndStudentNumbers(extractedRows);
 
+  // Consecutive printed sequences give an unambiguous one-row spacing even
+  // on a short list where a real missing row would inflate the median step.
+  const consecutiveSteps: number[] = [];
+  for (let i = 1; i < extractedRows.length; i++) {
+    const previous = extractedRows[i - 1];
+    const current = extractedRows[i];
+    if (previous.sequenceNumber !== null && current.sequenceNumber === previous.sequenceNumber + 1) {
+      const step = (current.rowBbox.y0 + current.rowBbox.y1 - previous.rowBbox.y0 - previous.rowBbox.y1) / 2;
+      if (step > medianWordH * 0.6) consecutiveSteps.push(step);
+    }
+  }
+  const gapRowStepY = consecutiveSteps.length > 0 ? median(consecutiveSteps) : medianRowStepY;
+
   // 7. Missing Student Detection (Sequence Number Gaps & Physical Vertical Row Spacing Gaps)
   const finalRowsWithGapCandidates: VerifiedOcrRosterRow[] = [];
   const tableMinX =
@@ -2086,12 +2133,18 @@ export function analyzeRosterTableGeometry(
         cur.sequenceNumber !== null &&
         next.sequenceNumber !== null &&
         next.sequenceNumber - cur.sequenceNumber > 1 &&
-        next.sequenceNumber - cur.sequenceNumber <= 6
+        next.sequenceNumber - cur.sequenceNumber <= 6 &&
+        // A misread sequence alone is not evidence of extra students.
+        gapRowStepY > 12 &&
+        deltaY >= gapRowStepY * (next.sequenceNumber - cur.sequenceNumber - 0.5)
       ) {
         missingCount = next.sequenceNumber - cur.sequenceNumber - 1;
         bySeqGap = true;
-      } else if (medianRowStepY > 12 && deltaY > medianRowStepY * 1.72) {
-        const estimated = Math.round(deltaY / medianRowStepY) - 1;
+      } else if (
+        (cur.sequenceNumber === null || next.sequenceNumber === null) &&
+        gapRowStepY > 12 && deltaY > gapRowStepY * 1.72
+      ) {
+        const estimated = Math.round(deltaY / gapRowStepY) - 1;
         if (estimated >= 1 && estimated <= 4) {
           missingCount = estimated;
           byVerticalGap = true;
