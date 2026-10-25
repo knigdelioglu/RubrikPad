@@ -551,9 +551,11 @@ export function App() {
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-15 flex items-center justify-between gap-3">
           {/* Brand Identity */}
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-blue-900 text-white flex items-center justify-center font-bold text-base shadow-xs">
-              R
-            </div>
+            <img
+              src="/icon.png"
+              alt="RubrikPad Logosu"
+              className="w-8 h-8 rounded-lg shadow-xs object-cover border border-slate-200"
+            />
             <div>
               <span className="font-bold text-slate-900 text-sm tracking-tight">
                 RubrikPad

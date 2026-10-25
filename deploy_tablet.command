@@ -33,12 +33,20 @@ echo "🚀 3/3 Kablosuz ADB ile tablete yükleniyor..."
 export ADB_MDNS_OPENSCREEN=1
 export ADB_MDNS_AUTO_CONNECT=1
 
-TABLET_DEV=$(adb devices -l | awk 'NR>1 && $2=="device" {print $1}' | head -n 1)
+# mDNS servislerinden otomatik bağlanmayı dene
+adb start-server >/dev/null 2>&1 || true
+for ip_port in $(adb mdns services 2>/dev/null | grep -E "(_adb-tls-connect|_adb)\._tcp" | awk '{print $NF}'); do
+  adb connect "$ip_port" >/dev/null 2>&1 || true
+done
+
+# Öncelikle Galaxy Tab / tablet cihazını hedefle (TV/STB gibi diğer cihazları hariç tut)
+TABLET_DEV=$(adb devices -l | grep "model:SM_" | awk '{print $1}' | head -n 1)
 
 if [ -z "$TABLET_DEV" ]; then
-  echo "🔍 Bağlı cihaz aranıyor, ADB yeniden başlatılıyor..."
-  adb start-server >/dev/null 2>&1 || true
-  sleep 2
+  TABLET_DEV=$(adb devices -l | grep "device " | grep -v -E "Google_TV|STB" | awk '{print $1}' | head -n 1)
+fi
+
+if [ -z "$TABLET_DEV" ]; then
   TABLET_DEV=$(adb devices -l | awk 'NR>1 && $2=="device" {print $1}' | head -n 1)
 fi
 

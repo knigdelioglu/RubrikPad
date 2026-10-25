@@ -26,7 +26,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg'],
+        includeAssets: ['icon.svg', 'icon.png', 'favicon.png'],
         manifest: {
           name: 'RubrikPad — Hızlı Sınıf İçi Rubrik & Performans Değerlendirme',
           short_name: 'RubrikPad',
@@ -41,6 +41,12 @@ export default defineConfig(() => {
               src: 'icon.svg',
               sizes: 'any',
               type: 'image/svg+xml',
+              purpose: 'any maskable',
+            },
+            {
+              src: 'icon.png',
+              sizes: '512x512',
+              type: 'image/png',
               purpose: 'any maskable',
             },
           ],
