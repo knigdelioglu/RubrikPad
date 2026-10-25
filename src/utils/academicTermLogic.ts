@@ -40,6 +40,12 @@ export interface TermComparisonSummary {
   termBreakdown: TermMetricSnapshot[];
 }
 
+function compareAcademicTerms(a: string, b: string): number {
+  const yearDifference = Number(a.slice(0, 4)) - Number(b.slice(0, 4));
+  if (yearDifference !== 0) return yearDifference;
+  return Number(a.endsWith('Bahar')) - Number(b.endsWith('Bahar'));
+}
+
 /**
  * Bir ISO tarih dizgesinden (`YYYY-MM-DD`) eğitim dönemini (`YYYY-YYYY Güz` veya `YYYY-YYYY Bahar`) hesaplar.
  * - Eylül (09) – Ocak (01): Güz Dönemi
@@ -50,15 +56,17 @@ export function deriveAcademicTermFromDate(
   fallbackAcademicYear = '2024-2025'
 ): string {
   const cleaned = String(dateStr ?? '').trim();
-  const match = cleaned.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
-  if (!match) {
+  const match = cleaned.match(/^(\d{4})-(\d{2})(?:-(\d{2})(?:T.*)?)?$/);
+  const year = Number(match?.[1]);
+  const month = Number(match?.[2]);
+  const day = Number(match?.[3] ?? 1);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (!match || month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]) {
     const yearMatch = String(fallbackAcademicYear).match(/(\d{4}-\d{4})/);
     const baseYear = yearMatch ? yearMatch[1] : '2024-2025';
     return `${baseYear} Güz`;
   }
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
 
   if (month >= 9 && month <= 12) {
     return `${year}-${year + 1} Güz`;
@@ -149,7 +157,7 @@ export function getAcademicTermOptions(
 
   const termEntries: AcademicTermOption[] = Array.from(
     countsByTerm.entries()
-  ).map(([term, sessionCount]) => {
+  ).sort(([a], [b]) => compareAcademicTerms(a, b)).map(([term, sessionCount]) => {
     const parts = term.split(' ');
     const academicYear = parts[0] || '2024-2025';
     const semester: 'Güz' | 'Bahar' =
@@ -249,7 +257,7 @@ export function computeTermComparisonAnalytics(
       ...DEFAULT_ACADEMIC_TERM_OPTIONS,
       ...allClassSessions.map((s) => resolveSessionAcademicTerm(s, classroom)),
     ])
-  );
+  ).sort(compareAcademicTerms);
 
   const termBreakdown: TermMetricSnapshot[] = allTermsList.map((term) => {
     const matched = filterSessionsByAcademicTerm(
