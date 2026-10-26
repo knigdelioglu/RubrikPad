@@ -58,6 +58,7 @@ export interface Rubric {
 export interface StudentGroup {
   id: string;
   name: string;
+  classId?: string; // classroom ID for class-scoped group evaluation in multi-class sessions
   studentIds: string[];
   criterionScores: Record<string, number | null>; // criterionId -> level points (0 valid, null unscored)
   directCriterionScores?: Record<string, number | null>; // criterionId -> exact integer points (0..maxPoints)

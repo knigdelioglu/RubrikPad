@@ -692,3 +692,189 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
   assert.equal(breakdown.effectiveCalc.finalScoreOutOf100, 75);
 });
 
+test('multi-class evaluation sessions isolate students and groups per classroom in both individual and group evaluation modes', async () => {
+  const {
+    getSessionClassIds,
+    resolveActiveSessionClassId,
+    getSessionStudentsForClassroom,
+    groupSessionStudentsByClassroom,
+    createInitialSessionGroups,
+    getSessionGroupsForClassroom,
+    replaceClassroomGroupsInSession,
+    generateBalancedRandomGroups,
+    redistributeGroupsSafely,
+    toggleGroupMemberAndReconcile,
+    transferAllCompletedGroupsToMembers,
+  } = await import('../rubricLogic.ts');
+
+  const classrooms: Classroom[] = [
+    {
+      id: 'cls-11a',
+      name: '11-A',
+      gradeLevel: '11. Sınıf',
+      subject: 'Türk Dili ve Edebiyatı',
+      academicYear: '2026-2027',
+    },
+    {
+      id: 'cls-11b',
+      name: '11-B',
+      gradeLevel: '11. Sınıf',
+      subject: 'Türk Dili ve Edebiyatı',
+      academicYear: '2026-2027',
+    },
+  ];
+
+  const students = [
+    { id: 'stu-11a-1', studentNumber: '101', fullName: 'Ahmet Yılmaz', classId: 'cls-11a' },
+    { id: 'stu-11a-2', studentNumber: '105', fullName: 'Zeynep Kaya', classId: 'cls-11a' },
+    { id: 'stu-11a-3', studentNumber: '108', fullName: 'Burak Demir', classId: 'cls-11a' },
+    { id: 'stu-11b-1', studentNumber: '102', fullName: 'Elif Çelik', classId: 'cls-11b' },
+    { id: 'stu-11b-2', studentNumber: '103', fullName: 'Canan Aydın', classId: 'cls-11b' },
+    { id: 'stu-11b-3', studentNumber: '109', fullName: 'Mert Şahin', classId: 'cls-11b' },
+  ];
+
+  const initialGroups = createInitialSessionGroups(['cls-11a', 'cls-11b']);
+  assert.equal(initialGroups.length, 2);
+  assert.equal(initialGroups[0].classId, 'cls-11a');
+  assert.equal(initialGroups[1].classId, 'cls-11b');
+
+  const multiClassSession: EvaluationSession = {
+    id: 'ses-multi-11ab',
+    title: '11-A ve 11-B Ortak Kitap Sunumu',
+    classId: 'cls-11a',
+    classIds: ['cls-11a', 'cls-11b'],
+    rubricId: BOOK_PRESENTATION_RUBRIC.id,
+    date: '2026-10-26',
+    status: 'in_progress',
+    mode: 'individual',
+    groups: initialGroups,
+    generalSessionNote: '',
+    evaluations: {},
+  };
+
+  assert.deepEqual(getSessionClassIds(multiClassSession), ['cls-11a', 'cls-11b']);
+  assert.equal(resolveActiveSessionClassId(multiClassSession, 'cls-11b'), 'cls-11b');
+  assert.equal(resolveActiveSessionClassId(multiClassSession, 'cls-invalid'), 'cls-11a');
+
+  // 1. Individual mode: students are strictly scoped to the selected classroom (never interleaved)
+  const students11A = getSessionStudentsForClassroom(students, multiClassSession, 'cls-11a');
+  const students11B = getSessionStudentsForClassroom(students, multiClassSession, 'cls-11b');
+
+  assert.deepEqual(students11A.map((s) => s.id), ['stu-11a-1', 'stu-11a-2', 'stu-11a-3']);
+  assert.deepEqual(students11B.map((s) => s.id), ['stu-11b-1', 'stu-11b-2', 'stu-11b-3']);
+
+  const grouped = groupSessionStudentsByClassroom(students, classrooms, multiClassSession);
+  assert.equal(grouped.length, 2);
+  assert.equal(grouped[0].classId, 'cls-11a');
+  assert.equal(grouped[1].classId, 'cls-11b');
+
+  // 2. Group mode: random group generation never mixes students from 11-A and 11-B
+  const mixedInputGroups = generateBalancedRandomGroups(students, {
+    targetGroupSize: 2,
+    seed: 42,
+  });
+  for (const grp of mixedInputGroups) {
+    const memberClasses = new Set(
+      grp.studentIds.map((sid) => students.find((s) => s.id === sid)?.classId)
+    );
+    assert.equal(
+      memberClasses.size,
+      1,
+      `Grup (${grp.name}) farklı sınıflardan öğrenci içermemeli`
+    );
+  }
+
+  // 3. Redistributing groups for 11-A only updates 11-A groups while preserving 11-B groups intact
+  const redistr11A = redistributeGroupsSafely(initialGroups, students11A, {
+    targetGroupSize: 2,
+    preserveEvaluatedGroups: true,
+    allowOverwriteEvaluated: false,
+    classId: 'cls-11a',
+  });
+  assert.equal(redistr11A.blocked, false);
+  assert.ok(redistr11A.groups.every((g) => g.classId === 'cls-11a'));
+
+  const mergedGroups = replaceClassroomGroupsInSession(
+    multiClassSession.groups,
+    redistr11A.groups,
+    students,
+    'cls-11a',
+    multiClassSession.classId
+  );
+
+  const groupsFor11A = getSessionGroupsForClassroom(
+    mergedGroups,
+    students,
+    'cls-11a',
+    multiClassSession.classId
+  );
+  const groupsFor11B = getSessionGroupsForClassroom(
+    mergedGroups,
+    students,
+    'cls-11b',
+    multiClassSession.classId
+  );
+
+  assert.equal(groupsFor11A.length, redistr11A.groups.length);
+  assert.equal(groupsFor11B.length, 1);
+  assert.equal(groupsFor11B[0].id, initialGroups[1].id);
+
+  // 4. Cross-classroom membership guard: a student from 11-B cannot be added to an 11-A group
+  const sessionWithMergedGroups: EvaluationSession = {
+    ...multiClassSession,
+    groups: mergedGroups,
+  };
+  const target11AGroupId = groupsFor11A[0].id;
+  const afterCrossClassAttempt = toggleGroupMemberAndReconcile(
+    sessionWithMergedGroups,
+    target11AGroupId,
+    'stu-11b-1',
+    '2026-10-26T10:00:00.000Z',
+    BOOK_PRESENTATION_RUBRIC,
+    students
+  );
+  const target11AGroupAfter = afterCrossClassAttempt.groups.find(
+    (g) => g.id === target11AGroupId
+  );
+  assert.equal(target11AGroupAfter?.studentIds.includes('stu-11b-1'), false);
+
+  // 5. Scoped transfer: transferAllCompletedGroupsToMembers with classId only transfers that classroom's groups
+  const fullScores = Object.fromEntries(
+    BOOK_PRESENTATION_RUBRIC.criteria.map((c) => [c.id, 2])
+  );
+  const sessionWithScoredGroupsBothClasses: EvaluationSession = {
+    ...multiClassSession,
+    groups: [
+      {
+        id: 'grp-11a-scored',
+        name: '11-A Grup 1',
+        classId: 'cls-11a',
+        studentIds: ['stu-11a-1', 'stu-11a-2'],
+        criterionScores: fullScores,
+        groupNote: '11-A grup notu',
+      },
+      {
+        id: 'grp-11b-scored',
+        name: '11-B Grup 1',
+        classId: 'cls-11b',
+        studentIds: ['stu-11b-1', 'stu-11b-2'],
+        criterionScores: fullScores,
+        groupNote: '11-B grup notu',
+      },
+    ],
+  };
+
+  const transfer11AResult = transferAllCompletedGroupsToMembers(
+    sessionWithScoredGroupsBothClasses,
+    BOOK_PRESENTATION_RUBRIC,
+    '2026-10-26T11:00:00.000Z',
+    'cls-11a',
+    students
+  );
+  assert.equal(transfer11AResult.transferredGroupCount, 1);
+  assert.equal(transfer11AResult.transferredStudentCount, 2);
+  assert.ok(transfer11AResult.updatedSession.evaluations['stu-11a-1']);
+  assert.equal(transfer11AResult.updatedSession.evaluations['stu-11b-1'], undefined);
+});
+
+

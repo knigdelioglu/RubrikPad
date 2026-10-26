@@ -1413,10 +1413,226 @@ export function hasGroupEvaluationData(group: StudentGroup): boolean {
 }
 
 /**
- * Generates balanced random student groups and enforces unique membership (P1 #5).
- * When `existingGroups` is provided and `preserveEvaluatedGroups !== false`, any group
- * that already has scores or notes is preserved intact, and only the remaining students
- * are redistributed into new balanced groups.
+ * Returns the ordered list of classroom IDs associated with an evaluation session.
+ */
+export function getSessionClassIds(
+  session: Pick<EvaluationSession, 'classId' | 'classIds'> | null | undefined
+): string[] {
+  if (!session) return [];
+  const raw =
+    Array.isArray(session.classIds) && session.classIds.length > 0
+      ? session.classIds
+      : session.classId
+      ? [session.classId]
+      : [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of raw) {
+    const trimmed = String(id || '').trim();
+    if (trimmed && !seen.has(trimmed)) {
+      seen.add(trimmed);
+      result.push(trimmed);
+    }
+  }
+  return result;
+}
+
+/**
+ * Resolves the active classroom ID within a single-class or multi-class evaluation session.
+ * Guarantees that multi-class evaluations always operate on a specific active classroom (`sınıf bazlı`).
+ */
+export function resolveActiveSessionClassId(
+  session: Pick<EvaluationSession, 'classId' | 'classIds'> | null | undefined,
+  requestedClassId?: string
+): string {
+  const allowedIds = getSessionClassIds(session);
+  if (allowedIds.length === 0) return '';
+  if (requestedClassId && allowedIds.includes(requestedClassId)) {
+    return requestedClassId;
+  }
+  if (session?.classId && allowedIds.includes(session.classId)) {
+    return session.classId;
+  }
+  return allowedIds[0];
+}
+
+/**
+ * Returns the non-archived students belonging strictly to the target (or active) classroom of a session,
+ * sorted numerically by studentNumber. Prevents mixing students from multiple classes together.
+ */
+export function getSessionStudentsForClassroom(
+  students: Student[],
+  session: Pick<EvaluationSession, 'classId' | 'classIds'> | null | undefined,
+  targetClassId?: string
+): Student[] {
+  const activeClassId = resolveActiveSessionClassId(session, targetClassId);
+  if (!activeClassId) return [];
+  return students
+    .filter((s) => !s.archived && s.classId === activeClassId)
+    .sort((a, b) =>
+      a.studentNumber.localeCompare(b.studentNumber, undefined, {
+        numeric: true,
+      })
+    );
+}
+
+/**
+ * Groups a session's non-archived students strictly by classroom (in the order of `getSessionClassIds(session)`),
+ * with each classroom's students sorted by studentNumber.
+ */
+export function groupSessionStudentsByClassroom(
+  students: Student[],
+  classrooms: Classroom[],
+  session: Pick<EvaluationSession, 'classId' | 'classIds'> | null | undefined
+): Array<{
+  classId: string;
+  classroom: Classroom | undefined;
+  students: Student[];
+}> {
+  const classIds = getSessionClassIds(session);
+  const classroomsById = new Map<string, Classroom>();
+  for (const c of classrooms) {
+    classroomsById.set(c.id, c);
+  }
+  return classIds.map((classId) => ({
+    classId,
+    classroom: classroomsById.get(classId),
+    students: getSessionStudentsForClassroom(students, session, classId),
+  }));
+}
+
+/**
+ * Resolves which classroom (`classId`) a `StudentGroup` belongs to:
+ * 1. Explicit `group.classId` if present
+ * 2. The `classId` of the group's first valid member student in `students`
+ * 3. `fallbackClassId` (e.g. `session.classId`)
+ */
+export function resolveGroupClassId(
+  group: StudentGroup,
+  studentsOrMap: Student[] | Record<string, Student> | Map<string, Student>,
+  fallbackClassId = ''
+): string {
+  if (group.classId && group.classId.trim()) {
+    return group.classId.trim();
+  }
+  const lookup = (stuId: string): Student | undefined => {
+    if (Array.isArray(studentsOrMap)) {
+      return studentsOrMap.find((s) => s.id === stuId);
+    }
+    if (studentsOrMap instanceof Map) {
+      return studentsOrMap.get(stuId);
+    }
+    return studentsOrMap[stuId];
+  };
+  for (const stuId of group.studentIds || []) {
+    const stu = lookup(stuId);
+    if (stu?.classId) {
+      return stu.classId;
+    }
+  }
+  return fallbackClassId;
+}
+
+/**
+ * Filters a session's groups strictly to those belonging to `targetClassId`.
+ * Also sanitizes any group whose member list accidentally spans multiple classrooms by keeping only members of `targetClassId`.
+ */
+export function getSessionGroupsForClassroom(
+  groups: StudentGroup[],
+  students: Student[],
+  targetClassId: string,
+  fallbackClassId = ''
+): StudentGroup[] {
+  if (!targetClassId) return groups || [];
+  const studentsById = new Map<string, Student>();
+  for (const s of students) {
+    studentsById.set(s.id, s);
+  }
+
+  const matching: StudentGroup[] = [];
+  for (const grp of groups || []) {
+    const resolvedClassId = resolveGroupClassId(
+      grp,
+      studentsById,
+      fallbackClassId || targetClassId
+    );
+    if (resolvedClassId === targetClassId) {
+      const validClassMemberIds = (grp.studentIds || []).filter((sid) => {
+        const stu = studentsById.get(sid);
+        return !stu || stu.classId === targetClassId;
+      });
+      matching.push(
+        validClassMemberIds.length === (grp.studentIds || []).length
+          ? grp
+          : { ...grp, classId: targetClassId, studentIds: validClassMemberIds }
+      );
+    }
+  }
+  return matching;
+}
+
+/**
+ * Creates initial class-scoped default groups (`Grup 1: Çalışma Ekibi`) for each classroom in `classIds`
+ * so multi-class sessions start with isolated per-classroom group workspaces.
+ */
+export function createInitialSessionGroups(classIds: string[]): StudentGroup[] {
+  const uniqueIds = Array.from(
+    new Set(classIds.map((id) => String(id || '').trim()).filter(Boolean))
+  );
+  if (uniqueIds.length === 0) {
+    return [
+      {
+        id: createUniqueEntityId('grp'),
+        name: 'Grup 1: Çalışma Ekibi',
+        studentIds: [],
+        criterionScores: {},
+        groupNote: '',
+      },
+    ];
+  }
+  return uniqueIds.map((classId) => ({
+    id: createUniqueEntityId('grp'),
+    name: 'Grup 1: Çalışma Ekibi',
+    classId,
+    studentIds: [],
+    criterionScores: {},
+    groupNote: '',
+  }));
+}
+
+/**
+ * Replaces only the groups belonging to `targetClassId` within a session's `allGroups` array,
+ * preserving all groups belonging to other classrooms in multi-class sessions.
+ */
+export function replaceClassroomGroupsInSession(
+  allGroups: StudentGroup[],
+  replacementClassGroups: StudentGroup[],
+  students: Student[],
+  targetClassId: string,
+  fallbackClassId = ''
+): StudentGroup[] {
+  if (!targetClassId) return replacementClassGroups;
+  const studentsById = new Map<string, Student>();
+  for (const s of students) {
+    studentsById.set(s.id, s);
+  }
+  const otherClassGroups = (allGroups || []).filter(
+    (g) =>
+      resolveGroupClassId(g, studentsById, fallbackClassId || targetClassId) !==
+      targetClassId
+  );
+  const taggedReplacement = replacementClassGroups.map((g) => ({
+    ...g,
+    classId: g.classId || targetClassId,
+  }));
+  return [...otherClassGroups, ...taggedReplacement];
+}
+
+/**
+ * Generates balanced random student groups and enforces unique membership (P1 #5) and strict class isolation:
+ * - Students from different classrooms (`classId`) are NEVER mixed into the same group.
+ * - When `options.classId` is provided, only students and preserved groups of that classroom are included.
+ * - When `students` contains multiple classrooms and `options.classId` is omitted, groups are generated separately per classroom.
  */
 export function generateBalancedRandomGroups(
   students: Student[],
@@ -1426,20 +1642,64 @@ export function generateBalancedRandomGroups(
     seed?: number;
     existingGroups?: StudentGroup[];
     preserveEvaluatedGroups?: boolean;
+    classId?: string;
   }
 ): StudentGroup[] {
-  const activeStudents = students.filter((s) => !s.archived);
+  const activeStudents = students.filter(
+    (s) => !s.archived && (!options.classId || s.classId === options.classId)
+  );
   if (activeStudents.length === 0) return [];
+
+  const distinctClassIds = Array.from(
+    new Set(activeStudents.map((s) => s.classId).filter(Boolean))
+  );
+
+  // If multiple classrooms are present in `students` and no single `classId` filter was passed,
+  // partition by classroom so students from different classes are NEVER mixed into the same group.
+  if (!options.classId && distinctClassIds.length > 1) {
+    const allGenerated: StudentGroup[] = [];
+    distinctClassIds.forEach((clsId, clsIdx) => {
+      const clsStudents = activeStudents.filter((s) => s.classId === clsId);
+      const clsExistingGroups = getSessionGroupsForClassroom(
+        options.existingGroups || [],
+        activeStudents,
+        clsId,
+        clsId
+      );
+      const clsGroups = generateBalancedRandomGroups(clsStudents, {
+        ...options,
+        seed: (options.seed ?? Date.now()) + clsIdx * 7919,
+        existingGroups: clsExistingGroups,
+        classId: clsId,
+      });
+      allGenerated.push(...clsGroups);
+    });
+    return allGenerated;
+  }
+
+  const effectiveClassId = options.classId || distinctClassIds[0];
 
   const shouldPreserve =
     Array.isArray(options.existingGroups) &&
     options.existingGroups.length > 0 &&
     options.preserveEvaluatedGroups !== false;
 
+  const scopedExistingGroups = options.classId
+    ? getSessionGroupsForClassroom(
+        options.existingGroups || [],
+        students,
+        options.classId,
+        options.classId
+      )
+    : options.existingGroups || [];
+
   const preservedGroups: StudentGroup[] = shouldPreserve
-    ? options.existingGroups!
+    ? scopedExistingGroups
         .filter((g) => hasGroupEvaluationData(g))
-        .map((g) => JSON.parse(JSON.stringify(g)))
+        .map((g) => ({
+          ...JSON.parse(JSON.stringify(g)),
+          ...(options.classId ? { classId: options.classId } : {}),
+        }))
     : [];
 
   const lockedStudentIds = new Set<string>(
@@ -1482,9 +1742,10 @@ export function generateBalancedRandomGroups(
   });
 
   const startNum = preservedGroups.length;
-  const newGroups = buckets.map((studentIds, idx) => ({
+  const newGroups: StudentGroup[] = buckets.map((studentIds, idx) => ({
     id: `grp-rand-${Date.now()}-${startNum + idx + 1}`,
     name: `Grup ${startNum + idx + 1}`,
+    ...(effectiveClassId ? { classId: effectiveClassId } : {}),
     studentIds,
     criterionScores: {},
     groupNote: '',
@@ -1494,7 +1755,8 @@ export function generateBalancedRandomGroups(
 }
 
 /**
- * Safely redistributes session groups while protecting already-evaluated groups from accidental loss.
+ * Safely redistributes session groups while protecting already-evaluated groups from accidental loss
+ * and keeping groups strictly separated by classroom (`classId`).
  * - By default (`preserveEvaluatedGroups: true`), keeps scored groups untouched and only distributes remaining students.
  * - If `preserveEvaluatedGroups: false`, blocks overwriting scored groups unless `allowOverwriteEvaluated: true` is explicitly passed.
  */
@@ -1507,6 +1769,7 @@ export function redistributeGroupsSafely(
     seed?: number;
     preserveEvaluatedGroups?: boolean;
     allowOverwriteEvaluated?: boolean;
+    classId?: string;
   }
 ): {
   groups: StudentGroup[];
@@ -1516,14 +1779,27 @@ export function redistributeGroupsSafely(
   blocked: boolean;
   warning?: string;
 } {
-  const evaluatedExisting = (existingGroups || []).filter((g) =>
+  const scopedExistingGroups = options.classId
+    ? getSessionGroupsForClassroom(
+        existingGroups || [],
+        students,
+        options.classId,
+        options.classId
+      )
+    : existingGroups || [];
+
+  const scopedStudents = options.classId
+    ? students.filter((s) => !s.archived && s.classId === options.classId)
+    : students;
+
+  const evaluatedExisting = scopedExistingGroups.filter((g) =>
     hasGroupEvaluationData(g)
   );
   const preserve = options.preserveEvaluatedGroups !== false;
 
   if (!preserve && evaluatedExisting.length > 0 && !options.allowOverwriteEvaluated) {
     return {
-      groups: existingGroups,
+      groups: scopedExistingGroups,
       preservedGroupCount: evaluatedExisting.length,
       newGroupCount: 0,
       redistributedStudentCount: 0,
@@ -1532,12 +1808,13 @@ export function redistributeGroupsSafely(
     };
   }
 
-  const nextGroups = generateBalancedRandomGroups(students, {
+  const nextGroups = generateBalancedRandomGroups(scopedStudents, {
     targetGroupSize: options.targetGroupSize,
     groupCount: options.groupCount,
     seed: options.seed,
-    existingGroups,
+    existingGroups: scopedExistingGroups,
     preserveEvaluatedGroups: preserve,
+    classId: options.classId,
   });
 
   const preservedCount = preserve ? evaluatedExisting.length : 0;
@@ -1545,7 +1822,7 @@ export function redistributeGroupsSafely(
   const lockedIds = new Set(
     preserve ? evaluatedExisting.flatMap((g) => g.studentIds) : []
   );
-  const redistributedStudentCount = students.filter(
+  const redistributedStudentCount = scopedStudents.filter(
     (s) => !s.archived && !lockedIds.has(s.id)
   ).length;
 
@@ -2013,7 +2290,9 @@ export function evaluateGroupAndTransferToMembers(
 export function transferAllCompletedGroupsToMembers(
   session: EvaluationSession,
   rubric?: Rubric,
-  timestampIso = new Date().toISOString()
+  timestampIso = new Date().toISOString(),
+  targetClassId?: string,
+  students?: Student[]
 ): {
   updatedSession: EvaluationSession;
   transferredGroupCount: number;
@@ -2025,6 +2304,16 @@ export function transferAllCompletedGroupsToMembers(
   let transferredStudentCount = 0;
 
   const nextGroups = (session.groups || []).map((grp) => {
+    if (targetClassId) {
+      const grpClassId = resolveGroupClassId(
+        grp,
+        students || [],
+        session.classId
+      );
+      if (grpClassId !== targetClassId) {
+        return grp;
+      }
+    }
     const eligibility = canApplyGroupScoresToMembers(grp, effectiveRubric);
     if (!eligibility.allowed) {
       return grp;
@@ -2108,13 +2397,15 @@ export function deleteGroupAndReconcile(
  * Toggles a student's membership in a group and automatically reconciles reflected group scores:
  * - Removing a student from a group immediately clears their stale `groupCriterionScores`, `groupNote`, and `groupId`.
  * - Adding a student to a completed evaluated group syncs that group's scores to the student's `groupCriterionScores`.
+ * - Enforces class-based group isolation when `students` is provided: students from a different classroom cannot be added to another classroom's group.
  */
 export function toggleGroupMemberAndReconcile(
   session: EvaluationSession,
   groupId: string,
   studentId: string,
   timestampIso = new Date().toISOString(),
-  rubric?: Rubric
+  rubric?: Rubric,
+  students?: Student[]
 ): EvaluationSession {
   const conflicts = findDuplicateGroupMemberships(
     session.groups || [],
@@ -2129,10 +2420,32 @@ export function toggleGroupMemberAndReconcile(
   if (!targetGroup) return session;
 
   const isRemoving = targetGroup.studentIds.includes(studentId);
+  let resolvedGroupClassId = targetGroup.classId;
+
+  if (!isRemoving && Array.isArray(students) && students.length > 0) {
+    const candidateStudent = students.find((s) => s.id === studentId);
+    if (candidateStudent) {
+      const existingGroupClassId = resolveGroupClassId(
+        targetGroup,
+        students,
+        ''
+      );
+      if (
+        existingGroupClassId &&
+        existingGroupClassId !== candidateStudent.classId
+      ) {
+        // Prevent mixing students from different classrooms into the same group
+        return session;
+      }
+      resolvedGroupClassId = candidateStudent.classId;
+    }
+  }
+
   const nextGroups = (session.groups || []).map((g) => {
     if (g.id !== groupId) return g;
     return {
       ...g,
+      ...(resolvedGroupClassId ? { classId: resolvedGroupClassId } : {}),
       studentIds: isRemoving
         ? g.studentIds.filter((id) => id !== studentId)
         : [...g.studentIds, studentId],
@@ -2167,17 +2480,20 @@ export function toggleGroupMemberAndReconcile(
 
 /**
  * Computes longitudinal group evaluation history across sessions (P1 #6).
+ * In multi-classroom sessions, filters groups strictly to `classId` when provided.
  */
 export function getGroupProgressHistory(
   sessions: EvaluationSession[],
   rubricsById: Record<string, Rubric>,
-  classId?: string
+  classId?: string,
+  students?: Student[]
 ): Array<{
   sessionId: string;
   sessionTitle: string;
   date: string;
   groupId: string;
   groupName: string;
+  classId?: string;
   memberCount: number;
   memberIds: string[];
   scoreOutOf100: number | null;
@@ -2189,7 +2505,8 @@ export function getGroupProgressHistory(
   const filteredSessions = [...sessions]
     .filter((s) => {
       if (!classId) return true;
-      const classes = s.classIds && s.classIds.length > 0 ? s.classIds : [s.classId];
+      const classes =
+        s.classIds && s.classIds.length > 0 ? s.classIds : [s.classId];
       return classes.includes(classId);
     })
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -2200,6 +2517,7 @@ export function getGroupProgressHistory(
     date: string;
     groupId: string;
     groupName: string;
+    classId?: string;
     memberCount: number;
     memberIds: string[];
     scoreOutOf100: number | null;
@@ -2214,6 +2532,15 @@ export function getGroupProgressHistory(
     if (!rubric) continue;
 
     for (const grp of ses.groups || []) {
+      const grpClassId = resolveGroupClassId(
+        grp,
+        students || [],
+        ses.classId
+      );
+      if (classId && grpClassId && grpClassId !== classId) {
+        continue;
+      }
+
       const calc = calculateWeightedScore(
         rubric,
         grp.criterionScores,
@@ -2227,6 +2554,7 @@ export function getGroupProgressHistory(
         date: ses.date,
         groupId: grp.id,
         groupName: grp.name,
+        classId: grpClassId || undefined,
         memberCount: grp.studentIds.length,
         memberIds: grp.studentIds,
         scoreOutOf100: calc.finalScoreOutOf100,

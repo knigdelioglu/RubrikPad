@@ -80,6 +80,9 @@ interface FastEvaluationViewProps {
   onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
+  sessionClassrooms?: Classroom[];
+  activeClassroom?: Classroom;
+  onSelectClassroom?: (classId: string) => void;
 }
 
 export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
@@ -113,6 +116,9 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   onOpenQuickNoteModal,
   allSessions,
   rubricsById,
+  sessionClassrooms = [],
+  activeClassroom,
+  onSelectClassroom,
 }) => {
   const [viewMode, setViewMode] = useState<RubricCardViewMode>('compact');
   const effectiveSessions =
@@ -156,8 +162,35 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               <Zap className="w-4 h-4 text-blue-900 shrink-0" />
               <h1 className="text-sm font-bold text-slate-900">
                 Hızlı Değerlendirme Modu
+                {activeClassroom ? ` (${activeClassroom.name})` : ''}
               </h1>
             </div>
+
+            {sessionClassrooms.length > 1 && onSelectClassroom && (
+              <div
+                data-testid="fast-view-class-switcher"
+                className="flex items-center gap-1 bg-slate-100 border border-slate-300 rounded-xl p-0.5"
+              >
+                {sessionClassrooms.map((cls) => {
+                  const isSelectedCls = activeClassroom?.id === cls.id;
+                  return (
+                    <button
+                      key={cls.id}
+                      type="button"
+                      data-testid={`fast-class-tab-${cls.id}`}
+                      onClick={() => onSelectClassroom(cls.id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                        isSelectedCls
+                          ? 'bg-blue-900 text-white'
+                          : 'text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      {cls.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <label htmlFor="fast-rubric-select" className="sr-only">
               Değerlendirme Rubriği Seçin

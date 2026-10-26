@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  Classroom,
   EvaluationSession,
   Rubric,
   Student,
@@ -32,6 +33,8 @@ import {
   getGroupProgressHistory,
   getNextFocusedCriterionIndexAfterScore,
   getNextPendingGroup,
+  getSessionGroupsForClassroom,
+  getSessionStudentsForClassroom,
   getStudentEvaluationBreakdown,
   hasGroupEvaluationData,
   isScoreAssigned,
@@ -53,6 +56,11 @@ interface GroupEvaluationViewProps {
   allSessions: EvaluationSession[];
   rubricsById: Record<string, Rubric>;
   classStudents: Student[];
+  classGroups?: StudentGroup[];
+  sessionClassrooms?: Classroom[];
+  activeClassroom?: Classroom;
+  onSelectClassroom?: (classId: string) => void;
+  allStudents?: Student[];
   selectedGroupId: string;
   onSelectGroup: (groupId: string) => void;
   cardViewMode: RubricCardViewMode;
@@ -96,6 +104,11 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   allSessions,
   rubricsById,
   classStudents,
+  classGroups,
+  sessionClassrooms = [],
+  activeClassroom,
+  onSelectClassroom,
+  allStudents = [],
   selectedGroupId,
   onSelectGroup,
   cardViewMode,
@@ -147,11 +160,17 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
     useState<CriterionFocusDisplayMode>('hide_others');
   const [focusedCriterionIndex, setFocusedCriterionIndex] = useState(0);
 
+  const effectiveClassId = activeClassroom?.id || activeSession.classId;
+  const effectiveGroups = useMemo(
+    () => classGroups ?? activeSession.groups,
+    [classGroups, activeSession.groups]
+  );
+
   const selectedGroup = useMemo(
     () =>
-      activeSession.groups.find((g) => g.id === selectedGroupId) ||
-      activeSession.groups[0],
-    [activeSession.groups, selectedGroupId]
+      effectiveGroups.find((g) => g.id === selectedGroupId) ||
+      effectiveGroups[0],
+    [effectiveGroups, selectedGroupId]
   );
 
   useEffect(() => {
@@ -183,38 +202,38 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   );
 
   const selectedGroupIndex = useMemo(
-    () => activeSession.groups.findIndex((g) => g.id === selectedGroup?.id),
-    [activeSession.groups, selectedGroup]
+    () => effectiveGroups.findIndex((g) => g.id === selectedGroup?.id),
+    [effectiveGroups, selectedGroup]
   );
 
   const prevGroup =
     selectedGroupIndex > 0
-      ? activeSession.groups[selectedGroupIndex - 1]
+      ? effectiveGroups[selectedGroupIndex - 1]
       : null;
   const nextGroup =
     selectedGroupIndex >= 0 &&
-    selectedGroupIndex < activeSession.groups.length - 1
-      ? activeSession.groups[selectedGroupIndex + 1]
+    selectedGroupIndex < effectiveGroups.length - 1
+      ? effectiveGroups[selectedGroupIndex + 1]
       : null;
 
   const evaluatedGroupsCount = useMemo(
     () =>
-      (activeSession.groups || []).filter((g) => hasGroupEvaluationData(g))
+      (effectiveGroups || []).filter((g) => hasGroupEvaluationData(g))
         .length,
-    [activeSession.groups]
+    [effectiveGroups]
   );
 
   const completedGroupsCount = useMemo(
     () =>
-      (activeSession.groups || []).filter(
+      (effectiveGroups || []).filter(
         (g) => canApplyGroupScoresToMembers(g, activeRubric).allowed
       ).length,
-    [activeSession.groups, activeRubric]
+    [effectiveGroups, activeRubric]
   );
 
   const unappliedCompletedGroupsCount = useMemo(
     () =>
-      (activeSession.groups || []).filter((g) => {
+      (effectiveGroups || []).filter((g) => {
         const st = getGroupLifecycleStatus(
           activeRubric,
           g,
@@ -222,13 +241,18 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
         );
         return st.state === 'completed_unapplied' && g.studentIds.length > 0;
       }).length,
-    [activeSession.groups, activeRubric, activeSession.evaluations]
+    [effectiveGroups, activeRubric, activeSession.evaluations]
   );
 
   const groupHistory = useMemo(
     () =>
-      getGroupProgressHistory(allSessions, rubricsById, activeSession.classId),
-    [allSessions, rubricsById, activeSession.classId]
+      getGroupProgressHistory(
+        allSessions,
+        rubricsById,
+        effectiveClassId,
+        allStudents.length > 0 ? allStudents : classStudents
+      ),
+    [allSessions, rubricsById, effectiveClassId, allStudents, classStudents]
   );
 
   const studentsById = useMemo(() => {
@@ -240,13 +264,13 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   // Map studentId -> groupName for membership conflict prevention (P1 #5)
   const assignedGroupByStudentId = useMemo(() => {
     const map: Record<string, { groupId: string; groupName: string }> = {};
-    for (const g of activeSession.groups) {
+    for (const g of effectiveGroups) {
       for (const sid of g.studentIds) {
         map[sid] = { groupId: g.id, groupName: g.name };
       }
     }
     return map;
-  }, [activeSession.groups]);
+  }, [effectiveGroups]);
 
   const activeGroupLifecycle = useMemo(() => {
     if (!selectedGroup) return null;
@@ -260,12 +284,12 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   const nextPendingGroup = useMemo(() => {
     if (!selectedGroup) return null;
     return getNextPendingGroup(
-      activeSession.groups,
+      effectiveGroups,
       activeSession.evaluations,
       activeRubric,
       selectedGroup.id
     );
-  }, [activeSession.groups, activeSession.evaluations, activeRubric, selectedGroup]);
+  }, [effectiveGroups, activeSession.evaluations, activeRubric, selectedGroup]);
 
   const filteredMemberCandidates = useMemo(() => {
     const q = memberSearchQuery.trim().toLowerCase();
@@ -293,7 +317,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
     }
 
     const conflicts = findDuplicateGroupMemberships(
-      activeSession.groups,
+      effectiveGroups,
       newGroupMemberIds
     );
     if (conflicts.length > 0) {
@@ -306,6 +330,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
     const newGroup: StudentGroup = {
       id: `grp-${Date.now()}`,
       name: newGroupName.trim(),
+      classId: effectiveClassId,
       studentIds: newGroupMemberIds,
       criterionScores: {},
       groupNote: '',
@@ -320,12 +345,13 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   const handleGenerateBalancedRandom = () => {
     setRandomRedistributeWarning(null);
     const result = redistributeGroupsSafely(
-      activeSession.groups,
+      effectiveGroups,
       classStudents,
       {
         targetGroupSize: randomTargetSize,
         preserveEvaluatedGroups: preserveScoredGroups,
         allowOverwriteEvaluated: confirmOverwriteScoredGroups,
+        classId: effectiveClassId,
       }
     );
 
@@ -348,13 +374,23 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   return (
     <div className="space-y-4">
       {/* Top Group Action Bar */}
-      <div className="bg-white border border-slate-300 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
-        <div>
-          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-            <Users className="w-4 h-4 text-blue-900" />
-            Grup Değerlendirmesi
-          </h2>
-        </div>
+      <div className="bg-white border border-slate-300 rounded-2xl p-3.5 space-y-3 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Users className="w-4 h-4 text-blue-900" />
+              Grup Değerlendirmesi
+            </h2>
+            {activeClassroom && (
+              <span
+                data-testid="group-active-classroom-badge"
+                className="px-2.5 py-0.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-bold text-blue-900"
+              >
+                {activeClassroom.name} ({classStudents.length} Öğrenci ·{' '}
+                {effectiveGroups.length} Takım)
+              </span>
+            )}
+          </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {onToggleAutoTransferToMembers && (
@@ -421,6 +457,59 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
             Grup Dönemsel Geçmişi ({groupHistory.length})
           </button>
         </div>
+        </div>
+
+        {/* Multi-Classroom Session Switcher inside Group Mode */}
+        {sessionClassrooms.length > 1 && onSelectClassroom && (
+          <div
+            data-testid="group-view-class-switcher"
+            className="pt-2.5 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2"
+          >
+            <span className="text-xs font-bold text-slate-600">
+              Sınıf Bazlı Grup Değerlendirmesi (Şube Seçin):
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {sessionClassrooms.map((cls) => {
+                const isSelectedCls = activeClassroom?.id === cls.id;
+                const clsGroups = getSessionGroupsForClassroom(
+                  activeSession.groups,
+                  allStudents.length > 0 ? allStudents : classStudents,
+                  cls.id,
+                  activeSession.classId
+                );
+                const clsStudents = getSessionStudentsForClassroom(
+                  allStudents.length > 0 ? allStudents : classStudents,
+                  activeSession,
+                  cls.id
+                );
+                return (
+                  <button
+                    key={cls.id}
+                    type="button"
+                    data-testid={`group-class-tab-${cls.id}`}
+                    onClick={() => onSelectClassroom(cls.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer ${
+                      isSelectedCls
+                        ? 'bg-blue-900 text-white border-blue-950 shadow-2xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>{cls.name}</span>
+                    <span
+                      className={`text-[10px] font-mono-num px-1.5 py-0.5 rounded-md ${
+                        isSelectedCls
+                          ? 'bg-blue-800 text-blue-100'
+                          : 'bg-white text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      {clsGroups.length} grup · {clsStudents.length} öğr.
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Balanced Random Group Modal/Drawer */}
@@ -588,8 +677,8 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
         >
           <div className="min-w-0">
             <div className="text-[11px] font-bold text-blue-900">
-              Takım Seçici ({selectedGroupIndex + 1}/
-              {activeSession.groups.length})
+              Takım Seçici ({effectiveGroups.length > 0 ? selectedGroupIndex + 1 : 0}/
+              {effectiveGroups.length})
             </div>
             <div className="text-xs font-bold text-slate-900 truncate">
               {selectedGroup ? selectedGroup.name : 'Grup Seçin'}
@@ -621,7 +710,8 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                Çalışma Takımları ({activeSession.groups.length})
+                Çalışma Takımları ({effectiveGroups.length})
+                {activeClassroom ? ` · ${activeClassroom.name}` : ''}
               </h3>
             </div>
             <button
@@ -733,7 +823,22 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
 
           {/* Visual Team Cards List */}
           <div className="space-y-2.5 max-h-[580px] overflow-y-auto pr-0.5">
-            {activeSession.groups.map((grp) => {
+            {effectiveGroups.length === 0 ? (
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 text-center space-y-2">
+                <p>
+                  {activeClassroom?.name || 'Bu şube'} için henüz çalışma grubu
+                  oluşturulmadı.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowNewGroupForm(true)}
+                  className="px-3 py-1.5 rounded-lg bg-blue-900 text-white font-bold hover:bg-blue-950 cursor-pointer"
+                >
+                  + İlk Grubu Oluştur
+                </button>
+              </div>
+            ) : null}
+            {effectiveGroups.map((grp) => {
               const isSelected = selectedGroup?.id === grp.id;
               const lifecycle = getGroupLifecycleStatus(
                 activeRubric,
@@ -1662,7 +1767,18 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                 )}
               </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="bg-white border border-slate-300 rounded-2xl p-6 text-center space-y-3 shadow-xs">
+              <div className="text-sm font-bold text-slate-900">
+                {activeClassroom?.name || 'Seçili Şube'} İçin Henüz Grup Bulunmuyor
+              </div>
+              <p className="text-xs text-slate-600">
+                Soldaki &ldquo;Yeni Grup&rdquo; butonunu veya üstteki &ldquo;Dengeli
+                Rastgele Grup Oluştur&rdquo; aracını kullanarak bu şube öğrencileri
+                için grup oluşturabilirsiniz.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  Classroom,
   EvaluationSession,
   Rubric,
   Student,
@@ -25,6 +26,8 @@ import { QUICK_OBSERVATION_TAGS } from '../../data/seedData.ts';
 import {
   getFocusModeStepSummary,
   getNextFocusedCriterionIndexAfterScore,
+  getSessionProgressStats,
+  getSessionStudentsForClassroom,
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
   hasStudentObservationData,
@@ -87,6 +90,10 @@ interface IndividualEvaluationViewProps {
   onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
+  sessionClassrooms?: Classroom[];
+  activeClassroom?: Classroom;
+  onSelectClassroom?: (classId: string) => void;
+  allStudents?: Student[];
 }
 
 export const IndividualEvaluationView: React.FC<
@@ -119,6 +126,10 @@ export const IndividualEvaluationView: React.FC<
   onOpenQuickNoteModal,
   allSessions,
   rubricsById,
+  sessionClassrooms = [],
+  activeClassroom,
+  onSelectClassroom,
+  allStudents = [],
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showPortraitRosterDrawer, setShowPortraitRosterDrawer] =
@@ -341,11 +352,82 @@ export const IndividualEvaluationView: React.FC<
           } lg:block lg:col-span-4 xl:col-span-3 bg-white border border-slate-300 rounded-2xl overflow-hidden shadow-xs lg:sticky lg:top-4`}
         >
           <div className="p-3.5 border-b border-slate-200 bg-slate-50 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-slate-900">
-                Öğrenci Listesi
-              </h2>
-              <span className="text-xs font-mono-num font-bold text-slate-800 bg-white px-2.5 py-0.5 rounded-md border border-slate-300">
+            {sessionClassrooms.length > 1 && onSelectClassroom && (
+              <div
+                data-testid="individual-view-class-switcher"
+                className="p-1.5 bg-white border border-slate-300 rounded-xl space-y-1.5"
+              >
+                <div className="text-[11px] font-bold text-slate-600 px-1 flex items-center justify-between">
+                  <span>Sınıf Bazlı Değerlendirme (Şube Seçin)</span>
+                  <span className="text-blue-900">
+                    {sessionClassrooms.length} Şube
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {sessionClassrooms.map((cls) => {
+                    const isSelectedCls = activeClassroom?.id === cls.id;
+                    const clsStuList =
+                      allStudents.length > 0
+                        ? getSessionStudentsForClassroom(
+                            allStudents,
+                            activeSession,
+                            cls.id
+                          )
+                        : isSelectedCls
+                        ? classStudents
+                        : [];
+                    const clsStats = getSessionProgressStats(
+                      clsStuList,
+                      activeSession.evaluations,
+                      activeRubric
+                    );
+                    return (
+                      <button
+                        key={cls.id}
+                        type="button"
+                        data-testid={`individual-class-tab-${cls.id}`}
+                        onClick={() => {
+                          onSelectClassroom(cls.id);
+                          onDismissBanner();
+                        }}
+                        className={`flex-1 min-w-[92px] px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-between gap-1.5 ${
+                          isSelectedCls
+                            ? 'bg-blue-900 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200/80 border border-slate-200'
+                        }`}
+                      >
+                        <span className="truncate">{cls.name}</span>
+                        <span
+                          className={`font-mono-num text-[10px] px-1.5 py-0.5 rounded ${
+                            isSelectedCls
+                              ? 'bg-blue-950 text-blue-100'
+                              : 'bg-white text-slate-600 border border-slate-200'
+                          }`}
+                        >
+                          {clsStats.fullyEvaluatedCount}/{clsStats.totalStudents}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <h2 className="text-sm font-bold text-slate-900 truncate">
+                  Öğrenci Listesi
+                </h2>
+                {activeClassroom && (
+                  <span
+                    data-testid="individual-active-classroom-badge"
+                    className="px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-[11px] font-bold text-blue-900 shrink-0"
+                  >
+                    {activeClassroom.name}
+                  </span>
+                )}
+              </div>
+              <span className="text-xs font-mono-num font-bold text-slate-800 bg-white px-2.5 py-0.5 rounded-md border border-slate-300 shrink-0">
                 {completedStudentsCount}/{classStudents.length} Tamam
               </span>
             </div>

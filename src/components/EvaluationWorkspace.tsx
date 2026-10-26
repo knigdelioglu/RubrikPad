@@ -44,6 +44,12 @@ import {
   sanitizeObservationText,
   upsertStudentQuickObservation,
   getStudentConsecutiveLowScoreReminder,
+  getSessionClassIds,
+  resolveActiveSessionClassId,
+  getSessionStudentsForClassroom,
+  getSessionGroupsForClassroom,
+  createInitialSessionGroups,
+  replaceClassroomGroupsInSession,
   MAX_SESSION_TITLE_LENGTH,
   MAX_NOTE_LENGTH,
 } from '../utils/rubricLogic.ts';
@@ -110,30 +116,64 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     [activeSession, rubricsById, rubrics]
   );
 
-  // P1 #9: Multi-classroom session support (classIds array)
-  const sessionClassIds = useMemo(() => {
-    if (!activeSession) return [];
-    return activeSession.classIds && activeSession.classIds.length > 0
-      ? activeSession.classIds
-      : [activeSession.classId];
+  // P1 #9: Multi-classroom session support (classIds array) — strictly evaluated class-by-class
+  const sessionClassIds = useMemo(
+    () => getSessionClassIds(activeSession),
+    [activeSession]
+  );
+
+  const [selectedSessionClassId, setSelectedSessionClassId] = useState<string>(
+    () => activeSession?.classId || ''
+  );
+
+  useEffect(() => {
+    setSelectedSessionClassId((prev) =>
+      resolveActiveSessionClassId(activeSession, prev)
+    );
   }, [activeSession]);
+
+  const activeClassroomId = useMemo(
+    () => resolveActiveSessionClassId(activeSession, selectedSessionClassId),
+    [activeSession, selectedSessionClassId]
+  );
 
   const activeClassroom = useMemo(
     () =>
-      classrooms.find((c) => c.id === activeSession?.classId) || classrooms[0],
-    [classrooms, activeSession]
+      classrooms.find((c) => c.id === activeClassroomId) ||
+      classrooms.find((c) => c.id === activeSession?.classId) ||
+      classrooms[0],
+    [classrooms, activeClassroomId, activeSession]
   );
 
-  const classStudents = useMemo(() => {
-    const allowed = new Set(sessionClassIds);
-    return students
-      .filter((s) => allowed.has(s.classId) && !s.archived)
-      .sort((a, b) =>
-        a.studentNumber.localeCompare(b.studentNumber, undefined, {
-          numeric: true,
-        })
-      );
-  }, [students, sessionClassIds]);
+  const classStudents = useMemo(
+    () =>
+      getSessionStudentsForClassroom(
+        students,
+        activeSession,
+        activeClassroomId
+      ),
+    [students, activeSession, activeClassroomId]
+  );
+
+  const classGroups = useMemo(
+    () =>
+      activeSession
+        ? getSessionGroupsForClassroom(
+            activeSession.groups,
+            students,
+            activeClassroomId,
+            activeSession.classId
+          )
+        : [],
+    [activeSession, students, activeClassroomId]
+  );
+
+  const handleSelectSessionClassroom = useCallback((classId: string) => {
+    setSelectedSessionClassId(classId);
+    setJustCompletedBanner(null);
+    setFastCompletionBanner(null);
+    setLastAppliedGroupBanner(null);
+  }, []);
 
   const [selectedStudentId, setSelectedStudentId] = useState<string>(() => {
     return classStudents[0]?.id || '';
@@ -142,7 +182,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     'all' | 'pending' | 'completed'
   >('all');
   const [selectedGroupId, setSelectedGroupId] = useState<string>(() => {
-    return activeSession?.groups[0]?.id || '';
+    return classGroups[0]?.id || activeSession?.groups[0]?.id || '';
   });
 
   // New Session Modal State (with Multi-classroom support P1 #9)
@@ -273,14 +313,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   }, [activeSessionId]);
 
   useEffect(() => {
-    if (activeSession?.groups && activeSession.groups.length > 0) {
-      if (!activeSession.groups.some((g) => g.id === selectedGroupId)) {
-        setSelectedGroupId(activeSession.groups[0].id);
+    if (classGroups.length > 0) {
+      if (!classGroups.some((g) => g.id === selectedGroupId)) {
+        setSelectedGroupId(classGroups[0].id);
       }
     } else {
       setSelectedGroupId('');
     }
-  }, [activeSession, selectedGroupId]);
+  }, [classGroups, selectedGroupId]);
 
   const progressStats = useMemo(() => {
     if (!activeSession || !activeRubric) {
@@ -676,15 +716,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       status: 'in_progress',
       mode: activeSession.mode,
       generalSessionNote: '',
-      groups: [
-        {
-          id: createUniqueEntityId('grp'),
-          name: 'Grup 1: Çalışma Ekibi',
-          studentIds: [],
-          criterionScores: {},
-          groupNote: '',
-        },
-      ],
+      groups: createInitialSessionGroups(sessionClassIds),
       evaluations: {},
       undoHistory: [],
     };
@@ -726,20 +758,13 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       status: 'in_progress',
       mode: 'individual',
       generalSessionNote: '',
-      groups: [
-        {
-          id: createUniqueEntityId('grp'),
-          name: 'Grup 1: Çalışma Ekibi',
-          studentIds: [],
-          criterionScores: {},
-          groupNote: '',
-        },
-      ],
+      groups: createInitialSessionGroups(newSessionClassIds),
       evaluations: {},
       undoHistory: [],
     };
     onCreateSession(newSession);
     onSelectSession(newSession.id);
+    setSelectedSessionClassId(newSessionClassIds[0]);
     setNewSessionTitle('');
     setShowNewSessionModal(false);
   };
@@ -1063,6 +1088,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             activeSession={activeSession}
             activeRubric={activeRubric}
             classStudents={classStudents}
+            sessionClassrooms={sessionClassrooms}
+            activeClassroom={activeClassroom}
+            onSelectClassroom={handleSelectSessionClassroom}
             selectedStudentId={selectedStudent?.id || ''}
             activeCriterionIndex={activeCriterionIndex}
             onSelectCell={(stuId, critIdx) => {
@@ -1143,6 +1171,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           allRubrics={availableSessionRubrics}
           classrooms={classrooms}
           classStudents={classStudents}
+          sessionClassrooms={sessionClassrooms}
+          activeClassroom={activeClassroom}
+          onSelectClassroom={handleSelectSessionClassroom}
           selectedStudent={selectedStudent}
           selectedStudentId={selectedStudent?.id || ''}
           onSelectStudent={setSelectedStudentId}
@@ -1351,6 +1382,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             <div>
               <div className="text-[11px] font-medium text-slate-500">
                 Tamamlanan Öğrenci
+                {sessionClassrooms.length > 1 && activeClassroom
+                  ? ` (${activeClassroom.name})`
+                  : ''}
               </div>
               <div className="font-mono-num text-sm font-bold text-slate-900">
                 {progressStats.fullyEvaluatedCount} /{' '}
@@ -1388,6 +1422,70 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Multi-Classroom Session Switcher (Sınıf Bazlı Değerlendirme — Şube Seçici) */}
+        {sessionClassrooms.length > 1 && (
+          <div
+            data-testid="multi-class-session-switcher"
+            className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-700">
+                Sınıf Bazlı Değerlendirme — Şube Seçin:
+              </span>
+              <span className="text-[11px] text-slate-500">
+                Çoklu sınıf oturumlarında öğrenciler ve gruplar şube bazında ayrı değerlendirilir.
+              </span>
+            </div>
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              role="tablist"
+              aria-label="Oturum Şube Seçici"
+            >
+              {sessionClassrooms.map((cls) => {
+                const isSelectedCls = activeClassroom?.id === cls.id;
+                const clsStudents = getSessionStudentsForClassroom(
+                  students,
+                  activeSession,
+                  cls.id
+                );
+                const clsStats = getSessionProgressStats(
+                  clsStudents,
+                  activeSession.evaluations,
+                  activeRubric
+                );
+                return (
+                  <button
+                    key={cls.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelectedCls}
+                    data-testid={`session-class-tab-${cls.id}`}
+                    onClick={() => handleSelectSessionClassroom(cls.id)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-2 cursor-pointer ${
+                      isSelectedCls
+                        ? 'bg-blue-900 text-white border-blue-950 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>
+                      {cls.name} ({cls.gradeLevel})
+                    </span>
+                    <span
+                      className={`text-[10px] font-mono-num px-1.5 py-0.5 rounded-md ${
+                        isSelectedCls
+                          ? 'bg-blue-800 text-blue-100'
+                          : 'bg-white text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      {clsStats.fullyEvaluatedCount}/{clsStats.totalStudents}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Scored Session Rubric Change Protection Banner (Issue #6) */}
         {pendingRubricChange && (
@@ -1561,6 +1659,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           activeSession={activeSession}
           activeRubric={activeRubric}
           classStudents={classStudents}
+          sessionClassrooms={sessionClassrooms}
+          activeClassroom={activeClassroom}
+          onSelectClassroom={handleSelectSessionClassroom}
+          allStudents={students}
           selectedStudent={selectedStudent}
           selectedStudentId={selectedStudent?.id || ''}
           onSelectStudent={setSelectedStudentId}
@@ -1653,6 +1755,11 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           allSessions={sessions}
           rubricsById={rubricsById}
           classStudents={classStudents}
+          classGroups={classGroups}
+          sessionClassrooms={sessionClassrooms}
+          activeClassroom={activeClassroom}
+          onSelectClassroom={handleSelectSessionClassroom}
+          allStudents={students}
           selectedGroupId={selectedGroupId}
           onSelectGroup={setSelectedGroupId}
           cardViewMode={cardViewMode}
@@ -1663,7 +1770,11 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           }
           onAddGroup={(newGroup) => {
             const nowIso = new Date().toISOString();
-            const nextGroups = [...activeSession.groups, newGroup];
+            const groupWithClass: StudentGroup = {
+              ...newGroup,
+              classId: newGroup.classId || activeClassroomId || activeSession.classId,
+            };
+            const nextGroups = [...activeSession.groups, groupWithClass];
             const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
               activeSession.evaluations,
               nextGroups,
@@ -1675,22 +1786,29 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               evaluations: nextEvaluations,
             });
           }}
-          onReplaceAllGroups={(groups) => {
+          onReplaceAllGroups={(groupsForActiveClassroom) => {
             const nowIso = new Date().toISOString();
             const undoHistory = recordSessionUndoEntry(activeSession, {
               scope: 'group',
-              description: 'Dengeli rastgele gruplar oluşturuldu',
+              description: `Dengeli rastgele gruplar oluşturuldu (${activeClassroom?.name || activeClassroomId})`,
               previousEvaluations: activeSession.evaluations,
               previousGroups: activeSession.groups,
             });
+            const mergedSessionGroups = replaceClassroomGroupsInSession(
+              activeSession.groups,
+              groupsForActiveClassroom,
+              students,
+              activeClassroomId || activeSession.classId,
+              activeSession.classId
+            );
             const nextEvaluations = reconcileGroupEvaluationsWithMemberships(
               activeSession.evaluations,
-              groups,
+              mergedSessionGroups,
               nowIso
             );
             onUpdateSession({
               ...activeSession,
-              groups,
+              groups: mergedSessionGroups,
               evaluations: nextEvaluations,
               undoHistory,
             });
@@ -1710,7 +1828,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 activeSession,
                 groupId,
                 studentId,
-                new Date().toISOString()
+                new Date().toISOString(),
+                activeRubric,
+                students
               )
             );
           }}
@@ -1885,8 +2005,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             );
 
             if (options?.advanceToNextGroup) {
-              const nextPendingGrp = getNextPendingGroup(
+              const updatedClassGroups = getSessionGroupsForClassroom(
                 updatedGroups,
+                students,
+                activeClassroomId || activeSession.classId,
+                activeSession.classId
+              );
+              const nextPendingGrp = getNextPendingGroup(
+                updatedClassGroups,
                 updatedEvaluations,
                 activeRubric,
                 group.id
@@ -1912,7 +2038,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             const res = transferAllCompletedGroupsToMembers(
               activeSession,
               activeRubric,
-              new Date().toISOString()
+              new Date().toISOString(),
+              activeClassroomId || activeSession.classId,
+              students
             );
             if (res.transferredGroupCount > 0) {
               onUpdateSession(res.updatedSession);
@@ -1927,6 +2055,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             setAutoTransferGroupScores(!autoTransferGroupScores)
           }
           onInspectStudentInIndividualMode={(studentId) => {
+            const stu = students.find((s) => s.id === studentId);
+            if (stu && stu.classId) {
+              setSelectedSessionClassId(stu.classId);
+            }
             setSelectedStudentId(studentId);
             onUpdateSession({
               ...activeSession,

@@ -8,7 +8,12 @@ import {
   Undo2,
   Zap,
 } from 'lucide-react';
-import type { EvaluationSession, Rubric, Student } from '../../types.ts';
+import type {
+  Classroom,
+  EvaluationSession,
+  Rubric,
+  Student,
+} from '../../types.ts';
 import {
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
@@ -20,6 +25,9 @@ interface MatrixEvaluationViewProps {
   activeSession: EvaluationSession;
   activeRubric: Rubric;
   classStudents: Student[];
+  sessionClassrooms?: Classroom[];
+  activeClassroom?: Classroom;
+  onSelectClassroom?: (classId: string) => void;
   selectedStudentId: string;
   activeCriterionIndex: number;
   onSelectCell: (studentId: string, criterionIndex: number) => void;
@@ -45,6 +53,9 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
   activeSession,
   activeRubric,
   classStudents,
+  sessionClassrooms = [],
+  activeClassroom,
+  onSelectClassroom,
   selectedStudentId,
   activeCriterionIndex,
   onSelectCell,
@@ -74,7 +85,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
     <div className="w-full px-3 sm:px-5 py-2">
       <div className="bg-white border border-slate-300 rounded-xl overflow-hidden flex flex-col h-[calc(100vh-76px)] min-h-[500px] shadow-xs">
         <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               onClick={onBackToFastCards}
@@ -85,9 +96,36 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
             </button>
             <div>
               <h2 className="text-sm font-bold text-slate-900">
-                Tam Ekran Sınıf Matrisi — {activeRubric.title}
+                Tam Ekran Sınıf Matrisi
+                {activeClassroom ? ` (${activeClassroom.name})` : ''} —{' '}
+                {activeRubric.title}
               </h2>
             </div>
+            {sessionClassrooms.length > 1 && onSelectClassroom && (
+              <div
+                data-testid="matrix-view-class-switcher"
+                className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg p-0.5"
+              >
+                {sessionClassrooms.map((cls) => {
+                  const isSelectedCls = activeClassroom?.id === cls.id;
+                  return (
+                    <button
+                      key={cls.id}
+                      type="button"
+                      data-testid={`matrix-class-tab-${cls.id}`}
+                      onClick={() => onSelectClassroom(cls.id)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold transition-colors cursor-pointer ${
+                        isSelectedCls
+                          ? 'bg-blue-900 text-white'
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {cls.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
