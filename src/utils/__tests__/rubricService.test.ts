@@ -133,7 +133,7 @@ test('getRubricsForClassrooms filters rubrics by classroom gradeLevel and subjec
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 9);
   assert.deepEqual(getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Math]).length, 0);
-  assert.equal(
+  assert.deepEqual(
     getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde, cls10Tde]).map((r) => r.id),
     [BOOK_PRESENTATION_RUBRIC_ID]
   );
