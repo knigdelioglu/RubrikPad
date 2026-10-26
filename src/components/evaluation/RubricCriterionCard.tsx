@@ -463,7 +463,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
   const formatLevelPercentage = (pts: number) =>
     Math.round((pts / maxLevelPoints) * 100);
   const formatLevelEarnedPts = (pts: number) =>
-    Number(((pts / maxLevelPoints) * critMaxPts).toFixed(1));
+    Math.ceil((pts / maxLevelPoints) * critMaxPts);
 
   const selectedLevelObj = !hasDirect
     ? criterion.levels.find((l) => l.points === selectedPoints)

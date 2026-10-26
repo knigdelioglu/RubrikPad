@@ -157,7 +157,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                       className={`px-2 py-0.5 text-[11px] font-mono-num font-bold rounded border transition-colors cursor-pointer ${theme.compactUnselected}`}
                     >
                       {isThreeLevel
-                        ? `${lvl.label} (%${Math.round((lvl.points / maxPts) * 100)})`
+                        ? `${lvl.label} (%${Math.round((lvl.points / maxPts) * 100)} · ${Math.ceil((lvl.points / maxPts) * (currentCriterion.maxPoints ?? currentCriterion.weight))}P)`
                         : `${lvl.points}P`}
                     </button>
                   );
@@ -373,7 +373,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                                   }}
                                   title={
                                     isThreeLevel
-                                      ? `${lvl.label} (%${pct})`
+                                      ? `${lvl.label} (%${pct} · ${Math.ceil((lvl.points / maxLvlPts) * (c.maxPoints ?? c.weight))}P)`
                                       : `${lvl.label} (${lvl.points} Puan)`
                                   }
                                   className={`flex-1 py-1 px-1 rounded font-mono-num text-[11px] font-bold transition-all cursor-pointer min-h-[28px] border ${

@@ -1098,10 +1098,8 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                               const pct = Math.round(
                                 (lvl.points / maxLvlPts) * 100
                               );
-                              const earnedPts = Number(
-                                ((lvl.points / maxLvlPts) * critMaxPts).toFixed(
-                                  1
-                                )
+                              const earnedPts = Math.ceil(
+                                (lvl.points / maxLvlPts) * critMaxPts
                               );
                               return (
                                 <td

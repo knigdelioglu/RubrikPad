@@ -271,15 +271,15 @@ test('book presentation rubric has 3-level (Evet - Kısmen - Hayır) 100-point s
 
   // All Evet (%100 -> 2 points) = 100
   assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 2]))).finalScoreOutOf100, 100);
-  // All Kısmen (%50 -> 1 point) = 50
-  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 1]))).finalScoreOutOf100, 50);
+  // All Kısmen (%50 -> 1 point with Math.ceil for fractional criteria: 10 + 10 + 8 + 8 + 5 + 5 + 3 + 3) = 52
+  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 1]))).finalScoreOutOf100, 52);
   // All Hayır (%0 -> 0 points) = 0
   assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 0]))).finalScoreOutOf100, 0);
 
-  // Mixed Evet (100%), Kısmen (50%), Hayır (0%) calculation:
-  // crit-ks-1 (20) = Evet (20), crit-ks-2 (20) = Kısmen (10), crit-ks-3 (15) = Kısmen (7.5),
+  // Mixed Evet (100%), Kısmen (50% rounded up to integer), Hayır (0%) calculation:
+  // crit-ks-1 (20) = Evet (20), crit-ks-2 (20) = Kısmen (10), crit-ks-3 (15) = Kısmen (8),
   // crit-ks-4 (15) = Hayır (0), crit-ks-5 (10) = Evet (10), crit-ks-6 (10) = Hayır (0),
-  // crit-ks-7 (5) = Kısmen (2.5), crit-ks-8 (5) = Evet (5) => 20 + 10 + 7.5 + 0 + 10 + 0 + 2.5 + 5 = 55
+  // crit-ks-7 (5) = Kısmen (3), crit-ks-8 (5) = Evet (5) => 20 + 10 + 8 + 0 + 10 + 0 + 3 + 5 = 56
   const mixedResult = calculateWeightedScore(rubric, {
     'crit-ks-1': 2,
     'crit-ks-2': 1,
@@ -291,7 +291,7 @@ test('book presentation rubric has 3-level (Evet - Kısmen - Hayır) 100-point s
     'crit-ks-8': 2,
   });
   assert.equal(mixedResult.isComplete, true);
-  assert.equal(mixedResult.finalScoreOutOf100, 55);
+  assert.equal(mixedResult.finalScoreOutOf100, 56);
 });
 
 test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes produce valid %PDF-1.4 documents with Turkish Unicode text', async () => {
@@ -573,9 +573,9 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
     assert.equal(getCriterionLevelPercentage(crit, 1), 50);
     assert.equal(getCriterionLevelPercentage(crit, 2), 100);
 
-    // Earned points out of criterion weight
+    // Earned points out of criterion weight (fractional points rounded up to next integer)
     assert.equal(getCriterionEarnedPoints(crit, 0), 0);
-    assert.equal(getCriterionEarnedPoints(crit, 1), crit.weight * 0.5);
+    assert.equal(getCriterionEarnedPoints(crit, 1), Math.ceil(crit.weight * 0.5));
     assert.equal(getCriterionEarnedPoints(crit, 2), crit.weight);
   }
 

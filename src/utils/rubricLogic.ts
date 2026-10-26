@@ -211,6 +211,7 @@ export function getCriterionLevelPercentage(
 
 /**
  * Returns the earned points out of the criterion's weight/maxPoints (e.g., 20, 10, 0 for a 20-point criterion).
+ * Buçuklu puanlar öğretmen değerlendirmesinde bir üst tam puana tamamlanır (Math.ceil).
  */
 export function getCriterionEarnedPoints(
   criterion: RubricCriterion,
@@ -226,7 +227,11 @@ export function getCriterionEarnedPoints(
   }
   if (isScoreAssigned(selectedLevelPts)) {
     const ratio = resolveCriterionLevelRatio(criterion, selectedLevelPts);
-    return Math.round(ratio * effectiveWeight * 100) / 100;
+    const maxLevelPts = Math.max(...criterion.levels.map((l) => l.points), 1);
+    // 3 dereceli MEB ölçeklerinde (Evet - Kısmen - Hayır) buçuklu puanlar bir üst tam puana tamamlanır (Math.ceil)
+    return maxLevelPts === 2
+      ? Math.ceil(ratio * effectiveWeight)
+      : Math.round(ratio * effectiveWeight * 100) / 100;
   }
   return null;
 }
@@ -309,7 +314,7 @@ export function calculateWeightedScore(
       if (isRequired) completedRequiredCount += 1;
       const ratio = critMaxDirectPts > 0 ? clampedDirect / critMaxDirectPts : 0;
       rawPoints += Math.round(ratio * maxLevelPts * 100) / 100;
-      weightedSum += ratio * effectiveWeight;
+      weightedSum += clampedDirect;
     } else if (isScoreAssigned(selectedLevelPts)) {
       completedCriteriaCount += 1;
       if (isRequired) completedRequiredCount += 1;
@@ -318,7 +323,12 @@ export function calculateWeightedScore(
         maxLevelPts === 2 && (selectedLevelPts === 50 || selectedLevelPts === 100)
           ? Math.round(normalizedRatio * maxLevelPts * 100) / 100
           : selectedLevelPts;
-      weightedSum += normalizedRatio * effectiveWeight;
+      // 3 dereceli MEB ölçeklerinde (Evet - Kısmen - Hayır) buçuklu puanlar bir üst tam puana tamamlanır (Math.ceil)
+      const earnedCriterionPts =
+        maxLevelPts === 2
+          ? Math.ceil(normalizedRatio * effectiveWeight)
+          : normalizedRatio * effectiveWeight;
+      weightedSum += earnedCriterionPts;
     }
   }
 
@@ -338,7 +348,8 @@ export function calculateWeightedScore(
   }
 
   const normalizer = totalWeight > 0 ? 100 / totalWeight : 1;
-  const provisionalScoreOutOf100 = Math.round(weightedSum * normalizer);
+  const rawProvisional = Math.round(weightedSum * normalizer);
+  const provisionalScoreOutOf100 = Math.min(100, Math.max(0, rawProvisional));
   const isComplete =
     completedRequiredCount === requiredCriteriaCount &&
     completedCriteriaCount === totalCriteriaCount;
@@ -359,7 +370,7 @@ export function calculateWeightedScore(
     };
   }
 
-  const scoreOutOf100 = provisionalScoreOutOf100;
+  const scoreOutOf100 = Math.min(100, Math.max(0, provisionalScoreOutOf100));
   let performanceBand: 'Ornek' | 'Yetkin' | 'Gelismekte' | 'DestekGerekli' =
     'DestekGerekli';
   let performanceLabel = 'Destek Gerekli';
