@@ -5,6 +5,7 @@ import type {
   RubricLevel,
   EvaluationSession,
 } from '../types.ts';
+import { BOOK_PRESENTATION_RUBRIC } from './bookPresentationRubric.ts';
 
 export const INITIAL_CLASSROOMS: Classroom[] = [];
 
@@ -842,6 +843,8 @@ export const INITIAL_RUBRICS: Rubric[] = [
       },
     ],
   },
+  // Sınıf düzeyi bağımsız kitap sunumu (Türk Dili ve Edebiyatı)
+  BOOK_PRESENTATION_RUBRIC,
 ];
 
 export const INITIAL_SESSIONS: EvaluationSession[] = [];

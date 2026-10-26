@@ -1177,7 +1177,19 @@ export function checkRubricDeletionImpact(
 }
 
 /**
+ * Sınıf ekleme formundaki şube adı girdisini yalnızca büyük harflerden (A, B, C...) oluşacak şekilde temizler.
+ * Rakamları, boşlukları ve noktalama işaretlerini kaldırır; klavyeden Caps Lock açmaya gerek kalmadan Türkçe büyük harfe çevirir.
+ */
+export function normalizeClassroomBranchInput(rawInput: string): string {
+  return String(rawInput ?? '')
+    .replace(/[^a-zA-ZÇĞİÖŞÜçğıöşü]/g, '')
+    .toLocaleUpperCase('tr-TR')
+    .slice(0, 10);
+}
+
+/**
  * Validates creating or updating a classroom record (prevents empty or duplicate classroom names).
+ * Supports single-letter uppercase branch names (e.g., "A", "B") alongside selected gradeLevel.
  */
 export function validateClassroomRecord(
   input: {
@@ -1185,15 +1197,22 @@ export function validateClassroomRecord(
     gradeLevel?: string;
     subject?: string;
     academicYear?: string;
+    branchOnly?: boolean;
   },
   allClassrooms: Classroom[],
   editingClassroomId?: string
 ): { isValid: boolean; error?: string } {
   const trimmedName = (input.name || '').trim();
-  if (trimmedName.length < 2) {
+  if (trimmedName.length < 1) {
     return {
       isValid: false,
-      error: 'Sınıf / şube adı en az 2 karakter olmalıdır.',
+      error: 'Lütfen şube harfini girin (Örn: A, B).',
+    };
+  }
+  if (input.branchOnly && !/^[A-ZÇĞİÖŞÜ]+$/.test(trimmedName)) {
+    return {
+      isValid: false,
+      error: 'Şube adına yalnızca harf (A, B, C gibi) girilmelidir.',
     };
   }
   if (trimmedName.length > 80) {
@@ -1203,19 +1222,28 @@ export function validateClassroomRecord(
     };
   }
   const normalizedTarget = trimmedName.toLocaleLowerCase('tr-TR');
-  const duplicate = allClassrooms.find(
-    (c) =>
-      c.id !== editingClassroomId &&
-      c.name.trim().toLocaleLowerCase('tr-TR') === normalizedTarget
-  );
+  const normalizedGrade = (input.gradeLevel || '')
+    .trim()
+    .toLocaleLowerCase('tr-TR');
+  const duplicate = allClassrooms.find((c) => {
+    if (c.id === editingClassroomId) return false;
+    const sameName =
+      c.name.trim().toLocaleLowerCase('tr-TR') === normalizedTarget;
+    if (!sameName) return false;
+    if (!normalizedGrade || !c.gradeLevel) return true;
+    return c.gradeLevel.trim().toLocaleLowerCase('tr-TR') === normalizedGrade;
+  });
   if (duplicate) {
     return {
       isValid: false,
-      error: `"${duplicate.name}" adında bir sınıf zaten kayıtlı.`,
+      error: duplicate.gradeLevel && input.gradeLevel
+        ? `${duplicate.gradeLevel} düzeyinde "${duplicate.name}" şubesi zaten kayıtlı.`
+        : `"${duplicate.name}" adında bir sınıf zaten kayıtlı.`,
     };
   }
   return { isValid: true };
 }
+
 
 /**
  * Checks whether a classroom has associated students or evaluation sessions before deletion.
