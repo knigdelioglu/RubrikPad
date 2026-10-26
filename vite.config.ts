@@ -26,6 +26,8 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        // The web entry point registers this only in browsers, never inside an APK.
+        injectRegister: false,
         includeAssets: ['icon.svg', 'icon.png', 'favicon.png'],
         manifest: {
           name: 'RubrikPad — Hızlı Sınıf İçi Rubrik & Performans Değerlendirme',

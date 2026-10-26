@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "build:apk": "vite build && cap sync android && cd android && ./gradlew assembleDebug",
-    "deploy:tablet": "./deploy_tablet.command",
+    "build:apk": "vite build && cap sync android && cd android && bash ./gradlew assembleDebug",
+    "deploy:tablet": "bash ./deploy_tablet.command",
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

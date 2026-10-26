@@ -19,7 +19,7 @@ bunx cap sync android
 # 2. Android APK derleme (minSdk: 36 - Android 16)
 echo "📦 2/3 Android APK (assembleDebug) derleniyor..."
 cd "$DIR/android"
-./gradlew assembleDebug
+bash ./gradlew assembleDebug
 
 APK_PATH="$DIR/android/app/build/outputs/apk/debug/app-debug.apk"
 if [ ! -f "$APK_PATH" ]; then
@@ -54,6 +54,7 @@ if [ -n "$TABLET_DEV" ]; then
   echo "📲 Cihaza yükleniyor: $TABLET_DEV"
   adb -s "$TABLET_DEV" install -r "$APK_PATH"
   echo "▶️ RubrikPad tablete açılıyor..."
+  adb -s "$TABLET_DEV" shell am force-stop com.knigdelioglu.rubrikpad
   adb -s "$TABLET_DEV" shell am start -n com.knigdelioglu.rubrikpad/.MainActivity
   echo "🎉 Başarılı! RubrikPad tabletinizde yerel uygulama (APK) olarak çalışıyor."
 else
