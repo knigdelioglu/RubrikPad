@@ -3074,6 +3074,16 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
         let gradeBackfilled = false;
         const syncedRubrics = cleaned.rubrics.map((r) => {
           const seedMatch = seedById.get(r.id);
+          if (
+            seedMatch &&
+            r.id === 'rub-tde-kitap-sunumu' &&
+            (r.maxLevelPoints === 4 || (r.version ?? 1) < (seedMatch.version ?? 2)) &&
+            r.criteria.length === seedMatch.criteria.length &&
+            r.criteria.every((c) => c.levels.length === 5)
+          ) {
+            gradeBackfilled = true;
+            return JSON.parse(JSON.stringify(seedMatch)) as Rubric;
+          }
           if (seedMatch?.gradeLevel && r.gradeLevel !== seedMatch.gradeLevel) {
             gradeBackfilled = true;
             return { ...r, gradeLevel: seedMatch.gradeLevel };
@@ -3160,6 +3170,17 @@ export async function purgeSyntheticSeedDataAsync(
                 let gradeBackfilled = false;
                 const syncedRubrics = cleaned.rubrics.map((r) => {
                   const seedMatch = seedById.get(r.id);
+                  if (
+                    seedMatch &&
+                    r.id === 'rub-tde-kitap-sunumu' &&
+                    (r.maxLevelPoints === 4 ||
+                      (r.version ?? 1) < (seedMatch.version ?? 2)) &&
+                    r.criteria.length === seedMatch.criteria.length &&
+                    r.criteria.every((c) => c.levels.length === 5)
+                  ) {
+                    gradeBackfilled = true;
+                    return JSON.parse(JSON.stringify(seedMatch)) as Rubric;
+                  }
                   if (
                     seedMatch?.gradeLevel &&
                     r.gradeLevel !== seedMatch.gradeLevel

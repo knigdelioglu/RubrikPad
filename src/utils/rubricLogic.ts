@@ -182,6 +182,57 @@ export function validateRubric(rubric: Rubric): {
 
 /**
  * Calculates a student's weighted score based on their rubric criterion selections.
+/**
+ * Resolves the normalized [0, 1] achievement ratio for a selected level score on a criterion.
+ * Supports both 5-level (0..4) and 3-level MEB (Hayır=0/%0, Kısmen=1/%50, Evet=2/%100) rubrics,
+ * as well as percentage inputs (50, 100) when maxLevelPts === 2.
+ */
+export function resolveCriterionLevelRatio(
+  criterion: RubricCriterion,
+  selectedLevelPts: number
+): number {
+  const maxLevelPts = Math.max(...criterion.levels.map((l) => l.points), 1);
+  if (selectedLevelPts <= 0) return 0;
+  if (maxLevelPts === 2 && (selectedLevelPts === 50 || selectedLevelPts === 100)) {
+    return selectedLevelPts / 100;
+  }
+  return Math.max(0, Math.min(1, selectedLevelPts / maxLevelPts));
+}
+
+/**
+ * Returns the percentage equivalent (0..100) for a criterion level score.
+ */
+export function getCriterionLevelPercentage(
+  criterion: RubricCriterion,
+  selectedLevelPts: number
+): number {
+  return Math.round(resolveCriterionLevelRatio(criterion, selectedLevelPts) * 100);
+}
+
+/**
+ * Returns the earned points out of the criterion's weight/maxPoints (e.g., 20, 10, 0 for a 20-point criterion).
+ */
+export function getCriterionEarnedPoints(
+  criterion: RubricCriterion,
+  selectedLevelPts: number | null | undefined,
+  directPts?: number | null | undefined
+): number | null {
+  const effectiveWeight =
+    typeof criterion.maxPoints === 'number' && criterion.maxPoints > 0
+      ? criterion.maxPoints
+      : criterion.weight;
+  if (isScoreAssigned(directPts)) {
+    return Math.max(0, Math.min(effectiveWeight, directPts));
+  }
+  if (isScoreAssigned(selectedLevelPts)) {
+    const ratio = resolveCriterionLevelRatio(criterion, selectedLevelPts);
+    return Math.round(ratio * effectiveWeight * 100) / 100;
+  }
+  return null;
+}
+
+/**
+ * Strictly calculates weighted score out of 100:
  * - P0 #1: 0 is treated as a valid scored point; null/undefined is treated as unscored.
  * - P0 #2: Partial evaluations do NOT produce a final 100-point grade until all required criteria are scored.
  * - P1 #2: Supports direct integer criterion scores (directCriterionScores) within [0, maxPoints].
@@ -262,8 +313,11 @@ export function calculateWeightedScore(
     } else if (isScoreAssigned(selectedLevelPts)) {
       completedCriteriaCount += 1;
       if (isRequired) completedRequiredCount += 1;
-      rawPoints += selectedLevelPts;
-      const normalizedRatio = Math.max(0, Math.min(1, selectedLevelPts / maxLevelPts));
+      const normalizedRatio = resolveCriterionLevelRatio(criterion, selectedLevelPts);
+      rawPoints +=
+        maxLevelPts === 2 && (selectedLevelPts === 50 || selectedLevelPts === 100)
+          ? Math.round(normalizedRatio * maxLevelPts * 100) / 100
+          : selectedLevelPts;
       weightedSum += normalizedRatio * effectiveWeight;
     }
   }
@@ -2372,13 +2426,21 @@ export function getStudentConsecutiveLowScoreReminder(
   ): 'low' | 'high_or_zero' | 'unscored' => {
     if (isScoreAssigned(directScore)) {
       const maxDirect = criterion.maxPoints ?? criterion.weight;
-      if (directScore === 1 || directScore === 2) return 'low';
+      if (maxDirect > 2 && (directScore === 1 || directScore === 2)) return 'low';
       if (directScore > 0 && maxDirect > 0 && directScore / maxDirect <= 0.5) {
         return 'low';
       }
       return 'high_or_zero';
     }
     if (isScoreAssigned(levelScore)) {
+      const maxLevelPts = Math.max(...criterion.levels.map((l) => l.points), 1);
+      if (maxLevelPts <= 2) {
+        const ratio = resolveCriterionLevelRatio(criterion, levelScore);
+        if (ratio > 0 && ratio <= 0.5) {
+          return 'low';
+        }
+        return 'high_or_zero';
+      }
       if (levelScore === 1 || levelScore === 2) {
         return 'low';
       }

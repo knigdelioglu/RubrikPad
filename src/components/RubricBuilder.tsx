@@ -227,6 +227,16 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
 
   const handleAddCriterionToDraft = () => {
     if (!draftRubric) return;
+    const templateLevels =
+      draftRubric.criteria.length > 0 &&
+      draftRubric.criteria[0].levels.length === 3
+        ? draftRubric.criteria[0].levels.map((l) => ({
+            level: l.level,
+            label: l.label,
+            points: l.points,
+            description: `${l.label} düzeyi açıklaması.`,
+          }))
+        : JSON.parse(JSON.stringify(DEFAULT_LEVELS));
     const newCrit: RubricCriterion = {
       id: createUniqueEntityId('crit'),
       title: `Yeni Ölçüt ${draftRubric.criteria.length + 1}`,
@@ -234,7 +244,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       weight: 20,
       maxPoints: 20,
       required: true,
-      levels: JSON.parse(JSON.stringify(DEFAULT_LEVELS)),
+      levels: templateLevels,
     };
     setDraftRubric({
       ...draftRubric,
@@ -782,7 +792,13 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                 </div>
 
                 {/* Levels inside Criterion */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div
+                  className={`grid grid-cols-1 sm:grid-cols-2 ${
+                    crit.levels.length === 3
+                      ? 'lg:grid-cols-3'
+                      : 'lg:grid-cols-5'
+                  } gap-3`}
+                >
                   {crit.levels.map((lvl, lIdx) => (
                     <div
                       key={lvl.level}
@@ -790,7 +806,12 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                     >
                       <div className="flex items-center justify-between gap-2 text-xs font-bold text-slate-800">
                         <span className="truncate">
-                          {lvl.level}. Düzey ({lvl.label})
+                          {crit.levels.length === 3 &&
+                          draftRubric.maxLevelPoints === 2
+                            ? `${lvl.label} (%${Math.round(
+                                (lvl.points / 2) * 100
+                              )})`
+                            : `${lvl.level}. Düzey (${lvl.label})`}
                         </span>
                         <label
                           htmlFor={`lvl-pts-${crit.id}-${lvl.level}`}
@@ -1032,45 +1053,75 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                     <thead>
                       <tr className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-800">
                         <th className="py-3 px-4 w-48">Ölçüt · Puan & Ağırlık</th>
-                        {(activeRubric.criteria[0]?.levels || []).map((lvl) => (
-                          <th
-                            key={lvl.level}
-                            className="py-3 px-3 border-l border-slate-200 bg-slate-50 text-slate-800"
-                          >
-                            {lvl.level}. Düzey — {lvl.label}
-                          </th>
-                        ))}
+                        {(activeRubric.criteria[0]?.levels || []).map((lvl) => {
+                          const isThreeLevel =
+                            activeRubric.criteria[0]?.levels.length === 3 &&
+                            activeRubric.maxLevelPoints === 2;
+                          return (
+                            <th
+                              key={lvl.level}
+                              className="py-3 px-3 border-l border-slate-200 bg-slate-50 text-slate-800"
+                            >
+                              {isThreeLevel
+                                ? `${lvl.label} (%${Math.round(
+                                    (lvl.points / 2) * 100
+                                  )})`
+                                : `${lvl.level}. Düzey — ${lvl.label}`}
+                            </th>
+                          );
+                        })}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 text-xs">
-                      {activeRubric.criteria.map((crit, idx) => (
-                        <tr key={crit.id} className="align-top">
-                          <td className="py-3 px-4 bg-slate-50/60">
-                            <span className="text-[11px] text-slate-500 block">
-                              0{idx + 1}. {crit.category}
-                            </span>
-                            <span className="font-bold text-slate-900 text-sm block mt-0.5">
-                              {crit.title}
-                            </span>
-                            <span className="font-mono-num text-xs font-bold text-blue-900 mt-1 block">
-                              {crit.maxPoints ?? crit.weight} Puan · %{crit.weight}
-                            </span>
-                          </td>
-                          {crit.levels.map((lvl) => (
-                            <td
-                              key={lvl.level}
-                              className="py-3 px-3 text-slate-600 leading-relaxed border-l border-slate-100"
-                            >
-                              <div className="mb-1">
-                                <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
-                                  {lvl.points} Puan
-                                </span>
-                              </div>
-                              <div>{lvl.description}</div>
+                      {activeRubric.criteria.map((crit, idx) => {
+                        const critMaxPts = crit.maxPoints ?? crit.weight;
+                        const maxLvlPts = Math.max(
+                          ...crit.levels.map((l) => l.points),
+                          1
+                        );
+                        const isThreeLevel =
+                          crit.levels.length === 3 && maxLvlPts === 2;
+                        return (
+                          <tr key={crit.id} className="align-top">
+                            <td className="py-3 px-4 bg-slate-50/60">
+                              <span className="text-[11px] text-slate-500 block">
+                                0{idx + 1}. {crit.category}
+                              </span>
+                              <span className="font-bold text-slate-900 text-sm block mt-0.5">
+                                {crit.title}
+                              </span>
+                              <span className="font-mono-num text-xs font-bold text-blue-900 mt-1 block">
+                                {critMaxPts} Puan · %{crit.weight}
+                              </span>
                             </td>
-                          ))}
-                        </tr>
-                      ))}
+                            {crit.levels.map((lvl) => {
+                              const pct = Math.round(
+                                (lvl.points / maxLvlPts) * 100
+                              );
+                              const earnedPts = Number(
+                                ((lvl.points / maxLvlPts) * critMaxPts).toFixed(
+                                  1
+                                )
+                              );
+                              return (
+                                <td
+                                  key={lvl.level}
+                                  className="py-3 px-3 text-slate-600 leading-relaxed border-l border-slate-100"
+                                >
+                                  <div className="mb-1">
+                                    <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
+                                      {isThreeLevel
+                                        ? `%${pct} · ${earnedPts} Puan`
+                                        : `${lvl.points} Puan`}
+                                    </span>
+                                  </div>
+                                  <div>{lvl.description}</div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

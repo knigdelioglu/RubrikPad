@@ -315,7 +315,7 @@ export function getScoreLevelVisualTheme(
 
   if (points <= 0) {
     return {
-      levelName: 'Gözlenmedi',
+      levelName: maxLevelPoints === 2 ? 'Hayır (%0)' : 'Gözlenmedi',
       unselectedCard: calmUnselectedCard,
       unselectedBadge: calmUnselectedBadge,
       selectedCard:
@@ -330,7 +330,22 @@ export function getScoreLevelVisualTheme(
 
   const ratio = maxLevelPoints > 0 ? points / maxLevelPoints : 0;
 
-  if (points === 1 || ratio <= 0.3) {
+  if (points >= maxLevelPoints || ratio >= 0.99) {
+    return {
+      levelName: maxLevelPoints === 2 ? 'Evet (%100)' : 'Örnek Düzey',
+      unselectedCard: calmUnselectedCard,
+      unselectedBadge: calmUnselectedBadge,
+      selectedCard:
+        'bg-blue-50 border-2 border-blue-950 text-slate-950 shadow-xs ring-2 ring-blue-950/20',
+      selectedBadge: 'bg-blue-950 text-white',
+      compactUnselected: calmCompactUnselected,
+      compactSelected:
+        'bg-blue-950 border-slate-950 text-white font-bold shadow-xs',
+      summaryPill: 'bg-blue-900 text-white border-blue-950',
+    };
+  }
+
+  if (ratio <= 0.3 || (maxLevelPoints >= 4 && points === 1)) {
     return {
       levelName: 'Destek Gerekli',
       unselectedCard: calmUnselectedCard,
@@ -345,9 +360,9 @@ export function getScoreLevelVisualTheme(
     };
   }
 
-  if (points === 2 || ratio <= 0.6) {
+  if (ratio <= 0.6 || (maxLevelPoints >= 4 && points === 2)) {
     return {
-      levelName: 'Gelişmekte',
+      levelName: maxLevelPoints === 2 ? 'Kısmen (%50)' : 'Gelişmekte',
       unselectedCard: calmUnselectedCard,
       unselectedBadge: calmUnselectedBadge,
       selectedCard:
@@ -360,32 +375,17 @@ export function getScoreLevelVisualTheme(
     };
   }
 
-  if (points < maxLevelPoints) {
-    return {
-      levelName: 'Yetkin',
-      unselectedCard: calmUnselectedCard,
-      unselectedBadge: calmUnselectedBadge,
-      selectedCard:
-        'bg-blue-50/90 border-2 border-blue-900 text-slate-950 shadow-xs ring-2 ring-blue-900/15',
-      selectedBadge: 'bg-blue-900 text-white',
-      compactUnselected: calmCompactUnselected,
-      compactSelected:
-        'bg-blue-900 border-blue-950 text-white font-bold shadow-xs',
-      summaryPill: 'bg-blue-100/80 text-blue-950 border-blue-300',
-    };
-  }
-
   return {
-    levelName: 'Örnek Düzey',
+    levelName: 'Yetkin',
     unselectedCard: calmUnselectedCard,
     unselectedBadge: calmUnselectedBadge,
     selectedCard:
-      'bg-blue-50 border-2 border-blue-950 text-slate-950 shadow-xs ring-2 ring-blue-950/20',
-    selectedBadge: 'bg-blue-950 text-white',
+      'bg-blue-50/90 border-2 border-blue-900 text-slate-950 shadow-xs ring-2 ring-blue-900/15',
+    selectedBadge: 'bg-blue-900 text-white',
     compactUnselected: calmCompactUnselected,
     compactSelected:
-      'bg-blue-950 border-slate-950 text-white font-bold shadow-xs',
-    summaryPill: 'bg-blue-900 text-white border-blue-950',
+      'bg-blue-900 border-blue-950 text-white font-bold shadow-xs',
+    summaryPill: 'bg-blue-100/80 text-blue-950 border-blue-300',
   };
 }
 
@@ -438,6 +438,12 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
   const isAnswered = hasDirect || hasLevel;
   const critMaxPts = criterion.maxPoints ?? criterion.weight;
   const maxLevelPoints = Math.max(...criterion.levels.map((l) => l.points), 1);
+  const isThreeLevelScale =
+    criterion.levels.length === 3 && maxLevelPoints === 2;
+  const formatLevelPercentage = (pts: number) =>
+    Math.round((pts / maxLevelPoints) * 100);
+  const formatLevelEarnedPts = (pts: number) =>
+    Number(((pts / maxLevelPoints) * critMaxPts).toFixed(1));
 
   const selectedLevelObj = !hasDirect
     ? criterion.levels.find((l) => l.points === selectedPoints)
@@ -509,6 +515,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
   if (viewMode === 'compact' && !isFocusedStage) {
     return (
       <div
+        data-testid={`criterion-card-${criterionIndex}`}
         className={`rounded-xl border transition-all px-3.5 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 ${
           isNextUnscored
             ? 'bg-white border-2 border-blue-900 ring-2 ring-blue-900/10 shadow-xs'
@@ -578,6 +585,8 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
                 lvl.points,
                 maxLevelPoints
               );
+              const pct = formatLevelPercentage(lvl.points);
+              const earnedPts = formatLevelEarnedPts(lvl.points);
               return (
                 <button
                   key={lvl.level}
@@ -591,7 +600,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
                   }`}
                 >
                   <span className="font-mono-num text-sm font-bold">
-                    {lvl.points}P
+                    {isThreeLevelScale ? `%${pct} (${earnedPts}P)` : `${lvl.points}P`}
                   </span>
                   <span
                     className={`text-[11px] font-semibold truncate max-w-full ${
@@ -737,7 +746,11 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
               className={`font-mono-num text-xs font-bold border px-3 py-1 rounded-lg flex items-center gap-1 ${selectedTheme.summaryPill}`}
             >
               <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-              Seçilen: {selectedLevelObj.points}P ({selectedLevelObj.label})
+              {isThreeLevelScale
+                ? `Seçilen: ${selectedLevelObj.label} (%${formatLevelPercentage(
+                    selectedLevelObj.points
+                  )} · ${formatLevelEarnedPts(selectedLevelObj.points)}P)`
+                : `Seçilen: ${selectedLevelObj.points}P (${selectedLevelObj.label})`}
             </span>
           )}
 
@@ -838,7 +851,11 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
                   }`}
                 >
                   {isSelected && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
-                  {lvl.points}P
+                  {isThreeLevelScale
+                    ? `%${formatLevelPercentage(lvl.points)} · ${formatLevelEarnedPts(
+                        lvl.points
+                      )}P`
+                    : `${lvl.points}P`}
                 </span>
               </div>
 

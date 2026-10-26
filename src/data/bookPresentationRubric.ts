@@ -3,27 +3,41 @@ import type { Rubric, RubricLevel } from '../types.ts';
 export const BOOK_PRESENTATION_RUBRIC_ID = 'rub-tde-kitap-sunumu';
 
 /**
- * MEB TYMM Eleştirel Okuma, Dinleme/İzleme Formu (Ek-1) ve ODSGM konuşma
- * değerlendirme alanları dikkate alınarak kitap sunumuna uyarlanmış rubrik.
+ * MEB ders kitaplarındaki 3 dereceli değerlendirme formlarına (Evet – Kısmen – Hayır)
+ * uygun puan karşılıkları: Evet = %100, Kısmen = %50, Hayır = %0.
+ */
+export const BOOK_PRESENTATION_LEVEL_PERCENTAGES: Record<number, number> = {
+  0: 0,
+  1: 50,
+  2: 100,
+};
+
+/**
+ * MEB TYMM Eleştirel Okuma, Dinleme/İzleme Formu (Ek-1) ve ders kitaplarındaki
+ * 3 dereceli (Evet – Kısmen – Hayır) değerlendirme formları dikkate alınarak
+ * kitap sunumuna uyarlanmış rubrik.
  * Bu 100 puanlık dağılım uygulamaya özeldir; MEB'in zorunlu puan anahtarı değildir.
  */
-function levels(
-  support: string,
-  developing: string,
-  proficient: string,
-  exemplary: string
-): RubricLevel[] {
+function levels(no: string, partial: string, yes: string): RubricLevel[] {
   return [
     {
       level: 0,
-      label: 'Gözlenmedi (0)',
+      label: 'Hayır',
       points: 0,
-      description: 'Bu ölçüte ilişkin değerlendirilebilir bir performans sergilenmedi.',
+      description: no,
     },
-    { level: 1, label: 'Destek Gerekli', points: 1, description: support },
-    { level: 2, label: 'Gelişmekte', points: 2, description: developing },
-    { level: 3, label: 'Yetkin', points: 3, description: proficient },
-    { level: 4, label: 'Örnek Düzey', points: 4, description: exemplary },
+    {
+      level: 1,
+      label: 'Kısmen',
+      points: 1,
+      description: partial,
+    },
+    {
+      level: 2,
+      label: 'Evet',
+      points: 2,
+      description: yes,
+    },
   ];
 }
 
@@ -34,10 +48,10 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
   description:
-    'Okunan eserin çözümlemesini, eleştirel değerlendirmeyi, metinsel kanıtları ve sözlü sunumu ölçen 100 puanlık rubrik. TYMM Ek-1 ve MEB ODSGM sunum ölçütlerinden uyarlanmıştır; MEB tarafından yayımlanmış zorunlu kitap sunumu puanlama anahtarı değildir.',
-  maxLevelPoints: 4,
+    'Okunan eserin çözümlemesini, eleştirel değerlendirmeyi, metinsel kanıtları ve sözlü sunumu MEB kitaplarındaki 3 dereceli (Evet %100 – Kısmen %50 – Hayır %0) değerlendirme formuna uygun olarak ölçen 100 puanlık rubrik. TYMM Ek-1 ve MEB ODSGM sunum ölçütlerinden uyarlanmıştır; MEB tarafından yayımlanmış zorunlu kitap sunumu puanlama anahtarı değildir.',
+  maxLevelPoints: 2,
   createdAt: '2026-10-26',
-  version: 1,
+  version: 2,
   criteria: [
     {
       id: 'crit-ks-1',
@@ -47,10 +61,9 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       maxPoints: 20,
       required: true,
       levels: levels(
-        'Eserin konusu, temel olayları veya ana düşüncesi yanlış ya da çok eksik aktarılmıştır.',
-        'Eserin ana hatları açıklanmış ancak önemli olaylar, kişiler veya ileti eksik ya da karışıktır.',
-        'Eserin konusu, temel olayları, önemli kişiler ve ana iletisi doğru, açık ve tutarlı aktarılmıştır.',
-        'Eserin ana iletisi ve önemli ayrıntıları arasındaki ilişkiler güçlü bir kavrayışla açıklanmıştır.'
+        'Eserin konusu, temel olayları veya ana iletisi doğru aktarılmamış ya da hiç açıklanmamıştır.',
+        'Eserin ana hatları açıklanmış ancak önemli olaylar, kişiler veya temel ileti kısmen/eksik aktarılmıştır.',
+        'Eserin konusu, temel olayları, önemli kişiler ve ana iletisi doğru, açık ve tutarlı biçimde açıklanmıştır.'
       ),
     },
     {
@@ -62,9 +75,8 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       required: true,
       levels: levels(
         'Kişiler, çatışma, anlatıcı, zaman, mekân veya tür özelliklerine ilişkin çözümleme yapılmamıştır.',
-        'Eserin bazı yapı ve anlatım unsurları sayılmış ancak aralarındaki ilişkiler açıklanmamıştır.',
-        'Eserin türüne uygun yapı ve anlatım unsurları, olay örgüsü ve çatışmalarıyla ilişkilendirilmiştir.',
-        'Yapı, dil ve anlatım tercihleri ile eserin anlamı arasındaki ilişkiler özgün ve derinlikli çözümlenmiştir.'
+        'Eserin bazı yapı ve anlatım unsurları belirtilmiş ancak olay örgüsü ve anlamla ilişkileri kısmen açıklanmıştır.',
+        'Eserin türüne uygun yapı, dil ve anlatım unsurları olay örgüsü, çatışma ve anlamla ilişkilendirilerek çözümlenmiştir.'
       ),
     },
     {
@@ -75,10 +87,9 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       maxPoints: 15,
       required: true,
       levels: levels(
-        'Eser hakkında gerekçeli kişisel değerlendirme veya eleştirel yorum bulunmamaktadır.',
-        'Beğeni ve eleştiriler dile getirilmiş ancak gerekçeler yüzeysel ya da çelişkilidir.',
-        'Eserin güçlü ve zayıf yönlerine ilişkin kişisel görüşler tutarlı gerekçelerle açıklanmıştır.',
-        'Eserin bakış açısı, değerleri ve iletisi çok yönlü sorgulanmış; özgün ve dengeli yargılara ulaşılmıştır.'
+        'Eser hakkında gerekçeli kişisel değerlendirme veya eleştirel yorum paylaşılmamıştır.',
+        'Eserle ilgili kişisel beğeni ve eleştiriler dile getirilmiş ancak gerekçeleri yüzeysel veya kısmi kalmıştır.',
+        'Eserin güçlü ve zayıf yönlerine, bakış açısına ve iletisine ilişkin görüşler tutarlı gerekçelerle değerlendirilmiştir.'
       ),
     },
     {
@@ -89,10 +100,9 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       maxPoints: 15,
       required: true,
       levels: levels(
-        'Yorumlar eserden herhangi bir olay, ifade veya örnekle ilişkilendirilmemiştir.',
-        'Örnekler verilmiş ancak yorumlarla ilişkileri zayıf kalmış; karşılaştırmalar yüzeysel olmuştur.',
-        'Yorumlar eserden yerinde örneklerle desteklenmiş, uygun bağlamlarda karşılaştırmalara yer verilmiştir.',
-        'Seçilen güçlü metinsel kanıtlar ve anlamlı karşılaştırmalar eleştirel görüşleri ikna edici biçimde temellendirmiştir.'
+        'Yorumlar eserden herhangi bir olay, alıntı, örnek veya karşılaştırmayla desteklenmemiştir.',
+        'Eserden sınırlı örnek verilmiş ancak yorumlarla ve karşılaştırmalarla ilişkisi kısmen kurulabilmiştir.',
+        'Yorumlar eserden yerinde örnek ve metinsel kanıtlarla desteklenmiş; anlamlı karşılaştırmalara yer verilmiştir.'
       ),
     },
     {
@@ -103,10 +113,9 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       maxPoints: 10,
       required: true,
       levels: levels(
-        'Konuşma anlaşılmayacak derecede kopuk; sözcük seçimi ve dil kullanımı belirgin biçimde sorunludur.',
-        'Konuşma genel olarak anlaşılır ancak sık duraksama, tekrar ve anlatım kusurları vardır.',
-        'Konuya uygun söz varlığıyla akıcı, açık, anlaşılır ve Türkçenin kurallarına uygun konuşulmuştur.',
-        'Zengin söz varlığı, akıcı cümleler ve yerinde vurgularla anlam etkili biçimde aktarılmıştır.'
+        'Konuşma kopuk ilerlemiş; sözcük seçimi ve dil kullanımı anlatımı engelleyecek düzeyde sorunlu olmuştur.',
+        'Konuşma genel olarak anlaşılır olmakla birlikte duraksama, tekrar veya anlatım kusurları görülmüştür.',
+        'Konuya uygun söz varlığıyla akıcı, açık, anlaşılır ve Türkçenin kurallarına uygun konuşulmuştur.'
       ),
     },
     {
@@ -117,10 +126,9 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       maxPoints: 10,
       required: true,
       levels: levels(
-        'Ses yeterince duyulmamış; göz teması veya dinleyiciyle iletişim kurulmamıştır.',
-        'Ses duyulabilir düzeydedir ancak vurgu, tonlama, jest, mimik ve göz teması sınırlıdır.',
-        'Ses, vurgu, tonlama, doğal beden dili ve göz teması anlatımı ve dinleyici ilgisini desteklemiştir.',
-        'Ses ve beden dili anlamla uyum içinde kullanılmış; dinleyiciyle güçlü ve sürdürülebilir bağ kurulmuştur.'
+        'Ses yeterince duyulmamış; göz teması ve dinleyiciyle etkili iletişim kurulamamıştır.',
+        'Ses duyulabilir düzeydedir ancak vurgu, tonlama, beden dili ve göz teması kısmen kullanılmıştır.',
+        'Ses, vurgu, tonlama, doğal beden dili ve göz teması anlamla uyumlu biçimde dinleyici ilgisini desteklemiştir.'
       ),
     },
     {
@@ -131,10 +139,9 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       maxPoints: 5,
       required: true,
       levels: levels(
-        'Sunumun giriş, gelişme ve sonuç akışı belirgin değildir; içerik dağınıktır.',
-        'Temel bir plan vardır ancak geçişler, içerik sırası veya görsel destek yetersizdir.',
-        'Sunum giriş-gelişme-sonuç bütünlüğüyle düzenlenmiş; kullanılan materyaller içeriği desteklemiştir.',
-        'Dikkat çekici giriş, güçlü geçişler, özlü görsel destek ve sonuçla tutarlı bir bütünlük kurulmuştur.'
+        'Sunumun giriş, gelişme ve sonuç akışı belirgin değildir; içerik dağınık sunulmuştur.',
+        'Temel bir sunum planı bulunmakla birlikte bölümler arası geçişler veya içerik sırası kısmen düzenlenmiştir.',
+        'Sunum giriş-gelişme-sonuç bütünlüğüyle planlanmış ve içerik tutarlı bir akışla sunulmuştur.'
       ),
     },
     {
@@ -145,11 +152,11 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
       maxPoints: 5,
       required: true,
       levels: levels(
-        'Sunum belirlenen süreyi önemli ölçüde aşmış veya içeriğin büyük bölümü tamamlanamamıştır.',
-        'Süre dağılımı dengesiz kalmış; bazı bölümler gereğinden uzun ya da kısa tutulmuştur.',
-        'Belirlenen süre içinde konunun temel boyutları dengeli ve tamamlanmış biçimde sunulmuştur.',
-        'Süre bilinçli yönetilmiş; her bölüme amacına uygun zaman ayrılarak etkili bir kapanış yapılmıştır.'
+        'Sunum belirlenen süreyi önemli ölçüde aşmış veya içeriğin büyük bölümü sürede tamamlanamamıştır.',
+        'Süre dağılımı kısmen dengeli olmuş; bazı bölümlere gereğinden fazla veya az zaman ayrılmıştır.',
+        'Belirlenen süre içinde sunumun tüm bölümleri dengeli ve etkili bir zaman yönetimiyle tamamlanmıştır.'
       ),
     },
   ],
 };
+

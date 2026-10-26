@@ -100,8 +100,10 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                 {currentCriterion.levels.map((lvl) => {
                   const maxPts = Math.max(
                     ...currentCriterion.levels.map((l) => l.points),
-                    4
+                    1
                   );
+                  const isThreeLevel =
+                    currentCriterion.levels.length === 3 && maxPts === 2;
                   const theme = getScoreLevelVisualTheme(lvl.points, maxPts);
                   return (
                     <button
@@ -116,7 +118,9 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                       }
                       className={`px-2 py-0.5 text-[11px] font-mono-num font-bold rounded border transition-colors cursor-pointer ${theme.compactUnselected}`}
                     >
-                      {lvl.points}P
+                      {isThreeLevel
+                        ? `${lvl.label} (%${Math.round((lvl.points / maxPts) * 100)})`
+                        : `${lvl.points}P`}
                     </button>
                   );
                 })}
@@ -291,8 +295,10 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                         isActiveRow && colIdx === safeCriterionIdx;
                       const maxLvlPts = Math.max(
                         ...c.levels.map((l) => l.points),
-                        4
+                        1
                       );
+                      const isThreeLevel =
+                        c.levels.length === 3 && maxLvlPts === 2;
 
                       return (
                         <td
@@ -311,6 +317,9 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                                 lvl.points,
                                 maxLvlPts
                               );
+                              const pct = Math.round(
+                                (lvl.points / maxLvlPts) * 100
+                              );
                               return (
                                 <button
                                   key={lvl.level}
@@ -324,14 +333,18 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                                       lvl.points
                                     );
                                   }}
-                                  title={`${lvl.label} (${lvl.points} Puan)`}
-                                  className={`flex-1 py-1 rounded font-mono-num text-[11px] font-bold transition-all cursor-pointer min-h-[28px] border ${
+                                  title={
+                                    isThreeLevel
+                                      ? `${lvl.label} (%${pct})`
+                                      : `${lvl.label} (${lvl.points} Puan)`
+                                  }
+                                  className={`flex-1 py-1 px-1 rounded font-mono-num text-[11px] font-bold transition-all cursor-pointer min-h-[28px] border ${
                                     active
                                       ? lvlTheme.compactSelected
                                       : lvlTheme.compactUnselected
                                   }`}
                                 >
-                                  {lvl.points}
+                                  {isThreeLevel ? lvl.label : lvl.points}
                                 </button>
                               );
                             })}
