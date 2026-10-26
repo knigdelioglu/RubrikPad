@@ -173,30 +173,44 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
   completedCount,
   canGoPrev,
   canGoNext,
-  focusDisplayMode,
   onSelectStep,
   onPrevStep,
   onNextStep,
   onExitFocusMode,
 }) => {
   const activeStep = steps[activeIndex];
+  const tablistRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    const container = tablistRef.current;
+    if (!container) return;
+    const activeEl = container.querySelector(
+      `[data-testid="focus-step-pill-${activeIndex}"]`
+    ) as HTMLElement | null;
+    if (activeEl && typeof activeEl.scrollIntoView === 'function') {
+      activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [activeIndex]);
 
   return (
     <div
       data-testid="focus-mode-stepper-bar"
       className="bg-slate-100/90 border border-slate-300 rounded-2xl p-2.5 sm:p-3 space-y-2 shadow-2xs"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-900 text-white text-[11px] font-bold">
+      <div className="flex items-center justify-between gap-2 min-h-[28px]">
+        <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-900 text-white text-[11px] font-bold shrink-0">
             <Focus className="w-3 h-3" />
             ODAK MODU
           </span>
-          <span className="font-mono-num text-xs font-bold text-slate-900">
+          <span className="font-mono-num text-xs font-bold text-slate-900 shrink-0">
             Ölçüt {activeIndex + 1} / {totalCount}
           </span>
           {activeStep && (
-            <span className="text-xs font-semibold text-slate-700 truncate max-w-[220px] sm:max-w-[340px]">
+            <span
+              className="text-xs font-semibold text-slate-700 truncate min-w-0"
+              title={activeStep.title}
+            >
               — {activeStep.title}
             </span>
           )}
@@ -217,20 +231,21 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
       </div>
 
       {/* Single-Row Stepper Navigation: Prev Button + Criterion Step Pills + Next Button */}
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2 min-h-[38px]">
         <button
           type="button"
           disabled={!canGoPrev}
           onClick={onPrevStep}
           data-testid="focus-prev-criterion-btn"
-          className="min-h-[36px] px-3 py-1.5 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+          className="h-[36px] px-3 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
         >
           <ChevronLeft className="w-3.5 h-3.5" />
           Önceki Ölçüt
         </button>
 
         <div
-          className="flex items-center gap-1.5 flex-1 justify-center overflow-x-auto py-0.5"
+          ref={tablistRef}
+          className="flex items-center gap-1.5 flex-1 min-w-0 justify-start overflow-x-auto py-0.5"
           role="tablist"
           aria-label="Ölçüt Adımları"
         >
@@ -242,7 +257,8 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
               aria-selected={step.isActive}
               data-testid={`focus-step-pill-${step.index}`}
               onClick={() => onSelectStep(step.index)}
-              className={`min-h-[34px] px-2.5 py-1 rounded-xl text-xs font-bold border cursor-pointer flex items-center gap-1.5 shrink-0 ${
+              title={step.title}
+              className={`h-[34px] w-[132px] xl:w-[144px] px-2.5 rounded-xl text-xs font-bold border cursor-pointer flex items-center justify-between gap-1.5 shrink-0 ${
                 step.isActive
                   ? 'bg-blue-900 text-white border-blue-950 shadow-2xs'
                   : step.isScored
@@ -250,13 +266,13 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
                   : 'bg-slate-50 text-slate-600 border-slate-300 hover:bg-white hover:text-slate-900'
               }`}
             >
-              <span className="font-mono-num">{step.numberLabel}.</span>
-              <span className="truncate max-w-[105px] xl:max-w-[130px]">
-                {step.title}
+              <span className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
+                <span className="font-mono-num shrink-0">{step.numberLabel}.</span>
+                <span className="truncate">{step.title}</span>
               </span>
-              {step.isScored && step.scoreLabel && (
+              {step.isScored && step.scoreLabel ? (
                 <span
-                  className={`font-mono-num text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                  className={`font-mono-num text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ${
                     step.isActive
                       ? 'bg-blue-950 text-blue-100'
                       : 'bg-slate-200 text-slate-900'
@@ -264,6 +280,10 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
                 >
                   <Check className="w-2.5 h-2.5 stroke-[2.5]" />
                   {step.scoreLabel}
+                </span>
+              ) : (
+                <span className="font-mono-num text-[10px] px-1.5 py-0.5 rounded opacity-50 shrink-0">
+                  —
                 </span>
               )}
             </button>
@@ -275,7 +295,7 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
           disabled={!canGoNext}
           onClick={onNextStep}
           data-testid="focus-next-criterion-btn"
-          className="min-h-[36px] px-3 py-1.5 rounded-xl bg-blue-900 border border-blue-950 text-xs font-bold text-white hover:bg-blue-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+          className="h-[36px] px-3 rounded-xl bg-blue-900 border border-blue-950 text-xs font-bold text-white hover:bg-blue-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
         >
           Sonraki Ölçüt
           <ChevronRight className="w-3.5 h-3.5" />
@@ -511,12 +531,12 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
     );
   }
 
-  // Compact / Fast View: single row on tablet/desktop with high-contrast Navy selection (only when NOT in Focus Stage)
+  // Compact / Fast View: single row on tablet/desktop with fixed height & locked button columns
   if (viewMode === 'compact' && !isFocusedStage) {
     return (
       <div
         data-testid={`criterion-card-${criterionIndex}`}
-        className={`rounded-xl border transition-all px-3.5 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 ${
+        className={`rounded-xl border transition-all px-3.5 py-2 md:h-[66px] flex flex-col md:flex-row md:items-center justify-between gap-2.5 ${
           isNextUnscored
             ? 'bg-white border-2 border-blue-900 ring-2 ring-blue-900/10 shadow-xs'
             : isAnswered
@@ -526,8 +546,8 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             : 'bg-white border-slate-200 hover:border-slate-300'
         }`}
       >
-        {/* Left: Criterion Index, Title & Max Points */}
-        <div className="flex items-center gap-2.5 md:w-5/12 min-w-0">
+        {/* Left: Criterion Index, Title & Max Points (single non-wrapping row on md+) */}
+        <div className="flex items-center gap-2 md:w-5/12 min-w-0 overflow-hidden">
           <span
             className={`font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg shrink-0 flex items-center gap-1 ${
               isNextUnscored
@@ -540,24 +560,23 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             {isAnswered && <Check className="w-3 h-3 stroke-[2.5]" />}
             0{criterionIndex + 1}
           </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-sm font-bold text-slate-900 leading-snug break-words">
-                {criterion.title}
-              </span>
-              {isNextUnscored && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-900 text-white">
-                  <Sparkles className="w-2.5 h-2.5" />
-                  SIRADAKİ ÖLÇÜT
-                </span>
-              )}
-              {criterion.category && (
-                <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
-                  {criterion.category}
-                </span>
-              )}
-            </div>
-          </div>
+          <span
+            className="text-sm font-bold text-slate-900 truncate min-w-0 flex-1"
+            title={criterion.title}
+          >
+            {criterion.title}
+          </span>
+          {isNextUnscored && (
+            <span className="hidden xl:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-900 text-white shrink-0">
+              <Sparkles className="w-2.5 h-2.5" />
+              SIRADAKİ ÖLÇÜT
+            </span>
+          )}
+          {criterion.category && !isNextUnscored && (
+            <span className="hidden xl:inline-block text-[11px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded truncate max-w-[140px] shrink-0">
+              {criterion.category}
+            </span>
+          )}
           <span className="font-mono-num text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md shrink-0">
             {critMaxPts}P
           </span>
@@ -571,7 +590,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
           )}
         </div>
 
-        {/* Right: Compact Touch Level Selector Boxes */}
+        {/* Right: Compact Touch Level Selector Boxes with fixed clear button slot */}
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 md:w-7/12">
           <div
             className="grid flex-1 gap-1.5 w-full"
@@ -593,13 +612,13 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
                   type="button"
                   onClick={() => onSelectLevel(criterion.id, lvl.points)}
                   aria-pressed={isSelected}
-                  className={`min-h-[46px] px-2 py-1.5 rounded-xl border text-center transition-all active:scale-[0.98] cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 ${
+                  className={`h-[46px] px-2 py-1 rounded-xl border text-center transition-all active:scale-[0.98] cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 ${
                     isSelected
                       ? lvlTheme.compactSelected
                       : lvlTheme.compactUnselected
                   }`}
                 >
-                  <span className="font-mono-num text-sm font-bold">
+                  <span className="font-mono-num text-sm font-bold shrink-0">
                     {isThreeLevelScale ? `%${pct} (${earnedPts}P)` : `${lvl.points}P`}
                   </span>
                   <span
@@ -615,7 +634,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
           </div>
 
           {precisionScoringMode && onSetDirectScore && (
-            <div className="flex items-center gap-1 shrink-0 bg-white border border-slate-300 rounded-xl px-2 py-1.5 min-h-[46px]">
+            <div className="flex items-center gap-1 shrink-0 bg-white border border-slate-300 rounded-xl px-2 py-1.5 h-[46px]">
               <input
                 type="number"
                 min={0}
@@ -644,13 +663,14 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             </div>
           )}
 
-          {isAnswered && onClearScore && (
+          {onClearScore && (
             <button
               type="button"
+              disabled={!isAnswered}
               onClick={() => onClearScore(criterion.id)}
               aria-label={`${criterion.title} puanını temizle`}
               title="Bu ölçüt puanını temizle"
-              className="min-h-[42px] px-2.5 rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-600 hover:text-red-700 hover:border-red-300 hover:bg-red-50 transition-colors cursor-pointer shrink-0 flex items-center justify-center"
+              className="h-[46px] w-[42px] rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-600 hover:text-red-700 hover:border-red-300 hover:bg-red-50 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer shrink-0 flex items-center justify-center"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
@@ -660,7 +680,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
     );
   }
 
-  // Detailed Tablet Card View & Spacious Focus Stage View: Large touch cards showing full level descriptions
+  // Detailed Tablet Card View & Spacious Focus Stage View: Fixed-height card & fixed-position buttons
   const gridColsClass =
     criterion.levels.length >= 5
       ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-5'
@@ -677,7 +697,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
       }
       className={`rounded-2xl border transition-all ${
         isFocusedStage
-          ? 'bg-white border-2 border-blue-900 ring-4 ring-blue-900/10 p-5 sm:p-7 space-y-5 shadow-md'
+          ? 'bg-white border-2 border-blue-900 ring-4 ring-blue-900/10 p-5 sm:p-6 space-y-4 shadow-md'
           : isNextUnscored
           ? 'bg-white border-2 border-blue-900 ring-2 ring-blue-900/10 p-4 space-y-3 shadow-sm'
           : isAnswered
@@ -687,127 +707,144 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
           : 'bg-white border-slate-200 p-4 space-y-3 shadow-2xs'
       }`}
     >
-      {/* Card Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
-          <span
-            className={`font-mono-num font-bold rounded-xl shrink-0 flex items-center gap-1.5 ${
-              isFocusedStage
-                ? 'bg-blue-900 text-white text-sm px-3.5 py-1.5 shadow-xs'
-                : isNextUnscored
-                ? 'bg-blue-900 text-white text-xs px-2.5 py-1 shadow-2xs'
-                : isAnswered
-                ? 'bg-slate-700 text-white text-xs px-2.5 py-1'
-                : 'bg-slate-100 text-slate-700 border border-slate-300 text-xs px-2.5 py-1'
-            }`}
-          >
-            {isAnswered && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
-            Ölçüt 0{criterionIndex + 1}
-          </span>
-
-          <h3
-            className={`font-bold text-slate-950 leading-snug ${
-              isFocusedStage ? 'text-lg sm:text-xl' : 'text-base'
-            }`}
-          >
-            {criterion.title}
-          </h3>
-
-          {!isFocusedStage && isNextUnscored && (
-            <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-lg bg-blue-900 text-white shadow-2xs">
-              <Sparkles className="w-3 h-3" />
-              Sıradaki
+      {/* Fixed-Height 2-Row Card Header: Never wraps or shifts button coordinates */}
+      <div className="space-y-2">
+        {/* Header Row 1: Criterion Badge + Single-Line Title + Category & Weight Badges */}
+        <div className="flex items-center justify-between gap-3 h-[36px]">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
+            <span
+              className={`font-mono-num font-bold rounded-xl shrink-0 flex items-center gap-1.5 h-[32px] ${
+                isFocusedStage
+                  ? 'bg-blue-900 text-white text-sm px-3.5 shadow-xs'
+                  : isNextUnscored
+                  ? 'bg-blue-900 text-white text-xs px-2.5 shadow-2xs'
+                  : isAnswered
+                  ? 'bg-slate-700 text-white text-xs px-2.5'
+                  : 'bg-slate-100 text-slate-700 border border-slate-300 text-xs px-2.5'
+              }`}
+            >
+              {isAnswered && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+              Ölçüt 0{criterionIndex + 1}
             </span>
-          )}
 
-          {criterion.category && (
-            <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
-              {criterion.category}
+            <h3
+              title={criterion.title}
+              className={`font-bold text-slate-950 truncate min-w-0 flex-1 ${
+                isFocusedStage ? 'text-base sm:text-xl' : 'text-sm sm:text-base'
+              }`}
+            >
+              {criterion.title}
+            </h3>
+
+            {!isFocusedStage && isNextUnscored && (
+              <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 h-[28px] rounded-lg bg-blue-900 text-white shadow-2xs shrink-0">
+                <Sparkles className="w-3 h-3" />
+                Sıradaki
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {criterion.category && (
+              <span
+                title={criterion.category}
+                className="hidden md:inline-flex items-center h-[30px] text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 rounded-lg border border-slate-200 max-w-[220px] truncate"
+              >
+                {criterion.category}
+              </span>
+            )}
+
+            <span className="inline-flex items-center h-[30px] font-mono-num text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-3 rounded-lg shrink-0">
+              Ağırlık: {critMaxPts} Puan
             </span>
-          )}
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <span className="font-mono-num text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-3 py-1 rounded-lg">
-            Ağırlık: {critMaxPts} Puan
-          </span>
-
-          {isScoreAssigned(reflectedGroupPoints) && (
-            <span
-              className="font-mono-num text-xs font-semibold text-slate-800 bg-slate-200/80 border border-slate-300 px-2.5 py-1 rounded-lg"
-              title="Bu ölçüt için kaydedilen ayrı Grup Puanı"
-            >
-              Ayrı Grup Puanı: {reflectedGroupPoints}P
-            </span>
-          )}
-
-          {selectedLevelObj && selectedTheme && (
-            <span
-              className={`font-mono-num text-xs font-bold border px-3 py-1 rounded-lg flex items-center gap-1 ${selectedTheme.summaryPill}`}
-            >
-              <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-              {isThreeLevelScale
-                ? `Seçilen: ${selectedLevelObj.label} (%${formatLevelPercentage(
-                    selectedLevelObj.points
-                  )} · ${formatLevelEarnedPts(selectedLevelObj.points)}P)`
-                : `Seçilen: ${selectedLevelObj.points}P (${selectedLevelObj.label})`}
-            </span>
-          )}
-
-          {hasDirect && (
-            <span className="font-mono-num text-xs font-bold text-blue-950 bg-blue-50 border border-blue-300 px-2.5 py-1 rounded-lg">
-              Doğrudan Puan: {directPoints} / {critMaxPts}
-            </span>
-          )}
-
-          {precisionScoringMode && onSetDirectScore && (
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1">
-              <span className="text-[11px] font-semibold text-slate-800">
-                Tam Sayı:
+        {/* Header Row 2: Persistent Status Slot & Locked Clear Button */}
+        <div className="flex items-center justify-between gap-2 h-[32px]">
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+            {hasDirect ? (
+              <span className="inline-flex items-center h-[28px] font-mono-num text-xs font-bold text-blue-950 bg-blue-50 border border-blue-300 px-2.5 rounded-lg shrink-0">
+                Doğrudan Puan: {directPoints} / {critMaxPts}
               </span>
-              <input
-                type="number"
-                min={0}
-                max={critMaxPts}
-                step={1}
-                aria-label={`${criterion.title} doğrudan puan (0-${critMaxPts})`}
-                placeholder={`0-${critMaxPts}`}
-                value={hasDirect ? directPoints : ''}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === '') {
-                    onSetDirectScore(criterion.id, null);
-                    return;
-                  }
-                  const num = Math.max(
-                    0,
-                    Math.min(critMaxPts, Math.round(Number(raw)))
-                  );
-                  onSetDirectScore(criterion.id, num);
-                }}
-                className="w-14 text-xs font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-2 focus:ring-blue-900"
-              />
-              <span className="text-xs font-mono-num text-slate-500">
-                /{critMaxPts}
+            ) : selectedLevelObj && selectedTheme ? (
+              <span
+                className={`inline-flex items-center gap-1 h-[28px] font-mono-num text-xs font-bold border px-3 rounded-lg shrink-0 ${selectedTheme.summaryPill}`}
+              >
+                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                {isThreeLevelScale
+                  ? `Seçilen: ${selectedLevelObj.label} (%${formatLevelPercentage(
+                      selectedLevelObj.points
+                    )} · ${formatLevelEarnedPts(selectedLevelObj.points)}P)`
+                  : `Seçilen: ${selectedLevelObj.points}P (${selectedLevelObj.label})`}
               </span>
-            </div>
-          )}
+            ) : (
+              <span className="inline-flex items-center h-[28px] text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 px-2.5 rounded-lg truncate">
+                Seviye seçilmedi
+              </span>
+            )}
 
-          {isAnswered && onClearScore && (
-            <button
-              type="button"
-              onClick={() => onClearScore(criterion.id)}
-              aria-label={`${criterion.title} puanını temizle`}
-              className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-600 hover:text-red-700 hover:border-red-300 hover:bg-red-50 flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Temizle
-            </button>
-          )}
+            {isScoreAssigned(reflectedGroupPoints) && (
+              <span
+                className="hidden sm:inline-flex items-center h-[28px] font-mono-num text-xs font-semibold text-slate-800 bg-slate-200/80 border border-slate-300 px-2.5 rounded-lg shrink-0"
+                title="Bu ölçüt için kaydedilen ayrı Grup Puanı"
+              >
+                Ayrı Grup Puanı: {reflectedGroupPoints}P
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {precisionScoringMode && onSetDirectScore && (
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-lg px-2.5 h-[28px]">
+                <span className="text-[11px] font-semibold text-slate-800">
+                  Tam Sayı:
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={critMaxPts}
+                  step={1}
+                  aria-label={`${criterion.title} doğrudan puan (0-${critMaxPts})`}
+                  placeholder={`0-${critMaxPts}`}
+                  value={hasDirect ? directPoints : ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === '') {
+                      onSetDirectScore(criterion.id, null);
+                      return;
+                    }
+                    const num = Math.max(
+                      0,
+                      Math.min(critMaxPts, Math.round(Number(raw)))
+                    );
+                    onSetDirectScore(criterion.id, num);
+                  }}
+                  className="w-14 text-xs font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-2 focus:ring-blue-900"
+                />
+                <span className="text-xs font-mono-num text-slate-500">
+                  /{critMaxPts}
+                </span>
+              </div>
+            )}
+
+            {onClearScore && (
+              <button
+                type="button"
+                disabled={!isAnswered}
+                onClick={() => onClearScore(criterion.id)}
+                aria-label={`${criterion.title} puanını temizle`}
+                className="h-[28px] px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-600 hover:text-red-700 hover:border-red-300 hover:bg-red-50 disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Temizle
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Large Touch Level Boxes — Extra Spacious in Focus Stage, Calm Soft Gray when unselected, High-Contrast Navy when selected */}
+      {/* Fixed-Height Level Boxes — Top-aligned content so button coordinates & text start never shift across criteria */}
       <div
         className={`grid ${gridColsClass} ${
           isFocusedStage ? 'gap-3.5' : 'gap-2.5'
@@ -825,25 +862,25 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
               aria-pressed={isSelected}
               className={`${
                 isFocusedStage
-                  ? 'min-h-[136px] sm:min-h-[156px] p-4 sm:p-5 rounded-2xl'
-                  : 'min-h-[92px] p-3 rounded-xl'
-              } border text-left transition-all active:scale-[0.99] cursor-pointer flex flex-col justify-between gap-2.5 h-full ${
+                  ? 'h-[156px] sm:h-[176px] p-4 rounded-2xl'
+                  : 'h-[136px] sm:h-[148px] p-3 rounded-xl'
+              } border text-left transition-all active:scale-[0.99] cursor-pointer flex flex-col justify-start gap-2.5 overflow-hidden ${
                 isSelected ? lvlTheme.selectedCard : lvlTheme.unselectedCard
               }`}
             >
-              <div className="flex items-start justify-between gap-2 w-full">
+              <div className="flex items-center justify-between gap-2 w-full shrink-0 pb-2 border-b border-slate-200/80">
                 <span
                   className={`${
                     isFocusedStage ? 'text-sm sm:text-base' : 'text-xs sm:text-sm'
-                  } font-bold leading-tight text-slate-900`}
+                  } font-bold leading-tight text-slate-900 truncate`}
                 >
                   {lvl.label.replace(/\s*\(0\)/, '')}
                 </span>
                 <span
                   className={`font-mono-num ${
                     isFocusedStage
-                      ? 'text-sm sm:text-base px-3 py-1'
-                      : 'text-xs sm:text-sm px-2.5 py-0.5'
+                      ? 'text-xs sm:text-sm px-2.5 h-[28px]'
+                      : 'text-xs px-2 h-[24px]'
                   } font-bold rounded-lg shrink-0 flex items-center gap-1 ${
                     isSelected
                       ? lvlTheme.selectedBadge
@@ -861,9 +898,12 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
 
               {lvl.description ? (
                 <p
+                  title={lvl.description}
                   className={`${
-                    isFocusedStage ? 'text-xs sm:text-sm' : 'text-xs'
-                  } leading-relaxed break-words ${
+                    isFocusedStage && criterion.levels.length <= 3
+                      ? 'text-xs sm:text-sm'
+                      : 'text-xs'
+                  } leading-relaxed break-words line-clamp-4 w-full ${
                     isSelected
                       ? 'text-slate-950 font-semibold'
                       : 'text-slate-600'
@@ -881,14 +921,14 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
         })}
       </div>
 
-      {/* Optional Footer Step Controls when inside Focus Stage */}
+      {/* Footer Step Controls when inside Focus Stage — Locked Y-position */}
       {isFocusedStage && focusStageNav && (
-        <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-3 text-xs h-[48px]">
           <button
             type="button"
             disabled={!focusStageNav.canGoPrev}
             onClick={focusStageNav.onPrev}
-            className="px-3.5 py-2 rounded-xl bg-slate-100 border border-slate-300 font-bold text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
+            className="h-[36px] px-3.5 rounded-xl bg-slate-100 border border-slate-300 font-bold text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             <ChevronLeft className="w-4 h-4" />
             Önceki Ölçüt
@@ -902,7 +942,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             type="button"
             disabled={!focusStageNav.canGoNext}
             onClick={focusStageNav.onNext}
-            className="px-3.5 py-2 rounded-xl bg-blue-900 border border-blue-950 font-bold text-white hover:bg-blue-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
+            className="h-[36px] px-3.5 rounded-xl bg-blue-900 border border-blue-950 font-bold text-white hover:bg-blue-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             Sonraki Ölçüt
             <ChevronRight className="w-4 h-4" />
