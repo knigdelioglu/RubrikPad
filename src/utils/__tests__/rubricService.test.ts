@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { INITIAL_RUBRICS } from '../../data/seedData.ts';
+import { BOOK_PRESENTATION_RUBRIC_ID } from '../../data/bookPresentationRubric.ts';
+import { validateRubric, calculateWeightedScore } from '../rubricLogic.ts';
 import type { Classroom, Rubric } from '../../types.ts';
 import {
   RubrikService,
@@ -11,11 +13,14 @@ import {
   getRubricsByGradeAndSubject,
   summarizeRubricCatalogByGradeAndSubject,
   TDE_11_RUBRIC_IDS,
+  ALL_GRADE_TDE_RUBRIC_IDS,
 } from '../../services/RubrikService.ts';
 
-test('INITIAL_RUBRICS contains exactly the 8 100-point 11th grade Turkish Language and Literature rubrics', () => {
-  assert.equal(INITIAL_RUBRICS.length, 8);
-  for (const rubric of INITIAL_RUBRICS) {
+test('INITIAL_RUBRICS retains the 8 100-point 11th grade rubrics alongside the all-grade book rubric', () => {
+  assert.equal(INITIAL_RUBRICS.length, 9);
+  const grade11Rubrics = INITIAL_RUBRICS.filter((r) => TDE_11_RUBRIC_IDS.has(r.id));
+  assert.equal(grade11Rubrics.length, 8);
+  for (const rubric of grade11Rubrics) {
     assert.equal(TDE_11_RUBRIC_IDS.has(rubric.id), true);
     const assoc = RubrikService.getRubricAssociation(rubric);
     assert.equal(assoc.gradeLevel, '11. Sınıf');
@@ -56,38 +61,39 @@ test('normalizeGradeLevel and normalizeSubjectName handle common Turkish input v
   );
 });
 
-test('8 Turkish Language and Literature rubrics are ONLY returned when 11. Sınıf and Türk Dili ve Edebiyatı are selected', () => {
-  // 11. Sınıf + Türk Dili ve Edebiyatı -> 8 rubrics
+test('11th grade rubrics remain restricted while the book presentation rubric is shared across TDE grades', () => {
+  // 11. Sınıf + Türk Dili ve Edebiyatı -> 8 local + 1 common rubric
   const matched11Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(matched11Tde.length, 8);
+  assert.equal(matched11Tde.length, 9);
+  assert.equal(matched11Tde.some((r) => r.id === BOOK_PRESENTATION_RUBRIC_ID), true);
 
-  // 10. Sınıf + Türk Dili ve Edebiyatı -> 0 rubrics
+  // 10. Sınıf + Türk Dili ve Edebiyatı -> only the shared book rubric
   const matched10Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '10. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(matched10Tde.length, 0);
+  assert.deepEqual(matched10Tde.map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
 
-  // 9. Sınıf + Türk Dili ve Edebiyatı -> 0 rubrics
+  // 9. Sınıf + Türk Dili ve Edebiyatı -> only the shared book rubric
   const matched9Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '9. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(matched9Tde.length, 0);
+  assert.deepEqual(matched9Tde.map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
 
-  // 12. Sınıf + Türk Dili ve Edebiyatı -> 0 rubrics
+  // 12. Sınıf + Türk Dili ve Edebiyatı -> only the shared book rubric
   const matched12Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '12. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(matched12Tde.length, 0);
+  assert.deepEqual(matched12Tde.map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
 
   // 11. Sınıf + Matematik -> 0 rubrics
   const matched11Math = getRubricsByGradeAndSubject(
@@ -124,17 +130,17 @@ test('getRubricsForClassrooms filters rubrics by classroom gradeLevel and subjec
     academicYear: '2026-2027',
   };
 
-  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 8);
-  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).length, 0);
+  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 9);
+  assert.deepEqual(getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Math]).length, 0);
   assert.equal(
-    getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde, cls10Tde]).length,
-    0
+    getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde, cls10Tde]).map((r) => r.id),
+    [BOOK_PRESENTATION_RUBRIC_ID]
   );
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, []).length, 0);
 });
 
-test('RubrikService.filterRubricsForSelection strictly hides any rubric outside 11. Sınıf Türk Dili ve Edebiyatı when 11. Sınıf Türk Dili ve Edebiyatı is selected', () => {
+test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exception', () => {
   const math10Rubric: Rubric = {
     ...INITIAL_RUBRICS[0],
     id: 'rub-custom-math-10',
@@ -163,7 +169,7 @@ test('RubrikService.filterRubricsForSelection strictly hides any rubric outside 
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(for11Tde.length, 8);
+  assert.equal(for11Tde.length, 9);
   assert.equal(
     for11Tde.some((r) => r.id === 'rub-custom-math-10'),
     false
@@ -186,7 +192,37 @@ test('RubrikService.filterRubricsForSelection strictly hides any rubric outside 
   assert.equal(for10Math[0].id, 'rub-custom-math-10');
 
   const summary = summarizeRubricCatalogByGradeAndSubject(all);
-  assert.equal(summary.length, 4);
+  assert.equal(summary.length, 5);
+});
+
+test('book presentation rubric has clear 100-point descriptors and supports all TDE grades', () => {
+  const rubric = INITIAL_RUBRICS.find((r) => r.id === BOOK_PRESENTATION_RUBRIC_ID);
+  assert.ok(rubric);
+  assert.equal(ALL_GRADE_TDE_RUBRIC_IDS.has(rubric.id), true);
+  assert.equal(rubric.gradeLevel, 'Genel');
+  assert.equal(RubrikService.getEffectiveRubricGradeLevel(rubric), 'Genel');
+  assert.equal(RubrikService.getEffectiveRubricSubject(rubric), 'Türk Dili ve Edebiyatı');
+  assert.equal(validateRubric(rubric).isValid, true);
+  assert.deepEqual(rubric.criteria.map((c) => c.maxPoints), [20, 20, 15, 15, 10, 10, 5, 5]);
+  assert.equal(new Set(rubric.criteria.map((c) => c.id)).size, rubric.criteria.length);
+  assert.ok(rubric.criteria.every((c) => c.levels.length === 5 && c.levels[0].points === 0));
+  assert.ok(rubric.description.includes('zorunlu kitap sunumu puanlama anahtarı değildir'));
+
+  for (const grade of ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf']) {
+    assert.ok(getRubricsByGradeAndSubject(INITIAL_RUBRICS, grade, 'Türk Dili ve Edebiyatı').some((r) => r.id === rubric.id));
+    assert.ok(getRubricsForClassrooms(INITIAL_RUBRICS, [{
+      id: 'class-' + grade,
+      name: grade,
+      gradeLevel: grade,
+      subject: 'Türk Dili ve Edebiyatı',
+      academicYear: '2026-2027',
+    }]).some((r) => r.id === rubric.id));
+  }
+  assert.equal(getRubricsByGradeAndSubject(INITIAL_RUBRICS, '10. Sınıf', 'Matematik').some((r) => r.id === rubric.id), false);
+  assert.equal(getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Türkçe').some((r) => r.id === rubric.id), false);
+  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 4]))).finalScoreOutOf100, 100);
+  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 0]))).finalScoreOutOf100, 0);
+  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 2]))).finalScoreOutOf100, 50);
 });
 
 test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes produce valid %PDF-1.4 documents with Turkish Unicode text', async () => {
