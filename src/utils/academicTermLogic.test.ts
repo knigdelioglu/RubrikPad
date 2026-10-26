@@ -9,6 +9,8 @@ import {
   computeTermComparisonAnalytics,
   deleteAcademicTerm,
   deriveAcademicTermFromDate,
+  getCurrentAcademicTerm,
+  ensureAutoAcademicTerms,
   getAcademicTermOptions,
   getPreviousAcademicTerm,
 } from './academicTermLogic.ts';
@@ -64,7 +66,25 @@ test('invalid calendar dates use the academic-year fallback instead of inventing
   assert.equal(deriveAcademicTermFromDate('2024-02-29'), '2023-2024 Bahar');
   assert.equal(deriveAcademicTermFromDate('2026-01-01'), '2025-2026 Güz');
   assert.equal(deriveAcademicTermFromDate('2026-09'), '2026-2027 Güz');
-  assert.equal(deriveAcademicTermFromDate('2026-02-01T12:00:00Z'), '2025-2026 Bahar');
+  // 15 Şubat öncesi Güz (1. dönem sonu), 15 Şubat ve sonrası Bahar
+  assert.equal(deriveAcademicTermFromDate('2026-02-01T12:00:00Z'), '2025-2026 Güz');
+  assert.equal(deriveAcademicTermFromDate('2027-02-14'), '2026-2027 Güz');
+  assert.equal(deriveAcademicTermFromDate('2027-02-15'), '2026-2027 Bahar');
+  assert.equal(deriveAcademicTermFromDate('2027-02-16'), '2026-2027 Bahar');
+});
+
+test('auto-opening academic terms: February 15 and onwards automatically opens Bahar term', () => {
+  // Before Feb 15 (e.g. 2027-02-10) -> 2026-2027 Güz
+  const beforeFeb15 = new Date('2027-02-10T10:00:00Z');
+  assert.equal(getCurrentAcademicTerm(beforeFeb15), '2026-2027 Güz');
+  const termsBefore = ensureAutoAcademicTerms(['2026-2027 Güz'], [], null, beforeFeb15);
+  assert.deepEqual(termsBefore, ['2026-2027 Güz']);
+
+  // On or after Feb 15 (e.g. 2027-02-15) -> 2026-2027 Bahar automatically opens
+  const onFeb15 = new Date('2027-02-15T10:00:00Z');
+  assert.equal(getCurrentAcademicTerm(onFeb15), '2026-2027 Bahar');
+  const termsAfter = ensureAutoAcademicTerms(['2026-2027 Güz'], [], null, onFeb15);
+  assert.deepEqual(termsAfter, ['2026-2027 Güz', '2026-2027 Bahar']);
 });
 
 test('addAcademicTerm and deleteAcademicTerm manage academic years and terms accurately', () => {

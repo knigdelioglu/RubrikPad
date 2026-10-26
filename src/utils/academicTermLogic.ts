@@ -8,15 +8,10 @@ import {
 export const ALL_ACADEMIC_TERMS = 'ALL';
 
 export const MANAGED_ACADEMIC_TERMS_STORAGE_KEY =
-  'rubrikpad_managed_academic_terms_v1';
+  'rubrikpad_managed_academic_terms_v2';
 
 export const DEFAULT_ACADEMIC_TERM_OPTIONS: readonly string[] = [
-  '2024-2025 Güz',
-  '2024-2025 Bahar',
-  '2025-2026 Güz',
-  '2025-2026 Bahar',
   '2026-2027 Güz',
-  '2026-2027 Bahar',
 ];
 
 export interface AcademicTermOption {
@@ -250,12 +245,13 @@ export function deleteAcademicTerm(
 
 /**
  * Bir ISO tarih dizgesinden (`YYYY-MM-DD`) eğitim dönemini (`YYYY-YYYY Güz` veya `YYYY-YYYY Bahar`) hesaplar.
- * - Eylül (09) – Ocak (01): Güz Dönemi
- * - Şubat (02) – Ağustos (08): Bahar Dönemi
+ * MEB Eğitim Takvimi:
+ * - Eylül (09) – Ocak (01) ve 1 - 14 Şubat: Güz Dönemi (1. Dönem)
+ * - 15 Şubat ve sonrası – Ağustos (08): Bahar Dönemi (2. Dönem)
  */
 export function deriveAcademicTermFromDate(
   dateStr: string | undefined | null,
-  fallbackAcademicYear = '2024-2025'
+  fallbackAcademicYear = '2026-2027'
 ): string {
   const cleaned = String(dateStr ?? '').trim();
   const match = cleaned.match(/^(\d{4})-(\d{2})(?:-(\d{2})(?:T.*)?)?$/);
@@ -266,17 +262,55 @@ export function deriveAcademicTermFromDate(
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (!match || month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]) {
     const yearMatch = String(fallbackAcademicYear).match(/(\d{4}-\d{4})/);
-    const baseYear = yearMatch ? yearMatch[1] : '2024-2025';
+    const baseYear = yearMatch ? yearMatch[1] : '2026-2027';
     return `${baseYear} Güz`;
   }
 
+  // Eylül - Aralık: Güz Dönemi (1. Dönem)
   if (month >= 9 && month <= 12) {
     return `${year}-${year + 1} Güz`;
   }
+  // Ocak: Güz Dönemi devamı (1. Dönem)
   if (month === 1) {
     return `${year - 1}-${year} Güz`;
   }
+  // Şubat: 15 Şubat öncesi Güz Dönemi (1. Dönem sonu ve yarıyıl tatili), 15 Şubat ve sonrası Bahar Dönemi (2. Dönem)
+  if (month === 2) {
+    if (day < 15) {
+      return `${year - 1}-${year} Güz`;
+    }
+    return `${year - 1}-${year} Bahar`;
+  }
+  // Mart - Ağustos: Bahar Dönemi (2. Dönem)
   return `${year - 1}-${year} Bahar`;
+}
+
+/**
+ * Takvim tarihine göre bugünün aktif eğitim dönemini hesaplar.
+ * (Örn: 15 Şubat öncesinde '2026-2027 Güz', 15 Şubat ve sonrasında otomatik olarak '2026-2027 Bahar')
+ */
+export function getCurrentAcademicTerm(nowDate = new Date()): string {
+  const year = nowDate.getFullYear();
+  const month = String(nowDate.getMonth() + 1).padStart(2, '0');
+  const day = String(nowDate.getDate()).padStart(2, '0');
+  return deriveAcademicTermFromDate(`${year}-${month}-${day}`);
+}
+
+/**
+ * Mevcut dönem listesine takvim tarihine göre bugünün aktif dönemini (örneğin 15 Şubat'tan
+ * sonra 'Bahar' dönemini) ve oturumlarda yer alan dönemleri otomatik olarak ekler.
+ * Böylece öğretmen manuel işlem yapmadan dönemler takvime göre kendiliğinden açılır.
+ */
+export function ensureAutoAcademicTerms(
+  baseTerms: readonly string[] = DEFAULT_ACADEMIC_TERM_OPTIONS,
+  sessions: EvaluationSession[] = [],
+  classroom?: Classroom | null,
+  nowDate = new Date()
+): string[] {
+  const currentTerm = getCurrentAcademicTerm(nowDate);
+  const sessionTerms = sessions.map((s) => resolveSessionAcademicTerm(s, classroom));
+  const termSet = new Set<string>([...baseTerms, currentTerm, ...sessionTerms]);
+  return Array.from(termSet).sort(compareAcademicTerms);
 }
 
 /**
@@ -288,7 +322,7 @@ export function resolveSessionAcademicTerm(
 ): string {
   return deriveAcademicTermFromDate(
     session.date,
-    classroom?.academicYear || '2024-2025'
+    classroom?.academicYear || '2026-2027'
   );
 }
 
@@ -312,7 +346,7 @@ export function filterSessionsByAcademicTerm(
 
 /**
  * Seçili dönemde karşılaştırma yapılacak komşu/önceki dönemi döndürür.
- * Örn: '2024-2025 Bahar' -> '2024-2025 Güz', '2024-2025 Güz' -> '2024-2025 Bahar'
+ * Örn: '2026-2027 Bahar' -> '2026-2027 Güz', '2026-2027 Güz' -> '2026-2027 Bahar'
  */
 export function getComparisonAcademicTerm(selectedTerm: string): string | null {
   const match = String(selectedTerm ?? '')
@@ -331,8 +365,8 @@ export function getComparisonAcademicTerm(selectedTerm: string): string | null {
 
 /**
  * Seçilen dönemin kronolojik olarak bir önceki dönemini döndürür.
- * Örn: '2024-2025 Bahar' -> '2024-2025 Güz'
- *      '2024-2025 Güz'   -> '2023-2024 Bahar'
+ * Örn: '2026-2027 Bahar' -> '2026-2027 Güz'
+ *      '2026-2027 Güz'   -> '2025-2026 Bahar'
  */
 export function getPreviousAcademicTerm(selectedTerm: string): string | null {
   const match = String(selectedTerm ?? '')
@@ -351,13 +385,13 @@ export function getPreviousAcademicTerm(selectedTerm: string): string | null {
 
 /**
  * Açılır menüde gösterilecek eğitim dönemi seçeneklerini oturum sayılarıyla birlikte üretir.
- * `managedTerms` verilirse öğretmenin yönettiği dönem listesini baz alır;
- * verilmezse varsayılan dönemleri ve oturumlardaki dönemleri birleştirir.
+ * Güncel takvim dönemini (örneğin 15 Şubat'tan sonra Bahar dönemi) otomatik olarak açar ve dahil eder.
  */
 export function getAcademicTermOptions(
   sessions: EvaluationSession[],
   classroom?: Classroom | null,
-  managedTerms?: readonly string[]
+  managedTerms?: readonly string[],
+  nowDate = new Date()
 ): AcademicTermOption[] {
   const countsByTerm = new Map<string, number>();
 
@@ -372,7 +406,13 @@ export function getAcademicTermOptions(
       }
     }
   } else {
-    for (const term of DEFAULT_ACADEMIC_TERM_OPTIONS) {
+    const autoTerms = ensureAutoAcademicTerms(
+      DEFAULT_ACADEMIC_TERM_OPTIONS,
+      sessions,
+      classroom,
+      nowDate
+    );
+    for (const term of autoTerms) {
       countsByTerm.set(term, 0);
     }
 
@@ -380,8 +420,9 @@ export function getAcademicTermOptions(
       const yearMatch = classroom.academicYear.match(/^(\d{4}-\d{4})$/);
       if (yearMatch) {
         const y = yearMatch[1];
-        if (!countsByTerm.has(`${y} Güz`)) countsByTerm.set(`${y} Güz`, 0);
-        if (!countsByTerm.has(`${y} Bahar`)) countsByTerm.set(`${y} Bahar`, 0);
+        if (compareAcademicTerms(`${y} Güz`, '2026-2027 Güz') >= 0) {
+          if (!countsByTerm.has(`${y} Güz`)) countsByTerm.set(`${y} Güz`, 0);
+        }
       }
     }
 
@@ -395,7 +436,7 @@ export function getAcademicTermOptions(
     countsByTerm.entries()
   ).sort(([a], [b]) => compareAcademicTerms(a, b)).map(([term, sessionCount]) => {
     const parts = term.split(' ');
-    const academicYear = parts[0] || '2024-2025';
+    const academicYear = parts[0] || '2026-2027';
     const semester: 'Güz' | 'Bahar' =
       parts[1] === 'Bahar' ? 'Bahar' : 'Güz';
     return {
@@ -645,7 +686,7 @@ export function computeStudentTermPercentageComparison(
 
     // Eğer kronolojik önceki dönemde veri yoksa ve aynı akademik yılın komşu döneminde veri varsa,
     // yine de kronolojik önceki dönemi baz alırız; ancak kronolojik önceki dönem hesaplanamazsa komşu döneme düşeriz.
-    previousTerm = chronologicalPrev || siblingPrev || '2024-2025 Güz';
+    previousTerm = chronologicalPrev || siblingPrev || '2026-2027 Güz';
   } else if (sortedActiveTerms.length >= 2) {
     currentTerm = sortedActiveTerms[sortedActiveTerms.length - 1];
     previousTerm = sortedActiveTerms[sortedActiveTerms.length - 2];
@@ -654,17 +695,17 @@ export function computeStudentTermPercentageComparison(
     previousTerm =
       getPreviousAcademicTerm(currentTerm) ||
       getComparisonAcademicTerm(currentTerm) ||
-      '2024-2025 Güz';
+      '2026-2027 Güz';
   } else {
     const baseList =
       managedTerms && managedTerms.length > 0
         ? [...managedTerms].sort(compareAcademicTerms)
         : [...DEFAULT_ACADEMIC_TERM_OPTIONS];
-    currentTerm = baseList[1] || baseList[0] || '2024-2025 Bahar';
+    currentTerm = baseList[1] || baseList[0] || '2026-2027 Güz';
     previousTerm =
       getPreviousAcademicTerm(currentTerm) ||
       baseList[0] ||
-      '2024-2025 Güz';
+      '2026-2027 Güz';
   }
 
   const previousSessions = filterSessionsByAcademicTerm(

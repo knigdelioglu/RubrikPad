@@ -54,6 +54,8 @@ import {
   deleteAcademicTerm,
   resolveSessionAcademicTerm,
   compareAcademicTerms,
+  getCurrentAcademicTerm,
+  ensureAutoAcademicTerms,
 } from '../utils/academicTermLogic.ts';
 
 interface ProgressAndReportsProps {
@@ -104,20 +106,29 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
 
   const [managedTerms, setManagedTerms] = useState<string[]>(() => {
     try {
-      const raw = localStorage.getItem(MANAGED_ACADEMIC_TERMS_STORAGE_KEY);
+      const rawV2 = localStorage.getItem(MANAGED_ACADEMIC_TERMS_STORAGE_KEY);
+      const raw =
+        rawV2 || localStorage.getItem('rubrikpad_managed_academic_terms_v1');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (
           Array.isArray(parsed) &&
           parsed.every((item) => typeof item === 'string')
         ) {
-          return parsed;
+          // 2026-2027 Güz öncesindeki eski dönemleri filtrele
+          const filtered = parsed.filter(
+            (t) => compareAcademicTerms(t, '2026-2027 Güz') >= 0
+          );
+          const autoTerms = ensureAutoAcademicTerms(
+            filtered.length > 0 ? filtered : DEFAULT_ACADEMIC_TERM_OPTIONS
+          );
+          return autoTerms;
         }
       }
     } catch {
       // Varsayılan dönem listesine dön
     }
-    return [...DEFAULT_ACADEMIC_TERM_OPTIONS];
+    return ensureAutoAcademicTerms(DEFAULT_ACADEMIC_TERM_OPTIONS);
   });
 
   useEffect(() => {
@@ -134,17 +145,20 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
   const [selectedTerm, setSelectedTerm] =
     useState<string>(ALL_ACADEMIC_TERMS);
   const [isTermManagerOpen, setIsTermManagerOpen] = useState<boolean>(false);
-  const [newTermYearInput, setNewTermYearInput] = useState<string>('2023-2024');
+  const [newTermYearInput, setNewTermYearInput] = useState<string>('2026-2027');
   const [newTermSemesterInput, setNewTermSemesterInput] = useState<
     'Güz' | 'Bahar'
   >('Güz');
   const [termManagerError, setTermManagerError] = useState<string | null>(null);
 
-  const academicTermOptions = useMemo(
-    () =>
-      getAcademicTermOptions(allClassSessions, activeClassroom, managedTerms),
-    [allClassSessions, activeClassroom, managedTerms]
-  );
+  const academicTermOptions = useMemo(() => {
+    const autoManaged = ensureAutoAcademicTerms(
+      managedTerms,
+      allClassSessions,
+      activeClassroom
+    );
+    return getAcademicTermOptions(allClassSessions, activeClassroom, autoManaged);
+  }, [allClassSessions, activeClassroom, managedTerms]);
 
   const classSessions = useMemo(
     () =>
@@ -305,14 +319,13 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
 
   const handleResetDefaultTerms = () => {
     setTermManagerError(null);
-    const sessionTerms = allClassSessions.map((s) =>
-      resolveSessionAcademicTerm(s, activeClassroom)
+    const merged = ensureAutoAcademicTerms(
+      DEFAULT_ACADEMIC_TERM_OPTIONS,
+      allClassSessions,
+      activeClassroom
     );
-    const merged = Array.from(
-      new Set([...DEFAULT_ACADEMIC_TERM_OPTIONS, ...sessionTerms])
-    ).sort(compareAcademicTerms);
     setManagedTerms(merged);
-    showTemporaryNotice('Varsayılan akademik eğitim dönemleri geri yüklendi.');
+    showTemporaryNotice('Varsayılan eğitim dönemi (2026-2027 Güz) geri yüklendi.');
   };
 
   const handleDownloadCsv = () => {
@@ -640,6 +653,10 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
             </div>
           </div>
 
+          <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+            💡 <strong>Otomatik Dönem Açılışı:</strong> Yeni eğitim dönemleri takvim tarihine göre otomatik olarak açılır (Örn. 15 Şubat&apos;tan itibaren Bahar dönemi kendiliğinden devreye girer). İsteğe bağlı olarak geçmiş veya özel dönemleri buradan ekleyebilirsiniz.
+          </p>
+
           <form
             onSubmit={handleAddAcademicTerm}
             className="flex flex-wrap items-end gap-3"
@@ -649,14 +666,14 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                 htmlFor="new-term-year-input"
                 className="block text-[11px] font-bold text-slate-700 mb-1"
               >
-                Akademik Yıl (Örn: 2023-2024)
+                Akademik Yıl (Örn: 2026-2027)
               </label>
               <input
                 id="new-term-year-input"
                 type="text"
                 value={newTermYearInput}
                 onChange={(e) => setNewTermYearInput(e.target.value)}
-                placeholder="2023-2024"
+                placeholder="2026-2027"
                 className="px-3 py-1.5 text-xs font-mono-num font-semibold bg-white border border-slate-300 rounded-lg text-slate-900 w-36 focus:outline-none focus:ring-2 focus:ring-blue-900"
               />
             </div>
