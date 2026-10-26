@@ -31,7 +31,7 @@ export const RubricViewModeToggle: React.FC<RubricViewModeToggleProps> = ({
 }) => {
   return (
     <div
-      className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-300"
+      className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-300 shrink-0"
       role="group"
       aria-label="Rubrik Kartı Görünüm Modu"
     >
@@ -88,7 +88,7 @@ export const CriterionFocusToolbar: React.FC<CriterionFocusToolbarProps> = ({
 }) => {
   return (
     <div
-      className="inline-flex flex-wrap items-center gap-1.5"
+      className="inline-flex items-center gap-1.5 shrink-0"
       role="group"
       aria-label="Odak Modu Kontrolleri"
     >

@@ -755,59 +755,46 @@ export const IndividualEvaluationView: React.FC<
 
           {selectedStudent ? (
             <div className="bg-white border border-slate-300 rounded-2xl p-3.5 sm:p-4 space-y-3 shadow-xs">
-              {/* Sticky Student HUD Header & View Mode Controls */}
+              {/* Sticky Evaluation Controls Toolbar & Student HUD */}
               <div className="flex flex-col gap-2.5 pb-3 border-b border-slate-200">
-                <div className="flex flex-wrap items-center justify-between gap-2.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="w-9 h-9 rounded-xl bg-blue-900 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
-                      {getInitials(selectedStudent.fullName)}
-                    </div>
-                    <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-900 border border-slate-300">
-                      #{selectedStudent.studentNumber}
-                    </span>
-                    <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                      {selectedStudent.fullName}
-                    </h2>
+                {/* Fixed Top Controls Bar: Focus Mode, View Mode, Quick Observation & Actions */}
+                <div
+                  data-testid="evaluation-controls-toolbar"
+                  className="bg-slate-50 border border-slate-200 rounded-xl p-2 sm:p-2.5 flex flex-wrap items-center justify-between gap-2"
+                >
+                  {/* Left: Focus Mode & View Mode Controls (Guaranteed Stable Anchor) */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <CriterionFocusToolbar
+                      focusModeEnabled={focusModeEnabled}
+                      onToggleFocusMode={() => {
+                        const nextEnabled = !focusModeEnabled;
+                        setFocusModeEnabled(nextEnabled);
+                        if (nextEnabled) {
+                          setFocusedCriterionIndex(
+                            resolveFocusedCriterionIndex(
+                              activeRubric.criteria,
+                              focusedCriterionIndex,
+                              activeScoresMap,
+                              activeDirectScoresMap,
+                              true
+                            )
+                          );
+                        }
+                      }}
+                      focusDisplayMode={focusDisplayMode}
+                      onChangeFocusDisplayMode={setFocusDisplayMode}
+                    />
 
-                    {/* Definitive Score vs Incomplete Draft Badge */}
-                    {effectiveCalc.isComplete &&
-                    effectiveCalc.finalScoreOutOf100 !== null ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
-                        Kesin Not: {effectiveCalc.finalScoreOutOf100} / 100 ·{' '}
-                        {effectiveCalc.performanceLabel}
-                      </span>
-                    ) : effectiveCalc.completedCriteriaCount > 0 ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300 font-mono-num">
-                        Taslak ({effectiveCalc.completedCriteriaCount}/
-                        {effectiveCalc.totalCriteriaCount})
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                        Puanlanmadı (0/{effectiveCalc.totalCriteriaCount})
-                      </span>
-                    )}
-
-                    {activeLowScoreReminder?.shouldRemind && (
-                      <button
-                        type="button"
-                        onClick={focusObservationNoteInput}
-                        data-testid="low-score-observation-reminder"
-                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 transition-colors cursor-pointer shadow-2xs"
-                        title={`${activeLowScoreReminder.message}. Gözlem notu alanına gitmek için tıklayın.`}
-                      >
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-800 shrink-0" />
-                        <span>
-                          Üst üste {activeLowScoreReminder.consecutiveCount}{' '}
-                          düşük puan (1-2) ·{' '}
-                          <span className="underline">Gözlem notu ekle</span>
-                        </span>
-                      </button>
+                    {!focusModeEnabled && (
+                      <RubricViewModeToggle
+                        viewMode={cardViewMode}
+                        onChangeViewMode={onChangeCardViewMode}
+                      />
                     )}
                   </div>
 
-                  {/* Quick Secondary Actions */}
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  {/* Right: Quick Secondary Actions */}
+                  <div className="flex flex-wrap items-center gap-1.5 ml-auto">
                     {onOpenQuickNoteModal && (
                       <button
                         type="button"
@@ -870,40 +857,61 @@ export const IndividualEvaluationView: React.FC<
                   </div>
                 </div>
 
-                {/* Second Row: Focus Mode Controls + Individual vs Group Switcher */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <CriterionFocusToolbar
-                      focusModeEnabled={focusModeEnabled}
-                      onToggleFocusMode={() => {
-                        const nextEnabled = !focusModeEnabled;
-                        setFocusModeEnabled(nextEnabled);
-                        if (nextEnabled) {
-                          setFocusedCriterionIndex(
-                            resolveFocusedCriterionIndex(
-                              activeRubric.criteria,
-                              focusedCriterionIndex,
-                              activeScoresMap,
-                              activeDirectScoresMap,
-                              true
-                            )
-                          );
-                        }
-                      }}
-                      focusDisplayMode={focusDisplayMode}
-                      onChangeFocusDisplayMode={setFocusDisplayMode}
-                    />
+                {/* Second Row: Student Identity & Evaluation Status Strip */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-0.5">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-blue-900 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
+                      {getInitials(selectedStudent.fullName)}
+                    </div>
+                    <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-900 border border-slate-300 shrink-0">
+                      #{selectedStudent.studentNumber}
+                    </span>
+                    <h2
+                      className="text-base sm:text-lg font-bold text-slate-900 truncate max-w-[220px] sm:max-w-[340px] md:max-w-[460px] lg:max-w-[560px]"
+                      title={selectedStudent.fullName}
+                    >
+                      {selectedStudent.fullName}
+                    </h2>
 
-                    {!focusModeEnabled && (
-                      <RubricViewModeToggle
-                        viewMode={cardViewMode}
-                        onChangeViewMode={onChangeCardViewMode}
-                      />
+                    {/* Definitive Score vs Incomplete Draft Badge */}
+                    {effectiveCalc.isComplete &&
+                    effectiveCalc.finalScoreOutOf100 !== null ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
+                        Kesin Not: {effectiveCalc.finalScoreOutOf100} / 100 ·{' '}
+                        {effectiveCalc.performanceLabel}
+                      </span>
+                    ) : effectiveCalc.completedCriteriaCount > 0 ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300 font-mono-num shrink-0">
+                        Taslak ({effectiveCalc.completedCriteriaCount}/
+                        {effectiveCalc.totalCriteriaCount})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                        Puanlanmadı (0/{effectiveCalc.totalCriteriaCount})
+                      </span>
+                    )}
+
+                    {activeLowScoreReminder?.shouldRemind && (
+                      <button
+                        type="button"
+                        onClick={focusObservationNoteInput}
+                        data-testid="low-score-observation-reminder"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 transition-colors cursor-pointer shadow-2xs shrink-0"
+                        title={`${activeLowScoreReminder.message}. Gözlem notu alanına gitmek için tıklayın.`}
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-800 shrink-0" />
+                        <span>
+                          Üst üste {activeLowScoreReminder.consecutiveCount}{' '}
+                          düşük puan (1-2) ·{' '}
+                          <span className="underline">Gözlem notu ekle</span>
+                        </span>
+                      </button>
                     )}
                   </div>
 
                   {hasGroupData && (
-                    <div className="flex flex-wrap items-center gap-2 bg-slate-100 border border-slate-300 rounded-xl px-2.5 py-1 text-xs">
+                    <div className="flex flex-wrap items-center gap-2 bg-slate-100 border border-slate-300 rounded-xl px-2.5 py-1 text-xs shrink-0">
                       <span className="font-semibold text-slate-800 flex items-center gap-1">
                         <Users className="w-3.5 h-3.5 text-blue-900" />
                         Bireysel:{' '}

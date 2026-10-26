@@ -1017,87 +1017,101 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
           {selectedGroup && activeGroupLifecycle ? (
             <div className="bg-white border border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
               {/* Group Header & Shared View Mode Controls */}
-              <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 pb-3.5 border-b border-slate-200">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-2.5 py-0.5 rounded-lg">
+              <div className="flex flex-col gap-2.5 pb-3.5 border-b border-slate-200">
+                {/* Fixed Top Controls Bar: Focus Mode, View Mode, Precision & Reset */}
+                <div
+                  data-testid="group-evaluation-controls-toolbar"
+                  className="bg-slate-50 border border-slate-200 rounded-xl p-2 sm:p-2.5 flex flex-wrap items-center justify-between gap-2"
+                >
+                  {/* Left: Focus Mode & View Mode Controls (Guaranteed Stable Anchor) */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <CriterionFocusToolbar
+                      focusModeEnabled={focusModeEnabled}
+                      onToggleFocusMode={() => {
+                        const nextEnabled = !focusModeEnabled;
+                        setFocusModeEnabled(nextEnabled);
+                        if (nextEnabled) {
+                          setFocusedCriterionIndex(
+                            resolveFocusedCriterionIndex(
+                              activeRubric.criteria,
+                              focusedCriterionIndex,
+                              selectedGroup.criterionScores,
+                              selectedGroup.directCriterionScores,
+                              true
+                            )
+                          );
+                        }
+                      }}
+                      focusDisplayMode={focusDisplayMode}
+                      onChangeFocusDisplayMode={setFocusDisplayMode}
+                    />
+
+                    {!focusModeEnabled && (
+                      <RubricViewModeToggle
+                        viewMode={cardViewMode}
+                        onChangeViewMode={onChangeCardViewMode}
+                      />
+                    )}
+                  </div>
+
+                  {/* Right: Precision & Reset Controls */}
+                  <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+                    <button
+                      type="button"
+                      onClick={onTogglePrecisionScoring}
+                      aria-pressed={precisionScoringMode}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[36px] ${
+                        precisionScoringMode
+                          ? 'bg-blue-900 text-white border-blue-950'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                      Hassas Puan
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onResetGroupScores(selectedGroup.id)}
+                      title="Grup Puanlarını Sıfırla"
+                      className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:text-rose-700 hover:bg-rose-50 flex items-center gap-1 cursor-pointer min-h-[36px]"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Sıfırla
+                    </button>
+                  </div>
+                </div>
+
+                {/* Second Row: Group Identity Strip */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-0.5">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-2.5 py-0.5 rounded-lg shrink-0">
                       Takım Değerlendirmesi
                     </span>
-                    <h2 className="text-xl font-bold text-slate-900">
+                    <h2
+                      className="text-lg sm:text-xl font-bold text-slate-900 truncate max-w-[240px] sm:max-w-[360px] md:max-w-[480px]"
+                      title={selectedGroup.name}
+                    >
                       {selectedGroup.name}
                     </h2>
 
                     {/* Definitive Group Score vs Draft Status */}
                     {activeGroupLifecycle.isComplete &&
                     activeGroupLifecycle.finalScoreOutOf100 !== null ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num shrink-0">
                         <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
                         Kesin Grup Notu:{' '}
                         {activeGroupLifecycle.finalScoreOutOf100} / 100 ·{' '}
                         {activeGroupLifecycle.performanceLabel}
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300 font-mono-num">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300 font-mono-num shrink-0">
                         Puanlanıyor (
                         {activeGroupLifecycle.completedCriteriaCount}/
                         {activeGroupLifecycle.totalCriteriaCount})
                       </span>
                     )}
                   </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <CriterionFocusToolbar
-                    focusModeEnabled={focusModeEnabled}
-                    onToggleFocusMode={() => {
-                      const nextEnabled = !focusModeEnabled;
-                      setFocusModeEnabled(nextEnabled);
-                      if (nextEnabled) {
-                        setFocusedCriterionIndex(
-                          resolveFocusedCriterionIndex(
-                            activeRubric.criteria,
-                            focusedCriterionIndex,
-                            selectedGroup.criterionScores,
-                            selectedGroup.directCriterionScores,
-                            true
-                          )
-                        );
-                      }
-                    }}
-                    focusDisplayMode={focusDisplayMode}
-                    onChangeFocusDisplayMode={setFocusDisplayMode}
-                  />
-
-                  {!focusModeEnabled && (
-                    <RubricViewModeToggle
-                      viewMode={cardViewMode}
-                      onChangeViewMode={onChangeCardViewMode}
-                    />
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={onTogglePrecisionScoring}
-                    aria-pressed={precisionScoringMode}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[38px] ${
-                      precisionScoringMode
-                        ? 'bg-blue-900 text-white border-blue-950'
-                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Sliders className="w-3.5 h-3.5" />
-                    Hassas Puan
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => onResetGroupScores(selectedGroup.id)}
-                    title="Grup Puanlarını Sıfırla"
-                    className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:text-rose-700 hover:bg-rose-50 flex items-center gap-1 cursor-pointer min-h-[38px]"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    Sıfırla
-                  </button>
                 </div>
               </div>
 
