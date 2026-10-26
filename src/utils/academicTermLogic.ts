@@ -1,4 +1,4 @@
-import type { Classroom, EvaluationSession, Rubric } from '../types.ts';
+import type { Classroom, EvaluationSession, Rubric, Student } from '../types.ts';
 import {
   getEffectiveSessionRubric,
   getStudentEvaluationBreakdown,
@@ -6,6 +6,9 @@ import {
 } from './rubricLogic.ts';
 
 export const ALL_ACADEMIC_TERMS = 'ALL';
+
+export const MANAGED_ACADEMIC_TERMS_STORAGE_KEY =
+  'rubrikpad_managed_academic_terms_v1';
 
 export const DEFAULT_ACADEMIC_TERM_OPTIONS: readonly string[] = [
   '2024-2025 Güz',
@@ -40,10 +43,209 @@ export interface TermComparisonSummary {
   termBreakdown: TermMetricSnapshot[];
 }
 
-function compareAcademicTerms(a: string, b: string): number {
+export type StudentTrendDirection =
+  | 'up'
+  | 'down'
+  | 'stable'
+  | 'insufficient_data';
+
+export interface StudentTermPercentageRow {
+  studentId: string;
+  studentNumber: string;
+  fullName: string;
+  previousTerm: string;
+  currentTerm: string;
+  previousSessionCount: number;
+  currentSessionCount: number;
+  previousAverage: number | null;
+  currentAverage: number | null;
+  pointDelta: number | null;
+  percentageChange: number | null;
+  trend: StudentTrendDirection;
+}
+
+export interface StudentTermPercentageComparison {
+  currentTerm: string;
+  previousTerm: string;
+  rows: StudentTermPercentageRow[];
+  classPreviousAverage: number | null;
+  classCurrentAverage: number | null;
+  classPointDelta: number | null;
+  classPercentageChange: number | null;
+  classTrend: StudentTrendDirection;
+}
+
+export function compareAcademicTerms(a: string, b: string): number {
   const yearDifference = Number(a.slice(0, 4)) - Number(b.slice(0, 4));
   if (yearDifference !== 0) return yearDifference;
   return Number(a.endsWith('Bahar')) - Number(b.endsWith('Bahar'));
+}
+
+/**
+ * Kullanıcının girdiği akademik yıl (`2024-2025` veya `2024`) ve dönem (`Güz` | `Bahar`)
+ * ya da tam dönem dizgesini (`2024-2025 Güz`) doğrular ve standart biçime dönüştürür.
+ */
+export function parseAndValidateAcademicTermInput(
+  yearOrFullInput: string,
+  semesterInput?: 'Güz' | 'Bahar'
+): { isValid: boolean; term?: string; error?: string } {
+  const raw = String(yearOrFullInput ?? '').trim();
+  if (!raw) {
+    return {
+      isValid: false,
+      error: 'Lütfen akademik yıl girin (Örn: 2024-2025).',
+    };
+  }
+
+  // Tam dönem formatı: "2024-2025 Güz" veya "2024-2025 Bahar"
+  const fullMatch = raw.match(/^(\d{4})\s*-\s*(\d{4})\s+(Güz|Guz|Bahar)$/i);
+  if (fullMatch) {
+    const startYear = Number(fullMatch[1]);
+    const endYear = Number(fullMatch[2]);
+    const semRaw = fullMatch[3].toLowerCase();
+    const semester: 'Güz' | 'Bahar' = semRaw === 'bahar' ? 'Bahar' : 'Güz';
+    if (startYear < 2000 || startYear > 2100) {
+      return {
+        isValid: false,
+        error: 'Akademik başlangıç yılı 2000 ile 2100 arasında olmalıdır.',
+      };
+    }
+    if (endYear !== startYear + 1) {
+      return {
+        isValid: false,
+        error: `Akademik yıl ardışık olmalıdır (Örn: ${startYear}-${startYear + 1}).`,
+      };
+    }
+    return {
+      isValid: true,
+      term: `${startYear}-${endYear} ${semester}`,
+    };
+  }
+
+  const normalizedSemester: 'Güz' | 'Bahar' =
+    semesterInput === 'Bahar' ? 'Bahar' : 'Güz';
+
+  // Yıl aralığı formatı: "2024-2025"
+  const rangeMatch = raw.match(/^(\d{4})\s*-\s*(\d{4})$/);
+  if (rangeMatch) {
+    const startYear = Number(rangeMatch[1]);
+    const endYear = Number(rangeMatch[2]);
+    if (startYear < 2000 || startYear > 2100) {
+      return {
+        isValid: false,
+        error: 'Akademik başlangıç yılı 2000 ile 2100 arasında olmalıdır.',
+      };
+    }
+    if (endYear !== startYear + 1) {
+      return {
+        isValid: false,
+        error: `Akademik yıl ardışık olmalıdır (Örn: ${startYear}-${startYear + 1}).`,
+      };
+    }
+    return {
+      isValid: true,
+      term: `${startYear}-${endYear} ${normalizedSemester}`,
+    };
+  }
+
+  // Tek yıl formatı: "2024" -> "2024-2025"
+  const singleYearMatch = raw.match(/^(\d{4})$/);
+  if (singleYearMatch) {
+    const startYear = Number(singleYearMatch[1]);
+    if (startYear < 2000 || startYear > 2100) {
+      return {
+        isValid: false,
+        error: 'Akademik başlangıç yılı 2000 ile 2100 arasında olmalıdır.',
+      };
+    }
+    return {
+      isValid: true,
+      term: `${startYear}-${startYear + 1} ${normalizedSemester}`,
+    };
+  }
+
+  return {
+    isValid: false,
+    error:
+      'Geçersiz akademik yıl formatı. Lütfen "2024-2025" biçiminde girin.',
+  };
+}
+
+/**
+ * Eğitim dönemi listesine yeni bir dönem ekler ve kronolojik sırayla döndürür.
+ */
+export function addAcademicTerm(
+  existingTerms: readonly string[],
+  yearOrFullInput: string,
+  semesterInput?: 'Güz' | 'Bahar'
+): { terms: string[]; addedTerm?: string; error?: string } {
+  const validated = parseAndValidateAcademicTermInput(
+    yearOrFullInput,
+    semesterInput
+  );
+  if (!validated.isValid || !validated.term) {
+    return {
+      terms: [...existingTerms],
+      error: validated.error || 'Geçersiz eğitim dönemi.',
+    };
+  }
+
+  if (existingTerms.includes(validated.term)) {
+    return {
+      terms: [...existingTerms],
+      error: `"${validated.term}" dönemi zaten listede mevcut.`,
+    };
+  }
+
+  const nextTerms = [...existingTerms, validated.term].sort(
+    compareAcademicTerms
+  );
+  return {
+    terms: nextTerms,
+    addedTerm: validated.term,
+  };
+}
+
+/**
+ * Eğitim dönemi listesinden seçili bir dönemi siler ve güncel seçili dönemi döndürür.
+ */
+export function deleteAcademicTerm(
+  existingTerms: readonly string[],
+  termToDelete: string,
+  currentSelectedTerm: string = ALL_ACADEMIC_TERMS
+): {
+  terms: string[];
+  nextSelectedTerm: string;
+  deletedTerm?: string;
+  error?: string;
+} {
+  const target = String(termToDelete ?? '').trim();
+  if (!target || target === ALL_ACADEMIC_TERMS) {
+    return {
+      terms: [...existingTerms],
+      nextSelectedTerm: currentSelectedTerm,
+      error:
+        'Tüm Eğitim Dönemleri genel görünümü silinemez. Silmek için belirli bir dönem seçin.',
+    };
+  }
+
+  if (!existingTerms.includes(target)) {
+    return {
+      terms: [...existingTerms],
+      nextSelectedTerm: currentSelectedTerm,
+      error: `"${target}" dönemi listede bulunamadı.`,
+    };
+  }
+
+  const nextTerms = existingTerms.filter((t) => t !== target);
+  const nextSelectedTerm =
+    currentSelectedTerm === target ? ALL_ACADEMIC_TERMS : currentSelectedTerm;
+
+  return {
+    terms: nextTerms,
+    nextSelectedTerm,
+    deletedTerm: target,
+  };
 }
 
 /**
@@ -128,31 +330,65 @@ export function getComparisonAcademicTerm(selectedTerm: string): string | null {
 }
 
 /**
+ * Seçilen dönemin kronolojik olarak bir önceki dönemini döndürür.
+ * Örn: '2024-2025 Bahar' -> '2024-2025 Güz'
+ *      '2024-2025 Güz'   -> '2023-2024 Bahar'
+ */
+export function getPreviousAcademicTerm(selectedTerm: string): string | null {
+  const match = String(selectedTerm ?? '')
+    .trim()
+    .match(/^(\d{4})-(\d{4})\s+(Güz|Bahar)$/i);
+  if (!match) return null;
+  const startYear = Number(match[1]);
+  const endYear = Number(match[2]);
+  const semester = match[3].toLowerCase() === 'bahar' ? 'Bahar' : 'Güz';
+
+  if (semester === 'Bahar') {
+    return `${startYear}-${endYear} Güz`;
+  }
+  return `${startYear - 1}-${endYear - 1} Bahar`;
+}
+
+/**
  * Açılır menüde gösterilecek eğitim dönemi seçeneklerini oturum sayılarıyla birlikte üretir.
- * '2024-2025 Güz' ve '2024-2025 Bahar' başta olmak üzere standart dönemleri her zaman içerir.
+ * `managedTerms` verilirse öğretmenin yönettiği dönem listesini baz alır;
+ * verilmezse varsayılan dönemleri ve oturumlardaki dönemleri birleştirir.
  */
 export function getAcademicTermOptions(
   sessions: EvaluationSession[],
-  classroom?: Classroom | null
+  classroom?: Classroom | null,
+  managedTerms?: readonly string[]
 ): AcademicTermOption[] {
   const countsByTerm = new Map<string, number>();
 
-  for (const term of DEFAULT_ACADEMIC_TERM_OPTIONS) {
-    countsByTerm.set(term, 0);
-  }
-
-  if (classroom?.academicYear) {
-    const yearMatch = classroom.academicYear.match(/^(\d{4}-\d{4})$/);
-    if (yearMatch) {
-      const y = yearMatch[1];
-      if (!countsByTerm.has(`${y} Güz`)) countsByTerm.set(`${y} Güz`, 0);
-      if (!countsByTerm.has(`${y} Bahar`)) countsByTerm.set(`${y} Bahar`, 0);
+  if (managedTerms !== undefined) {
+    for (const term of managedTerms) {
+      countsByTerm.set(term, 0);
     }
-  }
+    for (const session of sessions) {
+      const term = resolveSessionAcademicTerm(session, classroom);
+      if (countsByTerm.has(term)) {
+        countsByTerm.set(term, (countsByTerm.get(term) ?? 0) + 1);
+      }
+    }
+  } else {
+    for (const term of DEFAULT_ACADEMIC_TERM_OPTIONS) {
+      countsByTerm.set(term, 0);
+    }
 
-  for (const session of sessions) {
-    const term = resolveSessionAcademicTerm(session, classroom);
-    countsByTerm.set(term, (countsByTerm.get(term) ?? 0) + 1);
+    if (classroom?.academicYear) {
+      const yearMatch = classroom.academicYear.match(/^(\d{4}-\d{4})$/);
+      if (yearMatch) {
+        const y = yearMatch[1];
+        if (!countsByTerm.has(`${y} Güz`)) countsByTerm.set(`${y} Güz`, 0);
+        if (!countsByTerm.has(`${y} Bahar`)) countsByTerm.set(`${y} Bahar`, 0);
+      }
+    }
+
+    for (const session of sessions) {
+      const term = resolveSessionAcademicTerm(session, classroom);
+      countsByTerm.set(term, (countsByTerm.get(term) ?? 0) + 1);
+    }
   }
 
   const termEntries: AcademicTermOption[] = Array.from(
@@ -250,11 +486,13 @@ export function computeTermComparisonAnalytics(
   rubricsById: Record<string, Rubric>,
   selectedTerm: string,
   classroom?: Classroom | null,
-  studentId?: string
+  studentId?: string,
+  managedTerms?: readonly string[]
 ): TermComparisonSummary {
+  const baseTerms = managedTerms ?? DEFAULT_ACADEMIC_TERM_OPTIONS;
   const allTermsList = Array.from(
     new Set([
-      ...DEFAULT_ACADEMIC_TERM_OPTIONS,
+      ...baseTerms,
       ...allClassSessions.map((s) => resolveSessionAcademicTerm(s, classroom)),
     ])
   ).sort(compareAcademicTerms);
@@ -340,3 +578,203 @@ export function computeTermComparisonAnalytics(
     termBreakdown,
   };
 }
+
+/**
+ * İki ortalama puan arasındaki yüzde değişimi (`%`) ve yönünü (`up` | `down` | `stable` | `insufficient_data`) hesaplar.
+ */
+export function calculateScorePercentageChange(
+  previousAverage: number | null,
+  currentAverage: number | null
+): {
+  pointDelta: number | null;
+  percentageChange: number | null;
+  trend: StudentTrendDirection;
+} {
+  if (previousAverage === null || currentAverage === null) {
+    return {
+      pointDelta: null,
+      percentageChange: null,
+      trend: 'insufficient_data',
+    };
+  }
+
+  const pointDelta = Math.round((currentAverage - previousAverage) * 10) / 10;
+  let percentageChange: number;
+  if (previousAverage === 0) {
+    percentageChange = currentAverage > 0 ? 100 : 0;
+  } else {
+    percentageChange =
+      Math.round(((currentAverage - previousAverage) / previousAverage) * 1000) /
+      10;
+  }
+
+  const trend: StudentTrendDirection =
+    pointDelta > 0 ? 'up' : pointDelta < 0 ? 'down' : 'stable';
+
+  return {
+    pointDelta,
+    percentageChange,
+    trend,
+  };
+}
+
+/**
+ * Seçilen dönem ile bir önceki dönemi kıyaslayan öğrenci bazlı yüzde-değişim tablosu verilerini üretir.
+ */
+export function computeStudentTermPercentageComparison(
+  students: Student[],
+  allClassSessions: EvaluationSession[],
+  rubricsById: Record<string, Rubric>,
+  selectedTerm: string,
+  classroom?: Classroom | null,
+  managedTerms?: readonly string[]
+): StudentTermPercentageComparison {
+  const sortedActiveTerms = Array.from(
+    new Set(
+      allClassSessions.map((s) => resolveSessionAcademicTerm(s, classroom))
+    )
+  ).sort(compareAcademicTerms);
+
+  let currentTerm: string;
+  let previousTerm: string;
+
+  if (selectedTerm && selectedTerm !== ALL_ACADEMIC_TERMS) {
+    currentTerm = selectedTerm;
+    const chronologicalPrev = getPreviousAcademicTerm(selectedTerm);
+    const siblingPrev = getComparisonAcademicTerm(selectedTerm);
+
+    // Eğer kronolojik önceki dönemde veri yoksa ve aynı akademik yılın komşu döneminde veri varsa,
+    // yine de kronolojik önceki dönemi baz alırız; ancak kronolojik önceki dönem hesaplanamazsa komşu döneme düşeriz.
+    previousTerm = chronologicalPrev || siblingPrev || '2024-2025 Güz';
+  } else if (sortedActiveTerms.length >= 2) {
+    currentTerm = sortedActiveTerms[sortedActiveTerms.length - 1];
+    previousTerm = sortedActiveTerms[sortedActiveTerms.length - 2];
+  } else if (sortedActiveTerms.length === 1) {
+    currentTerm = sortedActiveTerms[0];
+    previousTerm =
+      getPreviousAcademicTerm(currentTerm) ||
+      getComparisonAcademicTerm(currentTerm) ||
+      '2024-2025 Güz';
+  } else {
+    const baseList =
+      managedTerms && managedTerms.length > 0
+        ? [...managedTerms].sort(compareAcademicTerms)
+        : [...DEFAULT_ACADEMIC_TERM_OPTIONS];
+    currentTerm = baseList[1] || baseList[0] || '2024-2025 Bahar';
+    previousTerm =
+      getPreviousAcademicTerm(currentTerm) ||
+      baseList[0] ||
+      '2024-2025 Güz';
+  }
+
+  const previousSessions = filterSessionsByAcademicTerm(
+    allClassSessions,
+    previousTerm,
+    classroom
+  );
+  const currentSessions = filterSessionsByAcademicTerm(
+    allClassSessions,
+    currentTerm,
+    classroom
+  );
+
+  // Eğer sınıfta kayıtlı öğrenci listesi boşsa ama oturumlarda değerlendirilen öğrenci ID'leri varsa onları da kapsa
+  const effectiveStudents: Student[] =
+    students.length > 0
+      ? students
+      : Array.from(
+          new Set(
+            allClassSessions.flatMap((s) => Object.keys(s.evaluations || {}))
+          )
+        ).map((id, idx) => ({
+          id,
+          studentNumber: String(idx + 1),
+          fullName: `Öğrenci #${id}`,
+          classId: classroom?.id || '',
+        }));
+
+  const rows: StudentTermPercentageRow[] = effectiveStudents.map((student) => {
+    const prevHistory = getStudentProgressHistory(
+      student.id,
+      previousSessions,
+      rubricsById
+    );
+    const currHistory = getStudentProgressHistory(
+      student.id,
+      currentSessions,
+      rubricsById
+    );
+
+    const previousAverage =
+      prevHistory.length > 0
+        ? Math.round(
+            prevHistory.reduce((acc, h) => acc + h.scoreOutOf100, 0) /
+              prevHistory.length
+          )
+        : null;
+
+    const currentAverage =
+      currHistory.length > 0
+        ? Math.round(
+            currHistory.reduce((acc, h) => acc + h.scoreOutOf100, 0) /
+              currHistory.length
+          )
+        : null;
+
+    const { pointDelta, percentageChange, trend } =
+      calculateScorePercentageChange(previousAverage, currentAverage);
+
+    return {
+      studentId: student.id,
+      studentNumber: student.studentNumber,
+      fullName: student.fullName,
+      previousTerm,
+      currentTerm,
+      previousSessionCount: prevHistory.length,
+      currentSessionCount: currHistory.length,
+      previousAverage,
+      currentAverage,
+      pointDelta,
+      percentageChange,
+      trend,
+    };
+  });
+
+  const validPrevScores = rows
+    .map((r) => r.previousAverage)
+    .filter((v): v is number => v !== null);
+  const validCurrScores = rows
+    .map((r) => r.currentAverage)
+    .filter((v): v is number => v !== null);
+
+  const classPreviousAverage =
+    validPrevScores.length > 0
+      ? Math.round(
+          validPrevScores.reduce((a, b) => a + b, 0) / validPrevScores.length
+        )
+      : null;
+  const classCurrentAverage =
+    validCurrScores.length > 0
+      ? Math.round(
+          validCurrScores.reduce((a, b) => a + b, 0) / validCurrScores.length
+        )
+      : null;
+
+  const {
+    pointDelta: classPointDelta,
+    percentageChange: classPercentageChange,
+    trend: classTrend,
+  } = calculateScorePercentageChange(classPreviousAverage, classCurrentAverage);
+
+  return {
+    currentTerm,
+    previousTerm,
+    rows,
+    classPreviousAverage,
+    classCurrentAverage,
+    classPointDelta,
+    classPercentageChange,
+    classTrend,
+  };
+}
+

@@ -1,6 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   TrendingUp,
+  TrendingDown,
+  Minus,
   Download,
   FileDown,
   Printer,
@@ -10,6 +12,10 @@ import {
   Users,
   Check,
   BookOpen,
+  Plus,
+  Trash2,
+  Settings2,
+  RotateCcw,
 } from 'lucide-react';
 import type {
   Classroom,
@@ -38,9 +44,16 @@ import {
 } from './ReportPreviewModal.tsx';
 import {
   ALL_ACADEMIC_TERMS,
+  DEFAULT_ACADEMIC_TERM_OPTIONS,
+  MANAGED_ACADEMIC_TERMS_STORAGE_KEY,
   getAcademicTermOptions,
   filterSessionsByAcademicTerm,
   computeTermComparisonAnalytics,
+  computeStudentTermPercentageComparison,
+  addAcademicTerm,
+  deleteAcademicTerm,
+  resolveSessionAcademicTerm,
+  compareAcademicTerms,
 } from '../utils/academicTermLogic.ts';
 
 interface ProgressAndReportsProps {
@@ -89,12 +102,48 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
     [sessions, activeClassroom]
   );
 
+  const [managedTerms, setManagedTerms] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(MANAGED_ACADEMIC_TERMS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          Array.isArray(parsed) &&
+          parsed.every((item) => typeof item === 'string')
+        ) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Varsayılan dönem listesine dön
+    }
+    return [...DEFAULT_ACADEMIC_TERM_OPTIONS];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        MANAGED_ACADEMIC_TERMS_STORAGE_KEY,
+        JSON.stringify(managedTerms)
+      );
+    } catch {
+      // localStorage yazma hatasını yoksay
+    }
+  }, [managedTerms]);
+
   const [selectedTerm, setSelectedTerm] =
     useState<string>(ALL_ACADEMIC_TERMS);
+  const [isTermManagerOpen, setIsTermManagerOpen] = useState<boolean>(false);
+  const [newTermYearInput, setNewTermYearInput] = useState<string>('2023-2024');
+  const [newTermSemesterInput, setNewTermSemesterInput] = useState<
+    'Güz' | 'Bahar'
+  >('Güz');
+  const [termManagerError, setTermManagerError] = useState<string | null>(null);
 
   const academicTermOptions = useMemo(
-    () => getAcademicTermOptions(allClassSessions, activeClassroom),
-    [allClassSessions, activeClassroom]
+    () =>
+      getAcademicTermOptions(allClassSessions, activeClassroom, managedTerms),
+    [allClassSessions, activeClassroom, managedTerms]
   );
 
   const classSessions = useMemo(
@@ -161,9 +210,37 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
         rubricsById,
         selectedTerm,
         activeClassroom,
-        activeStudent?.id
+        activeStudent?.id,
+        managedTerms
       ),
-    [allClassSessions, rubricsById, selectedTerm, activeClassroom, activeStudent]
+    [
+      allClassSessions,
+      rubricsById,
+      selectedTerm,
+      activeClassroom,
+      activeStudent,
+      managedTerms,
+    ]
+  );
+
+  const studentTermComparison = useMemo(
+    () =>
+      computeStudentTermPercentageComparison(
+        classStudents,
+        allClassSessions,
+        rubricsById,
+        selectedTerm,
+        activeClassroom,
+        managedTerms
+      ),
+    [
+      classStudents,
+      allClassSessions,
+      rubricsById,
+      selectedTerm,
+      activeClassroom,
+      managedTerms,
+    ]
   );
 
   const activeReportSession = useMemo(
@@ -189,6 +266,53 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
     setTimeout(() => {
       setExportNotice((prev) => (prev === msg ? null : prev));
     }, 4500);
+  };
+
+  const handleAddAcademicTerm = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTermManagerError(null);
+    const result = addAcademicTerm(
+      managedTerms,
+      newTermYearInput,
+      newTermSemesterInput
+    );
+    if (result.error || !result.addedTerm) {
+      setTermManagerError(result.error || 'Dönem eklenemedi.');
+      return;
+    }
+    setManagedTerms(result.terms);
+    setSelectedTerm(result.addedTerm);
+    showTemporaryNotice(
+      `"${result.addedTerm}" eğitim dönemi eklendi ve aktif dönem olarak seçildi.`
+    );
+  };
+
+  const handleDeleteAcademicTerm = (termToDelete: string) => {
+    setTermManagerError(null);
+    const result = deleteAcademicTerm(
+      managedTerms,
+      termToDelete,
+      selectedTerm
+    );
+    if (result.error || !result.deletedTerm) {
+      setTermManagerError(result.error || 'Dönem silinemedi.');
+      return;
+    }
+    setManagedTerms(result.terms);
+    setSelectedTerm(result.nextSelectedTerm);
+    showTemporaryNotice(`"${result.deletedTerm}" eğitim dönemi listeden silindi.`);
+  };
+
+  const handleResetDefaultTerms = () => {
+    setTermManagerError(null);
+    const sessionTerms = allClassSessions.map((s) =>
+      resolveSessionAcademicTerm(s, activeClassroom)
+    );
+    const merged = Array.from(
+      new Set([...DEFAULT_ACADEMIC_TERM_OPTIONS, ...sessionTerms])
+    ).sort(compareAcademicTerms);
+    setManagedTerms(merged);
+    showTemporaryNotice('Varsayılan akademik eğitim dönemleri geri yüklendi.');
   };
 
   const handleDownloadCsv = () => {
@@ -368,8 +492,8 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
             )}
           </select>
 
-          {/* Eğitim Dönemi Seçici (Örn: 2024-2025 Güz, 2024-2025 Bahar) */}
-          <div className="inline-flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 shadow-2xs">
+          {/* Eğitim Dönemi Seçici + Yeni Dönem Ekleme ve Silme Kontrolleri */}
+          <div className="inline-flex flex-wrap items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 shadow-2xs">
             <Calendar className="w-3.5 h-3.5 text-blue-900 shrink-0" />
             <label
               htmlFor="report-term-select"
@@ -390,6 +514,39 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                 </option>
               ))}
             </select>
+
+            <span className="h-3.5 w-px bg-slate-200 mx-0.5" aria-hidden="true" />
+
+            <button
+              type="button"
+              onClick={() => {
+                setTermManagerError(null);
+                setIsTermManagerOpen((prev) => !prev);
+              }}
+              aria-expanded={isTermManagerOpen}
+              aria-label="Dönem Ekle veya Yönet"
+              className={`px-2 py-0.5 rounded text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                isTermManagerOpen
+                  ? 'bg-blue-900 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              <Plus className="w-3 h-3" />
+              <span>Dönem Ekle / Yönet</span>
+            </button>
+
+            {selectedTerm !== ALL_ACADEMIC_TERMS && (
+              <button
+                type="button"
+                onClick={() => handleDeleteAcademicTerm(selectedTerm)}
+                aria-label={`Seçili ${selectedTerm} dönemini sil`}
+                title={`Seçili ${selectedTerm} dönemini sil`}
+                className="px-2 py-0.5 rounded text-[11px] font-bold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 inline-flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Dönemi Sil</span>
+              </button>
+            )}
           </div>
 
           <div className="inline-flex rounded-lg bg-slate-200/80 p-1 gap-1">
@@ -451,10 +608,149 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
         </div>
       </div>
 
-      {/* Dönemsel Karşılaştırmalı Gelişim Analizi Özeti */}
+      {/* Akademik Eğitim Dönemi Ekleme ve Silme Yönetim Paneli */}
+      {isTermManagerOpen && (
+        <section
+          aria-label="Akademik Eğitim Dönemi Yönetimi"
+          className="no-print bg-white border border-slate-300 rounded-xl p-4 shadow-xs space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 pb-2.5">
+            <div className="flex items-center gap-2">
+              <Settings2 className="w-4 h-4 text-blue-900" />
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                Akademik Yıl ve Eğitim Dönemi Yönetimi
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleResetDefaultTerms}
+                className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md inline-flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Varsayılan Dönemleri Yükle</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsTermManagerOpen(false)}
+                className="px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+
+          <form
+            onSubmit={handleAddAcademicTerm}
+            className="flex flex-wrap items-end gap-3"
+          >
+            <div>
+              <label
+                htmlFor="new-term-year-input"
+                className="block text-[11px] font-bold text-slate-700 mb-1"
+              >
+                Akademik Yıl (Örn: 2023-2024)
+              </label>
+              <input
+                id="new-term-year-input"
+                type="text"
+                value={newTermYearInput}
+                onChange={(e) => setNewTermYearInput(e.target.value)}
+                placeholder="2023-2024"
+                className="px-3 py-1.5 text-xs font-mono-num font-semibold bg-white border border-slate-300 rounded-lg text-slate-900 w-36 focus:outline-none focus:ring-2 focus:ring-blue-900"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="new-term-semester-select"
+                className="block text-[11px] font-bold text-slate-700 mb-1"
+              >
+                Yarıyıl / Dönem
+              </label>
+              <select
+                id="new-term-semester-select"
+                value={newTermSemesterInput}
+                onChange={(e) =>
+                  setNewTermSemesterInput(
+                    e.target.value === 'Bahar' ? 'Bahar' : 'Güz'
+                  )
+                }
+                className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-900"
+              >
+                <option value="Güz">Güz Dönemi</option>
+                <option value="Bahar">Bahar Dönemi</option>
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              className="px-3.5 py-1.5 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 rounded-lg inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Yeni Dönem Ekle</span>
+            </button>
+          </form>
+
+          {termManagerError && (
+            <div
+              role="alert"
+              className="text-xs font-semibold text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2"
+            >
+              {termManagerError}
+            </div>
+          )}
+
+          <div>
+            <div className="text-[11px] font-bold text-slate-600 mb-1.5">
+              Kayıtlı Eğitim Dönemleri ({managedTerms.length} Dönem):
+            </div>
+            {managedTerms.length === 0 ? (
+              <p className="text-xs text-slate-500 italic">
+                Listede kayıtlı dönem kalmadı. Yukarıdan yeni bir dönem ekleyebilir veya varsayılan dönemleri yükleyebilirsiniz.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {managedTerms.map((term) => {
+                  const isActive = selectedTerm === term;
+                  return (
+                    <div
+                      key={term}
+                      className={`inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg text-xs font-semibold border ${
+                        isActive
+                          ? 'bg-blue-50 border-blue-900 text-blue-950'
+                          : 'bg-slate-50 border-slate-200 text-slate-800'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTerm(term)}
+                        className="cursor-pointer hover:underline"
+                      >
+                        {term}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAcademicTerm(term)}
+                        aria-label={`${term} dönemini sil`}
+                        title={`${term} dönemini sil`}
+                        className="p-0.5 rounded text-slate-500 hover:text-red-700 hover:bg-red-50 cursor-pointer transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Dönemsel Karşılaştırmalı Gelişim Analizi Özeti ve Yüzde-Değişim Tablosu */}
       <section
         aria-label="Dönemsel Karşılaştırmalı Gelişim Analizi"
-        className="no-print bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-3"
+        className="no-print bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-4"
       >
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -468,7 +764,7 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            {academicTermOptions.slice(0, 5).map((opt) => {
+            {academicTermOptions.slice(0, 6).map((opt) => {
               const isSelected = selectedTerm === opt.value;
               return (
                 <button
@@ -558,6 +854,245 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Seçilen Dönem ile Bir Önceki Dönemi Kıyaslayan Yüzde-Değişim Tablosu */}
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <div className="bg-slate-50 px-3.5 py-2.5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">
+                Öğrenci Gelişim Trendleri — Dönemsel Yüzde-Değişim Tablosu
+              </h3>
+              <p className="text-[11px] text-slate-600">
+                Seçilen dönem ({studentTermComparison.currentTerm}) ile bir önceki dönem ({studentTermComparison.previousTerm}) ortalama puanlarının yüzdesel gelişim kıyaslaması
+              </p>
+            </div>
+            <span className="text-[11px] font-mono-num font-semibold px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-800 self-start sm:self-auto">
+              {studentTermComparison.previousTerm} → {studentTermComparison.currentTerm}
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table
+              aria-label="Dönemsel Yüzde Değişim Tablosu"
+              className="w-full text-left border-collapse text-xs"
+            >
+              <thead>
+                <tr className="bg-slate-100/80 border-b border-slate-200 text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                  <th className="py-2.5 px-3">Öğrenci</th>
+                  <th className="py-2.5 px-3 text-right">
+                    Önceki Dönem ({studentTermComparison.previousTerm})
+                  </th>
+                  <th className="py-2.5 px-3 text-right">
+                    Seçili Dönem ({studentTermComparison.currentTerm})
+                  </th>
+                  <th className="py-2.5 px-3 text-right">Puan Farkı</th>
+                  <th className="py-2.5 px-3 text-right">Yüzde Değişim (%)</th>
+                  <th className="py-2.5 px-3">Gelişim Trendi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {studentTermComparison.rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="py-6 px-4 text-center text-xs text-slate-500"
+                    >
+                      Bu sınıfta henüz kayıtlı öğrenci veya dönemsel değerlendirme verisi bulunmuyor. Öğrenci ve değerlendirme oturumu eklendiğinde{' '}
+                      <strong className="font-semibold text-slate-700">
+                        {studentTermComparison.previousTerm}
+                      </strong>{' '}
+                      ile{' '}
+                      <strong className="font-semibold text-slate-700">
+                        {studentTermComparison.currentTerm}
+                      </strong>{' '}
+                      arasındaki yüzde-değişim trendleri burada otomatik olarak listelenir.
+                    </td>
+                  </tr>
+                ) : (
+                  studentTermComparison.rows.map((row) => {
+                    const barWidth =
+                      row.percentageChange !== null
+                        ? Math.min(100, Math.max(8, Math.abs(row.percentageChange)))
+                        : 0;
+                    return (
+                      <tr
+                        key={row.studentId}
+                        className="hover:bg-slate-50/80 transition-colors"
+                      >
+                        <td className="py-2.5 px-3 font-semibold text-slate-900">
+                          <span className="font-mono-num text-slate-500 mr-1.5">
+                            #{row.studentNumber}
+                          </span>
+                          {row.fullName}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono-num text-slate-700">
+                          {row.previousAverage !== null ? (
+                            <span>
+                              <strong className="text-slate-900">
+                                {row.previousAverage}
+                              </strong>{' '}
+                              / 100
+                              <span className="text-[10px] text-slate-500 ml-1">
+                                ({row.previousSessionCount} ot.)
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono-num text-slate-700">
+                          {row.currentAverage !== null ? (
+                            <span>
+                              <strong className="text-slate-900">
+                                {row.currentAverage}
+                              </strong>{' '}
+                              / 100
+                              <span className="text-[10px] text-slate-500 ml-1">
+                                ({row.currentSessionCount} ot.)
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono-num font-bold">
+                          {row.pointDelta !== null ? (
+                            <span
+                              className={
+                                row.pointDelta > 0
+                                  ? 'text-emerald-800'
+                                  : row.pointDelta < 0
+                                  ? 'text-amber-800'
+                                  : 'text-slate-700'
+                              }
+                            >
+                              {row.pointDelta > 0
+                                ? `+${row.pointDelta}`
+                                : row.pointDelta}{' '}
+                              Puan
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-normal">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono-num font-bold">
+                          {row.percentageChange !== null ? (
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] ${
+                                row.percentageChange > 0
+                                  ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                                  : row.percentageChange < 0
+                                  ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+                              }`}
+                            >
+                              {row.percentageChange > 0
+                                ? `+%${row.percentageChange}`
+                                : row.percentageChange < 0
+                                ? `-%${Math.abs(row.percentageChange)}`
+                                : '%0'}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-normal">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {row.trend === 'up' && (
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 whitespace-nowrap">
+                                <TrendingUp className="w-3.5 h-3.5" />
+                                Yükselişte
+                              </span>
+                              <div className="w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                <div
+                                  className="h-full bg-emerald-600 rounded-full"
+                                  style={{ width: `${barWidth}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {row.trend === 'down' && (
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 whitespace-nowrap">
+                                <TrendingDown className="w-3.5 h-3.5" />
+                                Düşüşte
+                              </span>
+                              <div className="w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                <div
+                                  className="h-full bg-amber-600 rounded-full"
+                                  style={{ width: `${barWidth}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {row.trend === 'stable' && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700">
+                              <Minus className="w-3.5 h-3.5" />
+                              Dengeli / Sabit
+                            </span>
+                          )}
+                          {row.trend === 'insufficient_data' && (
+                            <span className="text-[11px] text-slate-500">
+                              Karşılaştırma verisi bekleniyor
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+              {studentTermComparison.rows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-slate-50 border-t border-slate-200 font-bold text-slate-900">
+                    <td className="py-2.5 px-3">
+                      Sınıf Genel Ortalaması ({studentTermComparison.rows.length} Öğrenci)
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono-num">
+                      {studentTermComparison.classPreviousAverage !== null
+                        ? `${studentTermComparison.classPreviousAverage} / 100`
+                        : '—'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono-num">
+                      {studentTermComparison.classCurrentAverage !== null
+                        ? `${studentTermComparison.classCurrentAverage} / 100`
+                        : '—'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono-num">
+                      {studentTermComparison.classPointDelta !== null
+                        ? `${
+                            studentTermComparison.classPointDelta > 0
+                              ? `+${studentTermComparison.classPointDelta}`
+                              : studentTermComparison.classPointDelta
+                          } Puan`
+                        : '—'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono-num">
+                      {studentTermComparison.classPercentageChange !== null
+                        ? studentTermComparison.classPercentageChange > 0
+                          ? `+%${studentTermComparison.classPercentageChange}`
+                          : studentTermComparison.classPercentageChange < 0
+                          ? `-%${Math.abs(
+                              studentTermComparison.classPercentageChange
+                            )}`
+                          : '%0'
+                        : '—'}
+                    </td>
+                    <td className="py-2.5 px-3 text-[11px]">
+                      {studentTermComparison.classTrend === 'up'
+                        ? 'Sınıf Ortalaması Yükselişte'
+                        : studentTermComparison.classTrend === 'down'
+                        ? 'Sınıf Ortalaması Düşüşte'
+                        : studentTermComparison.classTrend === 'stable'
+                        ? 'Sınıf Ortalaması Dengeli'
+                        : '—'}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
       </section>
 
       {exportNotice && (
@@ -588,6 +1123,7 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
           {exportError}
         </div>
       )}
+
 
       {/* TAB 1: LONGITUDINAL STUDENT TRACKING & PARENT-SHAREABLE PDF SHEET */}
       {viewTab === 'longitudinal' && (

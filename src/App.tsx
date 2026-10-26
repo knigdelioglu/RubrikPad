@@ -31,12 +31,18 @@ import {
   saveTransactionalState,
   createVerifiedBackupBundle,
   verifyAndParseBackupBundle,
-  importLegacyBackupBundle,
   unlockStorageWriteLock,
   computePayloadChecksum,
   purgeSyntheticSeedDataSync,
   purgeSyntheticSeedDataAsync,
+  type AppDataState,
 } from './utils/storageLayer.ts';
+import {
+  detectNativeAndroidEnvironment,
+  parseAndVerifyRestoredBackupText,
+  restoreBackupViaAndroidSaf,
+  saveVerifiedBackupFile,
+} from './utils/backupFileService.ts';
 import {
   appendStudentAuditLog,
   checkClassroomDeletionImpact,
@@ -120,8 +126,9 @@ export function App() {
 
   // Transactional Backup & Restore Modal State (P0 #6)
   const [showDataModal, setShowDataModal] = useState(false);
+  const [isSavingBackup, setIsSavingBackup] = useState(false);
   const [backupBanner, setBackupBanner] = useState<{
-    type: 'success' | 'error';
+    type: 'success' | 'error' | 'info';
     message: string;
   } | null>(null);
 
@@ -403,31 +410,92 @@ export function App() {
     setRubrics((prev) => prev.filter((r) => r.id !== rubricId));
   };
 
-  const handleExportVerifiedBackup = () => {
-    const bundle = createVerifiedBackupBundle({
-      classrooms,
-      students,
-      rubrics,
-      sessions,
-    });
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute(
-      'download',
-      `rubrikpad_yedek_${new Date().toISOString().slice(0, 10)}.json`
-    );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    setBackupBanner({
-      type: 'success',
-      message: `Doğrulanabilir yedek dosyası indirildi (Bütünlük kodu: ${bundle.checksum}).`,
-    });
+  const applyRestoredBackupState = useCallback(
+    (restoredState: AppDataState, successMessage: string) => {
+      unlockStorageWriteLock();
+      lastSyncedChecksumRef.current = computePayloadChecksum(restoredState);
+      setClassrooms(restoredState.classrooms);
+      setStudents(restoredState.students);
+      setRubrics(restoredState.rubrics);
+      setSessions(restoredState.sessions);
+      const firstClassroom = restoredState.classrooms[0];
+      setActiveClassId(firstClassroom?.id || '');
+      if (firstClassroom?.gradeLevel) {
+        setSelectedGradeLevel(firstClassroom.gradeLevel);
+      }
+      if (firstClassroom?.subject) {
+        setSelectedSubject(firstClassroom.subject);
+      }
+      setActiveSessionId(
+        restoredState.sessions[restoredState.sessions.length - 1]?.id || ''
+      );
+      setStorageSaveError(null);
+      setIsStorageHydrated(true);
+      void saveTransactionalState(restoredState, {
+        forceUnlockCorruptionLock: true,
+      });
+      setBackupBanner({
+        type: 'success',
+        message: successMessage,
+      });
+    },
+    []
+  );
+
+  const handleExportVerifiedBackup = async () => {
+    if (isSavingBackup) return;
+    setIsSavingBackup(true);
+    setBackupBanner(null);
+    try {
+      const result = await saveVerifiedBackupFile({
+        classrooms,
+        students,
+        rubrics,
+        sessions,
+      });
+
+      if (result.status === 'saved') {
+        setBackupBanner({
+          type: 'success',
+          message: result.message,
+        });
+      } else if (result.status === 'cancelled') {
+        setBackupBanner({
+          type: 'info',
+          message: result.message,
+        });
+      } else {
+        setBackupBanner({
+          type: 'error',
+          message: result.message,
+        });
+      }
+    } catch {
+      setBackupBanner({
+        type: 'error',
+        message: 'Yedek dosyası kaydedilirken beklenmeyen bir hata oluştu.',
+      });
+    } finally {
+      setIsSavingBackup(false);
+    }
+  };
+
+  const handleNativeSafRestore = async (mode: 'verified' | 'legacy') => {
+    setBackupBanner(null);
+    const result = await restoreBackupViaAndroidSaf({ mode });
+    if (result.status === 'restored' && result.state) {
+      applyRestoredBackupState(result.state, result.message);
+    } else if (result.status === 'cancelled') {
+      setBackupBanner({
+        type: 'info',
+        message: result.message,
+      });
+    } else {
+      setBackupBanner({
+        type: 'error',
+        message: result.message,
+      });
+    }
   };
 
   const handleImportVerifiedBackup = async (
@@ -447,33 +515,20 @@ export function App() {
     }
     try {
       const text = await file.text();
-      const verified = verifyAndParseBackupBundle(text);
-      if (!verified.isValid || !verified.state) {
+      const verified = parseAndVerifyRestoredBackupText(
+        text,
+        'verified',
+        file.name
+      );
+      if (verified.status !== 'restored' || !verified.state) {
         setBackupBanner({
           type: 'error',
-          message: verified.error || 'Yedek doğrulaması başarısız oldu.',
+          message: verified.message || 'Yedek doğrulaması başarısız oldu.',
         });
         return;
       }
 
-      unlockStorageWriteLock();
-      lastSyncedChecksumRef.current = computePayloadChecksum(verified.state);
-      setClassrooms(verified.state.classrooms);
-      setStudents(verified.state.students);
-      setRubrics(verified.state.rubrics);
-      setSessions(verified.state.sessions);
-      setActiveClassId(verified.state.classrooms[0]?.id || '');
-      setActiveSessionId(
-        verified.state.sessions[verified.state.sessions.length - 1]?.id || ''
-      );
-      setStorageSaveError(null);
-      setIsStorageHydrated(true);
-      setBackupBanner({
-        type: 'success',
-        message: verified.upgradedFromRpkChecksum
-          ? 'Önceki v3 (rpk- imzalı) yedek dosyası doğrulandı, yeni SHA-256 imzasına yükseltildi ve geri yüklendi.'
-          : 'Yedek dosyası SHA-256 bütünlük kontrolünden (Checksum) geçti ve başarıyla geri yüklendi.',
-      });
+      applyRestoredBackupState(verified.state, verified.message);
     } catch {
       setBackupBanner({
         type: 'error',
@@ -501,32 +556,22 @@ export function App() {
     }
     try {
       const text = await file.text();
-      const imported = importLegacyBackupBundle(text);
-      if (!imported.isValid || !imported.state) {
+      const imported = parseAndVerifyRestoredBackupText(
+        text,
+        'legacy',
+        file.name
+      );
+      if (imported.status !== 'restored' || !imported.state) {
         setBackupBanner({
           type: 'error',
           message:
-            imported.error || 'Eski sürüm yedek aktarma işlemi başarısız oldu.',
+            imported.message ||
+            'Eski sürüm yedek aktarma işlemi başarısız oldu.',
         });
         return;
       }
 
-      unlockStorageWriteLock();
-      lastSyncedChecksumRef.current = computePayloadChecksum(imported.state);
-      setClassrooms(imported.state.classrooms);
-      setStudents(imported.state.students);
-      setRubrics(imported.state.rubrics);
-      setSessions(imported.state.sessions);
-      setActiveClassId(imported.state.classrooms[0]?.id || '');
-      setActiveSessionId(
-        imported.state.sessions[imported.state.sessions.length - 1]?.id || ''
-      );
-      setStorageSaveError(null);
-      setIsStorageHydrated(true);
-      setBackupBanner({
-        type: 'success',
-        message: `Eski sürüm (v1/v2) yedek dosyası v3 şemasına dönüştürülerek aktarıldı ve yeni SHA-256 imzası oluşturuldu (${imported.newChecksum?.slice(0, 22)}...).`,
-      });
+      applyRestoredBackupState(imported.state, imported.message);
     } catch {
       setBackupBanner({
         type: 'error',
@@ -669,10 +714,11 @@ export function App() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={handleExportVerifiedBackup}
-                className="px-2.5 py-1 rounded bg-red-700 text-white font-bold hover:bg-red-800 cursor-pointer"
+                onClick={() => void handleExportVerifiedBackup()}
+                disabled={isSavingBackup}
+                className="px-2.5 py-1 rounded bg-red-700 text-white font-bold hover:bg-red-800 disabled:opacity-60 cursor-pointer"
               >
-                Acil Yedek İndir (.json)
+                {isSavingBackup ? 'Kaydediliyor...' : 'Acil Yedek İndir (.json)'}
               </button>
               <button
                 type="button"
@@ -826,54 +872,85 @@ export function App() {
                 className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
                   backupBanner.type === 'success'
                     ? 'bg-slate-100 text-slate-900 border border-slate-300'
+                    : backupBanner.type === 'info'
+                    ? 'bg-amber-50 text-amber-950 border border-amber-200'
                     : 'bg-red-50 text-red-900 border border-red-200'
                 }`}
               >
                 {backupBanner.type === 'success' ? (
                   <Check className="w-4 h-4 text-blue-900 shrink-0" />
+                ) : backupBanner.type === 'info' ? (
+                  <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
                 ) : (
                   <AlertCircle className="w-4 h-4 text-red-700 shrink-0" />
                 )}
-                <span>{backupBanner.message}</span>
+                <span className="min-w-0 break-all">{backupBanner.message}</span>
               </div>
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={handleExportVerifiedBackup}
-                className="p-3.5 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => void handleExportVerifiedBackup()}
+                disabled={isSavingBackup}
+                className="p-3.5 rounded-xl bg-blue-900 hover:bg-blue-950 disabled:opacity-60 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                Yedek İndir (.json)
+                <span>
+                  {isSavingBackup
+                    ? 'Konum Seçiliyor...'
+                    : 'Yedek İndir (.json)'}
+                </span>
               </button>
 
-              <label className="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer text-center">
-                <Upload className="w-4 h-4" />
-                <span>Yedek Geri Yükle</span>
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={handleImportVerifiedBackup}
-                  className="hidden"
-                />
-              </label>
+              {detectNativeAndroidEnvironment() ? (
+                <button
+                  type="button"
+                  onClick={() => void handleNativeSafRestore('verified')}
+                  className="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer text-center"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Yedek Geri Yükle</span>
+                </button>
+              ) : (
+                <label className="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer text-center">
+                  <Upload className="w-4 h-4" />
+                  <span>Yedek Geri Yükle</span>
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={handleImportVerifiedBackup}
+                    className="hidden"
+                  />
+                </label>
+              )}
             </div>
 
             <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 flex items-center justify-between gap-2 text-xs">
               <span className="font-bold text-amber-950">
                 Eski Sürüm (v1/v2) Yedek:
               </span>
-              <label className="px-3 py-1.5 rounded-lg bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold flex items-center gap-1.5 cursor-pointer shrink-0">
-                <Upload className="w-3.5 h-3.5" />
-                <span>Eski Yedek Aktar</span>
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={handleImportLegacyBackup}
-                  className="hidden"
-                />
-              </label>
+              {detectNativeAndroidEnvironment() ? (
+                <button
+                  type="button"
+                  onClick={() => void handleNativeSafRestore('legacy')}
+                  className="px-3 py-1.5 rounded-lg bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Eski Yedek Aktar</span>
+                </button>
+              ) : (
+                <label className="px-3 py-1.5 rounded-lg bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold flex items-center gap-1.5 cursor-pointer shrink-0">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Eski Yedek Aktar</span>
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={handleImportLegacyBackup}
+                    className="hidden"
+                  />
+                </label>
+              )}
             </div>
           </div>
         </div>

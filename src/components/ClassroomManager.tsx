@@ -28,6 +28,7 @@ import {
   checkClassroomDeletionImpact,
   checkStudentDeletionImpact,
   createUniqueEntityId,
+  normalizeClassroomBranchInput,
   parseStudentRosterText,
   splitTurkishFullName,
   validateClassroomRecord,
@@ -191,12 +192,14 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
   const handleCreateClassroom = (e: React.FormEvent) => {
     e.preventDefault();
     setNewClassError(null);
+    const branchName = normalizeClassroomBranchInput(newClassName);
     const validation = validateClassroomRecord(
       {
-        name: newClassName,
+        name: branchName,
         gradeLevel: newClassGrade,
         subject: newClassSubject,
         academicYear: '2026-2027',
+        branchOnly: true,
       },
       classrooms
     );
@@ -206,7 +209,7 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
     }
     const newCls: Classroom = {
       id: createUniqueEntityId('cls'),
-      name: newClassName.trim(),
+      name: branchName,
       gradeLevel: newClassGrade.trim() || 'Genel',
       subject: newClassSubject.trim() || 'Genel Ders',
       academicYear: '2026-2027',
@@ -395,16 +398,20 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
               htmlFor="new-cls-name"
               className="block text-xs font-semibold text-slate-700 mb-1"
             >
-              Sınıf / Şube Adı
+              Şube Adı (Sadece Harf)
             </label>
             <input
               id="new-cls-name"
               type="text"
               required
+              maxLength={6}
+              autoCapitalize="characters"
               value={newClassName}
-              onChange={(e) => setNewClassName(e.target.value)}
-              placeholder="Örn: 11-A Sınıfı"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900"
+              onChange={(e) =>
+                setNewClassName(normalizeClassroomBranchInput(e.target.value))
+              }
+              placeholder="Örn: A, B, C"
+              className="w-full px-3 py-2 text-sm font-bold uppercase tracking-wider bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 placeholder:normal-case placeholder:font-normal placeholder:tracking-normal"
             />
           </div>
           <div>
@@ -521,7 +528,11 @@ export const ClassroomManager: React.FC<ClassroomManagerProps> = ({
                     </span>
                   </div>
                 </div>
-                <div className="text-lg font-bold text-slate-900">{cls.name}</div>
+                <div className="text-lg font-bold text-slate-900">
+                  {/^[A-ZÇĞİÖŞÜ]+$/.test(cls.name)
+                    ? `${cls.name} Şubesi`
+                    : cls.name}
+                </div>
                 <div className="text-xs text-slate-600 mt-0.5 pr-7">
                   {cls.subject} · {cls.academicYear}
                 </div>

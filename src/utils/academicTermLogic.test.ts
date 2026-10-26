@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { EvaluationSession, Rubric } from '../types.ts';
+import type { EvaluationSession, Rubric, Student } from '../types.ts';
 import {
   ALL_ACADEMIC_TERMS,
+  addAcademicTerm,
+  calculateScorePercentageChange,
+  computeStudentTermPercentageComparison,
   computeTermComparisonAnalytics,
+  deleteAcademicTerm,
   deriveAcademicTermFromDate,
   getAcademicTermOptions,
+  getPreviousAcademicTerm,
 } from './academicTermLogic.ts';
 
 const rubric: Rubric = {
@@ -61,3 +66,110 @@ test('invalid calendar dates use the academic-year fallback instead of inventing
   assert.equal(deriveAcademicTermFromDate('2026-09'), '2026-2027 Güz');
   assert.equal(deriveAcademicTermFromDate('2026-02-01T12:00:00Z'), '2025-2026 Bahar');
 });
+
+test('addAcademicTerm and deleteAcademicTerm manage academic years and terms accurately', () => {
+  const initialTerms = ['2024-2025 Güz', '2024-2025 Bahar'];
+
+  // Add earlier academic term and check chronological order
+  const added = addAcademicTerm(initialTerms, '2023-2024', 'Güz');
+  assert.equal(added.addedTerm, '2023-2024 Güz');
+  assert.equal(added.error, undefined);
+  assert.deepEqual(added.terms, ['2023-2024 Güz', '2024-2025 Güz', '2024-2025 Bahar']);
+
+  // Duplicate check
+  const duplicate = addAcademicTerm(added.terms, '2024-2025', 'Güz');
+  assert.ok(duplicate.error);
+  assert.equal(duplicate.terms.length, 3);
+
+  // Non-consecutive year validation
+  const invalidYear = addAcademicTerm(added.terms, '2024-2026', 'Bahar');
+  assert.ok(invalidYear.error);
+
+  // Delete active term resets selectedTerm to ALL_ACADEMIC_TERMS
+  const deleted = deleteAcademicTerm(added.terms, '2024-2025 Güz', '2024-2025 Güz');
+  assert.equal(deleted.deletedTerm, '2024-2025 Güz');
+  assert.equal(deleted.nextSelectedTerm, ALL_ACADEMIC_TERMS);
+  assert.deepEqual(deleted.terms, ['2023-2024 Güz', '2024-2025 Bahar']);
+
+  // Options respect managedTerms when provided
+  const options = getAcademicTermOptions([], null, deleted.terms);
+  assert.deepEqual(
+    options.map((o) => o.value),
+    [ALL_ACADEMIC_TERMS, '2023-2024 Güz', '2024-2025 Bahar']
+  );
+});
+
+test('computeStudentTermPercentageComparison calculates percentage change between selected and previous term', () => {
+  assert.equal(getPreviousAcademicTerm('2024-2025 Bahar'), '2024-2025 Güz');
+  assert.equal(getPreviousAcademicTerm('2024-2025 Güz'), '2023-2024 Bahar');
+
+  const pctUp = calculateScorePercentageChange(60, 75);
+  assert.equal(pctUp.pointDelta, 15);
+  assert.equal(pctUp.percentageChange, 25);
+  assert.equal(pctUp.trend, 'up');
+
+  const pctDown = calculateScorePercentageChange(80, 60);
+  assert.equal(pctDown.pointDelta, -20);
+  assert.equal(pctDown.percentageChange, -25);
+  assert.equal(pctDown.trend, 'down');
+
+  const students: Student[] = [
+    { id: 'student', studentNumber: '101', fullName: 'Ayşe Yılmaz', classId: 'class' },
+  ];
+  const sessions = [
+    session('2024-10-15', 60), // 2024-2025 Güz -> 60
+    session('2025-03-20', 90), // 2024-2025 Bahar -> 90 (+50%)
+  ];
+
+  const comparison = computeStudentTermPercentageComparison(
+    students,
+    sessions,
+    { rubric },
+    '2024-2025 Bahar'
+  );
+
+  assert.equal(comparison.previousTerm, '2024-2025 Güz');
+  assert.equal(comparison.currentTerm, '2024-2025 Bahar');
+  assert.equal(comparison.rows.length, 1);
+  assert.equal(comparison.rows[0].previousAverage, 60);
+  assert.equal(comparison.rows[0].currentAverage, 90);
+  assert.equal(comparison.rows[0].pointDelta, 30);
+  assert.equal(comparison.rows[0].percentageChange, 50);
+  assert.equal(comparison.rows[0].trend, 'up');
+  assert.equal(comparison.classPercentageChange, 50);
+});
+
+import {
+  normalizeClassroomBranchInput,
+  validateClassroomRecord,
+} from './rubricLogic.ts';
+
+test('normalizeClassroomBranchInput strips numbers/symbols and converts Turkish letters to uppercase without Caps Lock', () => {
+  assert.equal(normalizeClassroomBranchInput('a'), 'A');
+  assert.equal(normalizeClassroomBranchInput('b'), 'B');
+  assert.equal(normalizeClassroomBranchInput('11-a'), 'A');
+  assert.equal(normalizeClassroomBranchInput('9/b '), 'B');
+  assert.equal(normalizeClassroomBranchInput('iıçşğüö'), 'İIÇŞĞÜÖ');
+
+  const validBranchA = validateClassroomRecord(
+    { name: 'A', gradeLevel: '11. Sınıf', branchOnly: true },
+    []
+  );
+  assert.equal(validBranchA.isValid, true);
+
+  // Same branch letter in a different grade level is allowed
+  const validSameBranchDifferentGrade = validateClassroomRecord(
+    { name: 'A', gradeLevel: '10. Sınıf', branchOnly: true },
+    [{ id: 'c1', name: 'A', gradeLevel: '11. Sınıf', subject: 'Türk Dili ve Edebiyatı', academicYear: '2026-2027' }]
+  );
+  assert.equal(validSameBranchDifferentGrade.isValid, true);
+
+  // Same branch letter in the same grade level is rejected as duplicate
+  const duplicateSameGrade = validateClassroomRecord(
+    { name: 'A', gradeLevel: '11. Sınıf', branchOnly: true },
+    [{ id: 'c1', name: 'A', gradeLevel: '11. Sınıf', subject: 'Türk Dili ve Edebiyatı', academicYear: '2026-2027' }]
+  );
+  assert.equal(duplicateSameGrade.isValid, false);
+});
+
+
