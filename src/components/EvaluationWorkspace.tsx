@@ -9,6 +9,10 @@ import {
   FileDown,
   Undo2,
   ShieldCheck,
+  Archive,
+  ArchiveRestore,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import type {
   Classroom,
@@ -80,6 +84,8 @@ interface EvaluationWorkspaceProps {
   onSelectSession: (id: string) => void;
   onUpdateSession: (updatedSession: EvaluationSession) => void;
   onCreateSession: (newSession: EvaluationSession) => void;
+  onDeleteSession?: (sessionId: string) => void;
+  onArchiveSession?: (sessionId: string, archived: boolean) => void;
   onNavigateTab?: (tab: 'evaluate' | 'classes' | 'rubrics' | 'reports') => void;
 }
 
@@ -96,6 +102,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   onSelectSession,
   onUpdateSession,
   onCreateSession,
+  onDeleteSession,
+  onArchiveSession,
   onNavigateTab,
 }) => {
   const activeSession = useMemo(
@@ -187,10 +195,22 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
 
   // New Session Modal State (with Multi-classroom support P1 #9)
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
+  const [showArchivedSessions, setShowArchivedSessions] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
   const [newSessionTitle, setNewSessionTitle] = useState('');
   const [newSessionClassIds, setNewSessionClassIds] = useState<string[]>(() =>
     classrooms[0]?.id ? [classrooms[0].id] : []
   );
+
+  const archivedSessionsCount = useMemo(
+    () => sessions.filter((s) => s.archived).length,
+    [sessions]
+  );
+
+  const visibleSessions = useMemo(() => {
+    if (showArchivedSessions) return sessions;
+    return sessions.filter((s) => !s.archived || s.id === activeSession?.id);
+  }, [sessions, showArchivedSessions, activeSession?.id]);
 
   const selectedNewSessionClassrooms = useMemo(
     () => classrooms.filter((c) => newSessionClassIds.includes(c.id)),
@@ -1237,7 +1257,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               onChange={(e) => onSelectSession(e.target.value)}
               className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-900"
             >
-              {sessions.map((ses) => {
+              {visibleSessions.map((ses) => {
                 const clsNames = classrooms
                   .filter((c) =>
                     (ses.classIds && ses.classIds.length > 0
@@ -1249,7 +1269,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                   .join('+');
                 return (
                   <option key={ses.id} value={ses.id}>
-                    [{clsNames}] {ses.title} ({ses.date})
+                    {ses.archived ? '[Arşiv] ' : ''}[{clsNames}] {ses.title} ({ses.date})
                   </option>
                 );
               })}
@@ -1263,6 +1283,25 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               <Plus className="w-3.5 h-3.5 text-white" />
               Yeni Oturum
             </button>
+
+            {archivedSessionsCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowArchivedSessions((prev) => !prev)}
+                data-testid="toggle-show-archived-sessions-btn"
+                className={`px-3 py-2 text-xs font-bold rounded-xl border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  showArchivedSessions
+                    ? 'bg-slate-800 text-white border-slate-900 shadow-2xs'
+                    : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+                }`}
+                title="Arşivlenmiş oturumları açılır listede göster veya gizle"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                {showArchivedSessions
+                  ? 'Arşivlenenleri Gizle'
+                  : `Arşivlenenler (${archivedSessionsCount})`}
+              </button>
+            )}
           </div>
 
           {/* Right Mode Switcher + Undo + PDF/CSV Export */}
@@ -1372,13 +1411,22 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               </select>
             </div>
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-lg font-bold text-slate-900">
-                {activeSession.title}
+              <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <span>{activeSession.title}</span>
+                {activeSession.archived && (
+                  <span
+                    data-testid="session-archived-badge"
+                    className="px-2 py-0.5 rounded-lg text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1 shrink-0"
+                  >
+                    <Archive className="w-3 h-3 text-amber-800" />
+                    Arşivde
+                  </span>
+                )}
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-4 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 bg-slate-50 px-3.5 py-2 rounded-xl border border-slate-200">
             <div>
               <div className="text-[11px] font-medium text-slate-500">
                 Tamamlanan Öğrenci
@@ -1420,8 +1468,93 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 ? 'Oturum Tamamlandı'
                 : 'Oturumu Tamamla'}
             </button>
+
+            {/* Arşivle / Arşivden Çıkar */}
+            <button
+              type="button"
+              onClick={() => {
+                const nextArchived = !activeSession.archived;
+                if (onArchiveSession) {
+                  onArchiveSession(activeSession.id, nextArchived);
+                } else {
+                  onUpdateSession({
+                    ...activeSession,
+                    archived: nextArchived,
+                    archivedAt: nextArchived ? new Date().toISOString() : undefined,
+                  });
+                }
+              }}
+              data-testid="archive-session-btn"
+              title={
+                activeSession.archived
+                  ? 'Oturumu arşivden çıkarıp aktif oturumlar arasına geri al'
+                  : 'Oturumu arşivle (puanlar ve notlar korunur, ana listeden gizlenir)'
+              }
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer border transition-colors ${
+                activeSession.archived
+                  ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-300 shadow-2xs'
+                  : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300'
+              }`}
+            >
+              {activeSession.archived ? (
+                <>
+                  <ArchiveRestore className="w-3.5 h-3.5 text-amber-800" />
+                  <span>Arşivden Çıkar</span>
+                </>
+              ) : (
+                <>
+                  <Archive className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Arşivle</span>
+                </>
+              )}
+            </button>
+
+            {/* Oturumu Sil */}
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirmModal(true)}
+              data-testid="delete-session-btn"
+              title="Oturumu ve değerlendirme kayıtlarını kalıcı olarak sil"
+              className="px-3 py-1.5 rounded-lg text-xs font-bold text-rose-700 bg-white border border-rose-300 hover:bg-rose-50 hover:text-rose-800 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Sil</span>
+            </button>
           </div>
         </div>
+
+        {/* Archived Session Notice Banner */}
+        {activeSession.archived && (
+          <div
+            data-testid="session-archived-banner"
+            className="mt-3 bg-amber-50 border border-amber-300 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-amber-950 shadow-2xs"
+          >
+            <div className="flex items-center gap-2">
+              <Archive className="w-4 h-4 text-amber-800 shrink-0" />
+              <span>
+                Bu oturum <strong>arşivlenmiştir</strong>. Tüm notlar ve puanlar güvenle saklanmaktadır. Dilediğinizde aktif oturumlar arasına geri yükleyebilirsiniz.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (onArchiveSession) {
+                  onArchiveSession(activeSession.id, false);
+                } else {
+                  onUpdateSession({
+                    ...activeSession,
+                    archived: false,
+                    archivedAt: undefined,
+                  });
+                }
+              }}
+              className="px-3 py-1 rounded-lg bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold flex items-center gap-1.5 cursor-pointer shrink-0 self-start sm:self-center"
+            >
+              <ArchiveRestore className="w-3.5 h-3.5 text-amber-900" />
+              Arşivden Çıkar
+            </button>
+          </div>
+        )}
 
         {/* Multi-Classroom Session Switcher (Sınıf Bazlı Değerlendirme — Şube Seçici) */}
         {sessionClassrooms.length > 1 && (
@@ -2069,6 +2202,102 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           lastAppliedGroupBanner={lastAppliedGroupBanner}
           onDismissGroupBanner={() => setLastAppliedGroupBanner(null)}
         />
+      )}
+
+      {/* Delete Session Confirmation Modal */}
+      {showDeleteConfirmModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-session-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200"
+        >
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-xl border border-slate-300 space-y-4">
+            <div className="flex items-center gap-3 text-rose-700">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h2
+                  id="delete-session-modal-title"
+                  className="text-base font-bold text-slate-900"
+                >
+                  Değerlendirme Oturumunu Sil
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {activeSession.title} ({activeSession.date})
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-950 space-y-1.5">
+              <div className="font-bold flex items-center gap-1.5 text-rose-900">
+                <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
+                Kalıcı Silme Uyarısı
+              </div>
+              <p>
+                Bu oturumu sildiğinizde; oturuma ait tüm öğrenci puanları, grup değerlendirmeleri ve gözlem notları kalıcı olarak silinecektir.
+              </p>
+              {progressStats.fullyEvaluatedCount > 0 && (
+                <p className="font-semibold text-rose-800">
+                  Bu oturumda {progressStats.fullyEvaluatedCount} öğrencinin tamamlanmış değerlendirme notu bulunmaktadır.
+                </p>
+              )}
+            </div>
+
+            <p className="text-xs text-slate-600">
+              Oturum kayıtlarını kaybetmeden değerlendirme listesinden kaldırmak istiyorsanız, silmek yerine <strong>Arşivle</strong> seçeneğini kullanabilirsiniz.
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirmModal(false)}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 cursor-pointer"
+              >
+                Vazgeç
+              </button>
+
+              {!activeSession.archived && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onArchiveSession) {
+                      onArchiveSession(activeSession.id, true);
+                    } else {
+                      onUpdateSession({
+                        ...activeSession,
+                        archived: true,
+                        archivedAt: new Date().toISOString(),
+                      });
+                    }
+                    setShowDeleteConfirmModal(false);
+                  }}
+                  data-testid="archive-instead-of-delete-btn"
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <Archive className="w-3.5 h-3.5 text-amber-800" />
+                  Bunun Yerine Arşivle
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteSession) {
+                    onDeleteSession(activeSession.id);
+                  }
+                  setShowDeleteConfirmModal(false);
+                }}
+                data-testid="confirm-delete-session-btn"
+                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Kalıcı Olarak Sil
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {quickNoteModalElement}

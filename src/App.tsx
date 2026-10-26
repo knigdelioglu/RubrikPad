@@ -280,6 +280,31 @@ export function App() {
     setActiveSessionId(newSession.id);
   };
 
+  const handleDeleteSession = (sessionId: string) => {
+    setSessions((prev) => {
+      const remaining = prev.filter((s) => s.id !== sessionId);
+      if (activeSessionId === sessionId) {
+        const nextActive = remaining.find((s) => !s.archived) || remaining[0];
+        setActiveSessionId(nextActive ? nextActive.id : '');
+      }
+      return remaining;
+    });
+  };
+
+  const handleArchiveSession = (sessionId: string, archived: boolean) => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? {
+              ...s,
+              archived,
+              archivedAt: archived ? new Date().toISOString() : undefined,
+            }
+          : s
+      )
+    );
+  };
+
   const handleSelectClassroom = (classId: string) => {
     setActiveClassId(classId);
     const cls = classrooms.find((c) => c.id === classId);
@@ -778,6 +803,8 @@ export function App() {
             onSelectSession={setActiveSessionId}
             onUpdateSession={handleUpdateSession}
             onCreateSession={handleCreateSession}
+            onDeleteSession={handleDeleteSession}
+            onArchiveSession={handleArchiveSession}
             onNavigateTab={setActiveTab}
           />
         )}
@@ -823,6 +850,9 @@ export function App() {
             sessions={sessions}
             activeClassId={activeClassId}
             onSelectClass={setActiveClassId}
+            onUpdateSession={handleUpdateSession}
+            onDeleteSession={handleDeleteSession}
+            onArchiveSession={handleArchiveSession}
           />
         )}
       </main>

@@ -104,6 +104,8 @@ export interface EvaluationSession {
   rubricSnapshot?: Rubric; // Frozen rubric snapshot for historical immutability (P0)
   date: string;
   status: 'in_progress' | 'completed';
+  archived?: boolean;
+  archivedAt?: string;
   mode: 'individual' | 'grid' | 'group';
   evaluations: Record<string, StudentEvaluation>; // studentId -> StudentEvaluation
   groups: StudentGroup[];

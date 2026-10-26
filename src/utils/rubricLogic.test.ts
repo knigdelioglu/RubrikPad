@@ -52,6 +52,9 @@ import {
   resolveFocusedCriterionIndex,
   getNextFocusedCriterionIndexAfterScore,
   getFocusModeStepSummary,
+  archiveEvaluationSession,
+  deleteEvaluationSession,
+  partitionSessionsByArchiveStatus,
 } from './rubricLogic.ts';
 import {
   STORAGE_KEY,
@@ -3485,4 +3488,69 @@ test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: 8 grade-11 rubric
     }
   }
 });
+
+test('Evaluation Session Lifecycle: archiveEvaluationSession, deleteEvaluationSession, and partitionSessionsByArchiveStatus manage session archiving and deletion accurately', () => {
+  const ses1: EvaluationSession = {
+    id: 'ses-1',
+    title: 'Şiir Okuma 1',
+    classId: 'cls-11a',
+    rubricId: 'rub-siir',
+    date: '2026-10-15',
+    status: 'completed',
+    mode: 'individual',
+    generalSessionNote: 'Genel gözlem notu',
+    groups: [],
+    evaluations: {
+      'stu-1': {
+        studentId: 'stu-1',
+        criterionScores: { c1: 4 },
+        note: '',
+        tags: [],
+        updatedAt: '2026-10-15T10:00:00.000Z',
+      },
+    },
+  };
+
+  const ses2: EvaluationSession = {
+    id: 'ses-2',
+    title: 'Münazara 2',
+    classId: 'cls-11b',
+    rubricId: 'rub-munazara',
+    date: '2026-10-20',
+    status: 'in_progress',
+    mode: 'group',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {},
+  };
+
+  // 1. Initial partition: both active
+  const initial = partitionSessionsByArchiveStatus([ses1, ses2]);
+  assert.equal(initial.activeSessions.length, 2);
+  assert.equal(initial.archivedSessions.length, 0);
+
+  // 2. Archive ses1
+  const archivedSes1 = archiveEvaluationSession(ses1, true);
+  assert.equal(archivedSes1.archived, true);
+  assert.ok(typeof archivedSes1.archivedAt === 'string');
+  assert.equal(archivedSes1.evaluations['stu-1']?.criterionScores?.c1, 4);
+
+  // 3. Partition with archived session
+  const partitioned = partitionSessionsByArchiveStatus([archivedSes1, ses2]);
+  assert.equal(partitioned.activeSessions.length, 1);
+  assert.equal(partitioned.activeSessions[0].id, 'ses-2');
+  assert.equal(partitioned.archivedSessions.length, 1);
+  assert.equal(partitioned.archivedSessions[0].id, 'ses-1');
+
+  // 4. Restore ses1 from archive
+  const restoredSes1 = archiveEvaluationSession(archivedSes1, false);
+  assert.equal(restoredSes1.archived, false);
+  assert.equal(restoredSes1.archivedAt, undefined);
+
+  // 5. Delete ses2
+  const remaining = deleteEvaluationSession([restoredSes1, ses2], 'ses-2');
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].id, 'ses-1');
+});
+
 

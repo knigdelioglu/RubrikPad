@@ -3369,3 +3369,52 @@ export function getFocusModeStepSummary(
   };
 }
 
+/**
+ * Toggles or sets the archived status of an evaluation session.
+ * Preserves all evaluations, notes, criteria scores, snapshots, and groups.
+ */
+export function archiveEvaluationSession(
+  session: EvaluationSession,
+  archived: boolean = true
+): EvaluationSession {
+  return {
+    ...session,
+    archived,
+    archivedAt: archived ? new Date().toISOString() : undefined,
+  };
+}
+
+/**
+ * Removes an evaluation session by its id from the sessions list.
+ */
+export function deleteEvaluationSession(
+  sessions: EvaluationSession[],
+  sessionId: string
+): EvaluationSession[] {
+  return sessions.filter((s) => s.id !== sessionId);
+}
+
+/**
+ * Partitions evaluation sessions into active and archived lists.
+ */
+export function partitionSessionsByArchiveStatus(
+  sessions: EvaluationSession[]
+): {
+  activeSessions: EvaluationSession[];
+  archivedSessions: EvaluationSession[];
+} {
+  const activeSessions: EvaluationSession[] = [];
+  const archivedSessions: EvaluationSession[] = [];
+
+  for (const s of sessions) {
+    if (s.archived) {
+      archivedSessions.push(s);
+    } else {
+      activeSessions.push(s);
+    }
+  }
+
+  return { activeSessions, archivedSessions };
+}
+
+
