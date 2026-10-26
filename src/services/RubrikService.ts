@@ -4,6 +4,7 @@ export {
   DEFAULT_GRADE_LEVEL,
   DEFAULT_SUBJECT,
   TDE_11_RUBRIC_IDS,
+  ALL_GRADE_TDE_RUBRIC_IDS,
   RUBRIC_COURSE_REGISTRY,
   normalizeTurkishText,
   normalizeGradeLevel,

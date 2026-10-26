@@ -3228,14 +3228,14 @@ test('Focus Mode (Odak Modu): resolveFocusedCriterionIndex, getNextFocusedCriter
   assert.equal(summary.steps[3].scoreLabel, '20/25');
 });
 
-test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: classrooms/students/sessions are empty, all 8 rubrics total 100 points and pass validation', async () => {
+test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: 8 grade-11 rubrics and 1 shared book rubric validate', async () => {
   // 1. Classrooms, students, and sessions seed arrays must be completely empty
   assert.deepEqual(INITIAL_CLASSROOMS, []);
   assert.deepEqual(INITIAL_STUDENTS, []);
   assert.deepEqual(INITIAL_SESSIONS, []);
 
-  // 2. Verify all 8 Türk Dili ve Edebiyatı rubrics and their exact criterion point totals
-  assert.equal(INITIAL_RUBRICS.length, 8);
+  // 2. Verify the original 8 course-specific rubrics without changing their original order
+  assert.equal(INITIAL_RUBRICS.length, 9);
 
   const expectedSpecs: Array<{
     title: string;
@@ -3331,7 +3331,7 @@ test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: classrooms/studen
     },
   ];
 
-  INITIAL_RUBRICS.forEach((rubric, idx) => {
+  INITIAL_RUBRICS.slice(0, 8).forEach((rubric, idx) => {
     const spec = expectedSpecs[idx];
     assert.equal(rubric.title, spec.title);
     assert.equal(rubric.subject, 'Türk Dili ve Edebiyatı');

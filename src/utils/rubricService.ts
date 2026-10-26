@@ -1,4 +1,5 @@
 import type { Classroom, Rubric } from '../types.ts';
+import { BOOK_PRESENTATION_RUBRIC_ID } from '../data/bookPresentationRubric.ts';
 
 /**
  * Standart lise ve ortaokul sınıf düzeyleri (Kademe / Seviye).
@@ -62,9 +63,17 @@ export const TDE_11_RUBRIC_IDS: ReadonlySet<string> = new Set([
 /**
  * Yerleşik rubriklerin hangi sınıf seviyesi ve ders ile ilişkili olduğunu tutan kayıt tablosu.
  */
+export const ALL_GRADE_TDE_RUBRIC_IDS: ReadonlySet<string> = new Set([
+  BOOK_PRESENTATION_RUBRIC_ID,
+]);
+
 export const RUBRIC_COURSE_REGISTRY: Readonly<
   Record<string, { gradeLevel: string; subject: string }>
 > = {
+  [BOOK_PRESENTATION_RUBRIC_ID]: {
+    gradeLevel: 'Genel',
+    subject: 'Türk Dili ve Edebiyatı',
+  },
   'rub-tde-iletisim-engelleri': {
     gradeLevel: '11. Sınıf',
     subject: 'Türk Dili ve Edebiyatı',
@@ -275,6 +284,11 @@ export function doesRubricMatchGradeAndSubject(
   const rubricGrade = getEffectiveRubricGradeLevel(rubric);
   const rubricSubject = getEffectiveRubricSubject(rubric);
 
+  // Yerleşik kitap sunumu rubriği tüm sınıf düzeylerinde, yalnızca TDE dersinde görünür.
+  if (ALL_GRADE_TDE_RUBRIC_IDS.has(rubric.id)) {
+    return targetSubject === 'Türk Dili ve Edebiyatı';
+  }
+
   if (TDE_11_RUBRIC_IDS.has(rubric.id)) {
     return (
       targetGrade === '11. Sınıf' &&
@@ -364,6 +378,7 @@ export const RubrikService = {
   DEFAULT_GRADE_LEVEL,
   DEFAULT_SUBJECT,
   TDE_11_RUBRIC_IDS,
+  ALL_GRADE_TDE_RUBRIC_IDS,
   RUBRIC_COURSE_REGISTRY,
   normalizeGradeLevel,
   normalizeSubjectName,
