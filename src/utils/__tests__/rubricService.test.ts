@@ -4,9 +4,18 @@ import { INITIAL_RUBRICS } from '../../data/seedData.ts';
 import {
   BOOK_PRESENTATION_RUBRIC_ID,
   BOOK_PRESENTATION_RUBRIC,
+  BOOK_PRESENTATION_RUBRIC_IDS,
+  BOOK_PRESENTATION_RUBRICS,
+  LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+  LITERARY_BOOK_PRESENTATION_RUBRIC,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+  LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+  LEGACY_BOOK_PRESENTATION_RUBRIC,
   BOOK_PRESENTATION_LEVEL_PERCENTAGES,
 } from '../../data/bookPresentationRubric.ts';
 import {
+  isScoreAssigned,
   validateRubric,
   calculateWeightedScore,
   getCriterionLevelPercentage,
@@ -14,6 +23,8 @@ import {
   getStudentConsecutiveLowScoreReminder,
   getEffectiveSessionRubric,
   getStudentEvaluationBreakdown,
+  getNextUnscoredCriterion,
+  applyCriterionScoreToStudents,
 } from '../rubricLogic.ts';
 import type { Classroom, EvaluationSession, Rubric } from '../../types.ts';
 import {
@@ -28,8 +39,8 @@ import {
   ALL_GRADE_TDE_RUBRIC_IDS,
 } from '../../services/RubrikService.ts';
 
-test('INITIAL_RUBRICS retains the 8 100-point 11th grade rubrics alongside the all-grade book rubric', () => {
-  assert.equal(INITIAL_RUBRICS.length, 9);
+test('INITIAL_RUBRICS retains the 8 100-point 11th grade rubrics alongside the 2 all-grade book presentation rubrics', () => {
+  assert.equal(INITIAL_RUBRICS.length, 10);
   const grade11Rubrics = INITIAL_RUBRICS.filter((r) => TDE_11_RUBRIC_IDS.has(r.id));
   assert.equal(grade11Rubrics.length, 8);
   for (const rubric of grade11Rubrics) {
@@ -73,39 +84,55 @@ test('normalizeGradeLevel and normalizeSubjectName handle common Turkish input v
   );
 });
 
-test('11th grade rubrics remain restricted while the book presentation rubric is shared across TDE grades', () => {
-  // 11. Sınıf + Türk Dili ve Edebiyatı -> 8 local + 1 common rubric
+test('11th grade rubrics remain restricted while both book presentation rubrics are shared across 9, 10, 11, and 12th grade TDE', () => {
+  // 11. Sınıf + Türk Dili ve Edebiyatı -> 8 local + 2 shared book rubrics = 10
   const matched11Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(matched11Tde.length, 9);
-  assert.equal(matched11Tde.some((r) => r.id === BOOK_PRESENTATION_RUBRIC_ID), true);
+  assert.equal(matched11Tde.length, 10);
+  assert.equal(
+    matched11Tde.some((r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC_ID),
+    true
+  );
+  assert.equal(
+    matched11Tde.some((r) => r.id === INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID),
+    true
+  );
 
-  // 10. Sınıf + Türk Dili ve Edebiyatı -> only the shared book rubric
+  // 10. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
   const matched10Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '10. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.deepEqual(matched10Tde.map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
+  assert.deepEqual(
+    matched10Tde.map((r) => r.id),
+    [...BOOK_PRESENTATION_RUBRIC_IDS]
+  );
 
-  // 9. Sınıf + Türk Dili ve Edebiyatı -> only the shared book rubric
+  // 9. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
   const matched9Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '9. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.deepEqual(matched9Tde.map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
+  assert.deepEqual(
+    matched9Tde.map((r) => r.id),
+    [...BOOK_PRESENTATION_RUBRIC_IDS]
+  );
 
-  // 12. Sınıf + Türk Dili ve Edebiyatı -> only the shared book rubric
+  // 12. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
   const matched12Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '12. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.deepEqual(matched12Tde.map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
+  assert.deepEqual(
+    matched12Tde.map((r) => r.id),
+    [...BOOK_PRESENTATION_RUBRIC_IDS]
+  );
 
   // 11. Sınıf + Matematik -> 0 rubrics
   const matched11Math = getRubricsByGradeAndSubject(
@@ -142,17 +169,20 @@ test('getRubricsForClassrooms filters rubrics by classroom gradeLevel and subjec
     academicYear: '2026-2027',
   };
 
-  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 9);
-  assert.deepEqual(getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).map((r) => r.id), [BOOK_PRESENTATION_RUBRIC_ID]);
+  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 10);
+  assert.deepEqual(
+    getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).map((r) => r.id),
+    [...BOOK_PRESENTATION_RUBRIC_IDS]
+  );
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Math]).length, 0);
   assert.deepEqual(
     getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde, cls10Tde]).map((r) => r.id),
-    [BOOK_PRESENTATION_RUBRIC_ID]
+    [...BOOK_PRESENTATION_RUBRIC_IDS]
   );
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, []).length, 0);
 });
 
-test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exception', () => {
+test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exceptions', () => {
   const math10Rubric: Rubric = {
     ...INITIAL_RUBRICS[0],
     id: 'rub-custom-math-10',
@@ -181,7 +211,7 @@ test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exce
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(for11Tde.length, 9);
+  assert.equal(for11Tde.length, 10);
   assert.equal(
     for11Tde.some((r) => r.id === 'rub-custom-math-10'),
     false
@@ -207,91 +237,257 @@ test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exce
   assert.equal(summary.length, 5);
 });
 
-test('book presentation rubric has 3-level (Evet - Kısmen - Hayır) 100-point structure and supports all TDE grades', () => {
-  const rubric = INITIAL_RUBRICS.find((r) => r.id === BOOK_PRESENTATION_RUBRIC_ID);
-  assert.ok(rubric);
-  assert.equal(ALL_GRADE_TDE_RUBRIC_IDS.has(rubric.id), true);
-  assert.equal(rubric.gradeLevel, 'Genel');
-  assert.equal(RubrikService.getEffectiveRubricGradeLevel(rubric), 'Genel');
-  assert.equal(RubrikService.getEffectiveRubricSubject(rubric), 'Türk Dili ve Edebiyatı');
-  assert.equal(validateRubric(rubric).isValid, true);
-  assert.equal(rubric.maxLevelPoints, 2);
-  assert.equal(rubric.criteria.length, 8);
+test('both Edebî Eser and Bilgilendirici Kitap rubrics have 7 criteria, 100 points, 3 levels (Evet %100 - Kısmen %50 - Hayır %0), and support grades 9-12 TDE', () => {
+  assert.equal(BOOK_PRESENTATION_RUBRICS.length, 2);
+
+  const literary = INITIAL_RUBRICS.find(
+    (r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC_ID
+  );
+  const informative = INITIAL_RUBRICS.find(
+    (r) => r.id === INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID
+  );
+  assert.ok(literary);
+  assert.ok(informative);
+
+  assert.equal(literary.title, 'Edebî Eser Okuma ve Sunum');
+  assert.equal(
+    informative.title,
+    'Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum'
+  );
+
+  // Check exact criterion titles and weights for Literary rubric
   assert.deepEqual(
-    rubric.criteria.map((c) => c.id),
+    literary.criteria.map((c) => [c.title, c.weight, c.maxPoints]),
     [
-      'crit-ks-1',
-      'crit-ks-2',
-      'crit-ks-3',
-      'crit-ks-4',
-      'crit-ks-5',
-      'crit-ks-6',
-      'crit-ks-7',
-      'crit-ks-8',
+      ['İçeriği ve temel anlamı kavrama', 20, 20],
+      ['Türe uygun edebî yapı, dil ve anlatımı çözümleme', 20, 20],
+      ['Yorumlama ve eleştirel değerlendirme', 20, 20],
+      ['Yorumları eserden örneklerle destekleme', 10, 10],
+      ['Türkçeyi doğru, açık ve akıcı kullanma', 10, 10],
+      ['Ses kullanımı ve dinleyiciyle iletişim', 10, 10],
+      ['Sunumu düzenleme ve süreyi yönetme', 10, 10],
     ]
   );
-  assert.deepEqual(rubric.criteria.map((c) => c.weight), [20, 20, 15, 15, 10, 10, 5, 5]);
-  assert.deepEqual(rubric.criteria.map((c) => c.maxPoints), [20, 20, 15, 15, 10, 10, 5, 5]);
-  assert.equal(new Set(rubric.criteria.map((c) => c.id)).size, rubric.criteria.length);
-  assert.ok(
-    rubric.criteria.every(
-      (c) =>
-        c.levels.length === 3 &&
-        c.levels[0].label === 'Hayır' &&
-        c.levels[0].points === 0 &&
-        c.levels[1].label === 'Kısmen' &&
-        c.levels[1].points === 1 &&
-        c.levels[2].label === 'Evet' &&
-        c.levels[2].points === 2
-    )
+
+  // Check exact criterion titles and weights for Informative rubric
+  assert.deepEqual(
+    informative.criteria.map((c) => [c.title, c.weight, c.maxPoints]),
+    [
+      ['Konuyu, amacı ve temel düşünceyi kavrama', 20, 20],
+      [
+        'Temel bilgileri, kavramları ve düşünceler arası ilişkileri açıklama',
+        20,
+        20,
+      ],
+      ['Eleştirel değerlendirme ve çıkarımda bulunma', 20, 20],
+      ['Bilgileri ve yorumları kitaptan örneklerle destekleme', 10, 10],
+      ['Türkçeyi doğru, açık ve akıcı kullanma', 10, 10],
+      ['Ses kullanımı ve dinleyiciyle iletişim', 10, 10],
+      ['Sunumu düzenleme ve süreyi yönetme', 10, 10],
+    ]
   );
-  assert.ok(rubric.description.includes('zorunlu kitap sunumu puanlama anahtarı değildir'));
+
+  for (const rubric of [literary, informative]) {
+    assert.equal(ALL_GRADE_TDE_RUBRIC_IDS.has(rubric.id), true);
+    assert.equal(rubric.gradeLevel, 'Genel');
+    assert.equal(RubrikService.getEffectiveRubricGradeLevel(rubric), 'Genel');
+    assert.equal(
+      RubrikService.getEffectiveRubricSubject(rubric),
+      'Türk Dili ve Edebiyatı'
+    );
+    assert.equal(validateRubric(rubric).isValid, true);
+    assert.equal(rubric.maxLevelPoints, 2);
+    assert.equal(rubric.criteria.length, 7);
+    assert.deepEqual(
+      rubric.criteria.map((c) => c.weight),
+      [20, 20, 20, 10, 10, 10, 10]
+    );
+    assert.deepEqual(
+      rubric.criteria.map((c) => c.maxPoints),
+      [20, 20, 20, 10, 10, 10, 10]
+    );
+    assert.equal(
+      new Set(rubric.criteria.map((c) => c.id)).size,
+      rubric.criteria.length
+    );
+
+    for (const c of rubric.criteria) {
+      assert.equal(c.levels.length, 3);
+      assert.equal(c.levels[0].label, 'Hayır');
+      assert.equal(c.levels[0].points, 0);
+      assert.equal(c.levels[1].label, 'Kısmen');
+      assert.equal(c.levels[1].points, 1);
+      assert.equal(c.levels[2].label, 'Evet');
+      assert.equal(c.levels[2].points, 2);
+
+      // Descriptions must be non-empty, observable, and mutually distinct
+      const descriptions = c.levels.map((l) => l.description.trim());
+      assert.ok(descriptions.every((d) => d.length >= 25));
+      assert.equal(new Set(descriptions).size, 3);
+
+      // Must NOT require comparison, visual usage, or speaking from memory
+      for (const desc of descriptions) {
+        const lower = desc.toLocaleLowerCase('tr-TR');
+        assert.equal(
+          lower.includes('karşılaştırma'),
+          false,
+          `${rubric.title} - ${c.title} karşılaştırma zorunluluğu içermemeli`
+        );
+        assert.equal(
+          lower.includes('görsel'),
+          false,
+          `${rubric.title} - ${c.title} görsel kullanımı zorunluluğu içermemeli`
+        );
+        assert.equal(
+          lower.includes('ezber'),
+          false,
+          `${rubric.title} - ${c.title} ezberden konuşma zorunluluğu içermemeli`
+        );
+      }
+    }
+
+    for (const grade of ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf']) {
+      assert.ok(
+        getRubricsByGradeAndSubject(
+          INITIAL_RUBRICS,
+          grade,
+          'Türk Dili ve Edebiyatı'
+        ).some((r) => r.id === rubric.id)
+      );
+      assert.ok(
+        getRubricsForClassrooms(INITIAL_RUBRICS, [
+          {
+            id: 'class-' + grade,
+            name: grade,
+            gradeLevel: grade,
+            subject: 'Türk Dili ve Edebiyatı',
+            academicYear: '2026-2027',
+          },
+        ]).some((r) => r.id === rubric.id)
+      );
+    }
+    assert.equal(
+      getRubricsByGradeAndSubject(INITIAL_RUBRICS, '10. Sınıf', 'Matematik').some(
+        (r) => r.id === rubric.id
+      ),
+      false
+    );
+    assert.equal(
+      getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Türkçe').some(
+        (r) => r.id === rubric.id
+      ),
+      false
+    );
+
+    // 3-level scoring & 100-point calculation:
+    // All Evet (%100 -> 2 points) = 100
+    assert.equal(
+      calculateWeightedScore(
+        rubric,
+        Object.fromEntries(rubric.criteria.map((c) => [c.id, 2]))
+      ).finalScoreOutOf100,
+      100
+    );
+    // All Kısmen (%50 -> 1 point: 10 + 10 + 10 + 5 + 5 + 5 + 5) = 50
+    assert.equal(
+      calculateWeightedScore(
+        rubric,
+        Object.fromEntries(rubric.criteria.map((c) => [c.id, 1]))
+      ).finalScoreOutOf100,
+      50
+    );
+    // All Hayır (%0 -> 0 points) = 0 (complete!)
+    const allNoResult = calculateWeightedScore(
+      rubric,
+      Object.fromEntries(rubric.criteria.map((c) => [c.id, 0]))
+    );
+    assert.equal(allNoResult.isComplete, true);
+    assert.equal(allNoResult.completedCriteriaCount, 7);
+    assert.equal(allNoResult.finalScoreOutOf100, 0);
+
+    // Mixed Evet (100%), Kısmen (50%), Hayır (0%) calculation:
+    // c1 (20) = Evet (20), c2 (20) = Kısmen (10), c3 (20) = Evet (20),
+    // c4 (10) = Kısmen (5), c5 (10) = Evet (10), c6 (10) = Hayır (0), c7 (10) = Kısmen (5) => 70
+    const mixedScores = {
+      [rubric.criteria[0].id]: 2,
+      [rubric.criteria[1].id]: 1,
+      [rubric.criteria[2].id]: 2,
+      [rubric.criteria[3].id]: 1,
+      [rubric.criteria[4].id]: 2,
+      [rubric.criteria[5].id]: 0,
+      [rubric.criteria[6].id]: 1,
+    };
+    const mixedResult = calculateWeightedScore(rubric, mixedScores);
+    assert.equal(mixedResult.isComplete, true);
+    assert.equal(mixedResult.finalScoreOutOf100, 70);
+
+    // Strict separation between Hayır (0 points) and not-yet-evaluated (null / undefined):
+    const unscoredLast = {
+      ...mixedScores,
+      [rubric.criteria[6].id]: null,
+    };
+    const partialResult = calculateWeightedScore(rubric, unscoredLast);
+    assert.equal(isScoreAssigned(0), true);
+    assert.equal(isScoreAssigned(null), false);
+    assert.equal(isScoreAssigned(undefined), false);
+    assert.equal(partialResult.isComplete, false);
+    assert.equal(partialResult.completedCriteriaCount, 6);
+    assert.equal(partialResult.finalScoreOutOf100, null);
+    assert.equal(
+      getNextUnscoredCriterion(rubric.criteria, unscoredLast)?.criterion.id,
+      rubric.criteria[6].id
+    );
+    assert.equal(
+      getNextUnscoredCriterion(rubric.criteria, mixedScores),
+      null
+    );
+
+    // Bulk fast evaluation ("Sadece Puanlanmamışlara Uygula") respects Hayır (0 points) as already scored:
+    const bulkEvaluations = applyCriterionScoreToStudents(
+      {
+        'stu-hayir': {
+          studentId: 'stu-hayir',
+          criterionScores: { [rubric.criteria[0].id]: 0 },
+          note: '',
+          tags: [],
+          updatedAt: '2026-10-27',
+        },
+        'stu-unscored': {
+          studentId: 'stu-unscored',
+          criterionScores: {},
+          note: '',
+          tags: [],
+          updatedAt: '2026-10-27',
+        },
+      },
+      ['stu-hayir', 'stu-unscored'],
+      rubric.criteria[0].id,
+      2,
+      '2026-10-27T12:00:00Z',
+      true // onlyUnscored = true
+    );
+    assert.equal(
+      bulkEvaluations['stu-hayir'].criterionScores[rubric.criteria[0].id],
+      0,
+      'Hayır (0 puan) verilmiş öğrencinin puanı puansız sayılmamalı ve ezilmemeli'
+    );
+    assert.equal(
+      bulkEvaluations['stu-unscored'].criterionScores[rubric.criteria[0].id],
+      2,
+      'Henüz değerlendirilmemiş öğrenciye toplu puan atanmalı'
+    );
+  }
 
   // Other 8 rubrics remain 5-level (0..4)
-  const otherRubrics = INITIAL_RUBRICS.filter((r) => r.id !== BOOK_PRESENTATION_RUBRIC_ID);
+  const otherRubrics = INITIAL_RUBRICS.filter(
+    (r) => !BOOK_PRESENTATION_RUBRIC_IDS.includes(r.id)
+  );
   assert.equal(otherRubrics.length, 8);
   assert.ok(
     otherRubrics.every(
       (r) => r.maxLevelPoints === 4 && r.criteria.every((c) => c.levels.length === 5)
     )
   );
-
-  for (const grade of ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf']) {
-    assert.ok(getRubricsByGradeAndSubject(INITIAL_RUBRICS, grade, 'Türk Dili ve Edebiyatı').some((r) => r.id === rubric.id));
-    assert.ok(getRubricsForClassrooms(INITIAL_RUBRICS, [{
-      id: 'class-' + grade,
-      name: grade,
-      gradeLevel: grade,
-      subject: 'Türk Dili ve Edebiyatı',
-      academicYear: '2026-2027',
-    }]).some((r) => r.id === rubric.id));
-  }
-  assert.equal(getRubricsByGradeAndSubject(INITIAL_RUBRICS, '10. Sınıf', 'Matematik').some((r) => r.id === rubric.id), false);
-  assert.equal(getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Türkçe').some((r) => r.id === rubric.id), false);
-
-  // All Evet (%100 -> 2 points) = 100
-  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 2]))).finalScoreOutOf100, 100);
-  // All Kısmen (%50 -> 1 point with Math.ceil for fractional criteria: 10 + 10 + 8 + 8 + 5 + 5 + 3 + 3) = 52
-  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 1]))).finalScoreOutOf100, 52);
-  // All Hayır (%0 -> 0 points) = 0
-  assert.equal(calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c) => [c.id, 0]))).finalScoreOutOf100, 0);
-
-  // Mixed Evet (100%), Kısmen (50% rounded up to integer), Hayır (0%) calculation:
-  // crit-ks-1 (20) = Evet (20), crit-ks-2 (20) = Kısmen (10), crit-ks-3 (15) = Kısmen (8),
-  // crit-ks-4 (15) = Hayır (0), crit-ks-5 (10) = Evet (10), crit-ks-6 (10) = Hayır (0),
-  // crit-ks-7 (5) = Kısmen (3), crit-ks-8 (5) = Evet (5) => 20 + 10 + 8 + 0 + 10 + 0 + 3 + 5 = 56
-  const mixedResult = calculateWeightedScore(rubric, {
-    'crit-ks-1': 2,
-    'crit-ks-2': 1,
-    'crit-ks-3': 1,
-    'crit-ks-4': 0,
-    'crit-ks-5': 2,
-    'crit-ks-6': 0,
-    'crit-ks-7': 1,
-    'crit-ks-8': 2,
-  });
-  assert.equal(mixedResult.isComplete, true);
-  assert.equal(mixedResult.finalScoreOutOf100, 56);
 });
 
 test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes produce valid %PDF-1.4 documents with Turkish Unicode text', async () => {
@@ -567,28 +763,34 @@ test('academicTermLogic derives 2024-2025 Güz / 2024-2025 Bahar terms, filters 
 test('3-level book presentation rubric helpers, low-score reminder, and historical rubricSnapshot preservation', () => {
   assert.deepEqual(BOOK_PRESENTATION_LEVEL_PERCENTAGES, { 0: 0, 1: 50, 2: 100 });
 
-  for (const crit of BOOK_PRESENTATION_RUBRIC.criteria) {
-    // Hayır = %0, Kısmen = %50, Evet = %100
-    assert.equal(getCriterionLevelPercentage(crit, 0), 0);
-    assert.equal(getCriterionLevelPercentage(crit, 1), 50);
-    assert.equal(getCriterionLevelPercentage(crit, 2), 100);
+  for (const rubric of [
+    LITERARY_BOOK_PRESENTATION_RUBRIC,
+    INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+  ]) {
+    for (const crit of rubric.criteria) {
+      // Hayır = %0, Kısmen = %50, Evet = %100
+      assert.equal(getCriterionLevelPercentage(crit, 0), 0);
+      assert.equal(getCriterionLevelPercentage(crit, 1), 50);
+      assert.equal(getCriterionLevelPercentage(crit, 2), 100);
 
-    // Earned points out of criterion weight (fractional points rounded up to next integer)
-    assert.equal(getCriterionEarnedPoints(crit, 0), 0);
-    assert.equal(getCriterionEarnedPoints(crit, 1), Math.ceil(crit.weight * 0.5));
-    assert.equal(getCriterionEarnedPoints(crit, 2), crit.weight);
+      // Earned points out of criterion weight (10 or 5 for 20-pt and 10-pt criteria)
+      assert.equal(getCriterionEarnedPoints(crit, 0), 0);
+      assert.equal(getCriterionEarnedPoints(crit, 1), crit.weight * 0.5);
+      assert.equal(getCriterionEarnedPoints(crit, 2), crit.weight);
+    }
   }
 
   // Consecutive Evet (2 points = %100) must NOT trigger low-score reminder
   const rubricsById: Record<string, Rubric> = {
-    [BOOK_PRESENTATION_RUBRIC.id]: BOOK_PRESENTATION_RUBRIC,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.id]: LITERARY_BOOK_PRESENTATION_RUBRIC,
+    [INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id]: INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
   };
   const allEvetSession: EvaluationSession = {
     id: 'ses-ks-evet',
-    title: 'Kitap Sunumu - Tam Puan',
+    title: 'Edebî Eser Sunumu - Tam Puan',
     classId: 'cls-10a',
-    rubricId: BOOK_PRESENTATION_RUBRIC.id,
-    date: '2026-10-26',
+    rubricId: LITERARY_BOOK_PRESENTATION_RUBRIC.id,
+    date: '2026-10-27',
     status: 'in_progress',
     mode: 'individual',
     groups: [],
@@ -597,11 +799,11 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
       'stu-1': {
         studentId: 'stu-1',
         criterionScores: Object.fromEntries(
-          BOOK_PRESENTATION_RUBRIC.criteria.map((c) => [c.id, 2])
+          LITERARY_BOOK_PRESENTATION_RUBRIC.criteria.map((c) => [c.id, 2])
         ),
         note: '',
         tags: [],
-        updatedAt: '2026-10-26',
+        updatedAt: '2026-10-27',
       },
     },
   };
@@ -621,14 +823,14 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
       'stu-1': {
         studentId: 'stu-1',
         criterionScores: {
-          'crit-ks-1': 1,
-          'crit-ks-2': 1,
-          'crit-ks-3': 1,
-          'crit-ks-4': 2,
+          'crit-ees-1': 1,
+          'crit-ees-2': 1,
+          'crit-ees-3': 1,
+          'crit-ees-4': 2,
         },
         note: '',
         tags: [],
-        updatedAt: '2026-10-26',
+        updatedAt: '2026-10-27',
       },
     },
   };
@@ -642,12 +844,12 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
   assert.equal(kismenReminder.triggerType, 'consecutive_criteria');
   assert.equal(kismenReminder.consecutiveCount, 3);
 
-  // Historical session with frozen 5-level rubricSnapshot remains intact and keeps its exact score
-  const legacySnapshot: Rubric = {
-    ...BOOK_PRESENTATION_RUBRIC,
+  // 1. Historical session with frozen 5-level rubricSnapshot remains intact and keeps its exact score
+  const legacy5LevelSnapshot: Rubric = {
+    ...LEGACY_BOOK_PRESENTATION_RUBRIC,
     maxLevelPoints: 4,
     version: 1,
-    criteria: BOOK_PRESENTATION_RUBRIC.criteria.map((c) => ({
+    criteria: LEGACY_BOOK_PRESENTATION_RUBRIC.criteria.map((c) => ({
       ...c,
       levels: [
         { level: 0, label: 'Gözlenmedi (0)', points: 0, description: 'Yok' },
@@ -658,12 +860,12 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
       ],
     })),
   };
-  const historicalSession: EvaluationSession = {
-    id: 'ses-legacy-ks',
+  const historical5LevelSession: EvaluationSession = {
+    id: 'ses-legacy-ks-v1',
     title: 'Geçmiş Kitap Sunumu (5 Dereceli Snapshot)',
     classId: 'cls-10a',
-    rubricId: BOOK_PRESENTATION_RUBRIC.id,
-    rubricSnapshot: legacySnapshot,
+    rubricId: LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+    rubricSnapshot: legacy5LevelSnapshot,
     date: '2026-09-15',
     status: 'completed',
     mode: 'individual',
@@ -673,7 +875,7 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
       'stu-1': {
         studentId: 'stu-1',
         criterionScores: Object.fromEntries(
-          legacySnapshot.criteria.map((c) => [c.id, 3])
+          legacy5LevelSnapshot.criteria.map((c) => [c.id, 3])
         ), // 3/4 = 75% => 75 points
         note: 'Geçmiş değerlendirme kaydı',
         tags: [],
@@ -682,14 +884,62 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
     },
   };
 
-  const effectiveRubric = getEffectiveSessionRubric(historicalSession, rubricsById);
-  assert.ok(effectiveRubric);
-  assert.equal(effectiveRubric.maxLevelPoints, 4);
-  const breakdown = getStudentEvaluationBreakdown(
-    effectiveRubric,
-    historicalSession.evaluations['stu-1']
+  const effectiveV1Rubric = getEffectiveSessionRubric(
+    historical5LevelSession,
+    rubricsById
   );
-  assert.equal(breakdown.effectiveCalc.finalScoreOutOf100, 75);
+  assert.ok(effectiveV1Rubric);
+  assert.equal(effectiveV1Rubric.maxLevelPoints, 4);
+  assert.equal(effectiveV1Rubric.criteria.length, 8);
+  const breakdownV1 = getStudentEvaluationBreakdown(
+    effectiveV1Rubric,
+    historical5LevelSession.evaluations['stu-1']
+  );
+  assert.equal(breakdownV1.effectiveCalc.finalScoreOutOf100, 75);
+
+  // 2. Historical session referencing 'rub-tde-kitap-sunumu' WITHOUT a prior snapshot still resolves the 8-criterion legacy rubric
+  const historicalV2SessionWithoutSnapshot: EvaluationSession = {
+    id: 'ses-legacy-ks-v2',
+    title: 'Geçmiş Kitap Sunumu (8 Ölçütlü V2)',
+    classId: 'cls-10a',
+    rubricId: LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+    date: '2026-10-26',
+    status: 'completed',
+    mode: 'individual',
+    groups: [],
+    generalSessionNote: '',
+    evaluations: {
+      'stu-1': {
+        studentId: 'stu-1',
+        criterionScores: {
+          'crit-ks-1': 2,
+          'crit-ks-2': 1,
+          'crit-ks-3': 1,
+          'crit-ks-4': 0,
+          'crit-ks-5': 2,
+          'crit-ks-6': 0,
+          'crit-ks-7': 1,
+          'crit-ks-8': 2,
+        }, // 20 + 10 + 8 + 0 + 10 + 0 + 3 + 5 = 56
+        note: '8 ölçütlü eski oturum',
+        tags: [],
+        updatedAt: '2026-10-26',
+      },
+    },
+  };
+  const effectiveV2Rubric = getEffectiveSessionRubric(
+    historicalV2SessionWithoutSnapshot,
+    rubricsById
+  );
+  assert.ok(effectiveV2Rubric);
+  assert.equal(effectiveV2Rubric.id, LEGACY_BOOK_PRESENTATION_RUBRIC_ID);
+  assert.equal(effectiveV2Rubric.criteria.length, 8);
+  const breakdownV2 = getStudentEvaluationBreakdown(
+    effectiveV2Rubric,
+    historicalV2SessionWithoutSnapshot.evaluations['stu-1']
+  );
+  assert.equal(breakdownV2.effectiveCalc.isComplete, true);
+  assert.equal(breakdownV2.effectiveCalc.finalScoreOutOf100, 56);
 });
 
 test('multi-class evaluation sessions isolate students and groups per classroom in both individual and group evaluation modes', async () => {

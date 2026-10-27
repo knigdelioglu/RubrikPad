@@ -10,6 +10,10 @@ import type {
   ParsedRosterRow,
   EvaluationActionHistoryEntry,
 } from '../types.ts';
+import {
+  LEGACY_BOOK_PRESENTATION_RUBRIC,
+  LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+} from '../data/bookPresentationRubric.ts';
 
 export const MAX_STUDENT_AUDIT_LOG_ENTRIES = 50;
 export const MAX_UNDO_HISTORY_ENTRIES = 30;
@@ -98,7 +102,13 @@ export function getEffectiveSessionRubric(
   if (session.rubricSnapshot && session.rubricSnapshot.id === session.rubricId) {
     return session.rubricSnapshot;
   }
-  return rubricsById[session.rubricId] || null;
+  if (rubricsById[session.rubricId]) {
+    return rubricsById[session.rubricId];
+  }
+  if (session.rubricId === LEGACY_BOOK_PRESENTATION_RUBRIC_ID) {
+    return freezeRubricSnapshot(LEGACY_BOOK_PRESENTATION_RUBRIC);
+  }
+  return null;
 }
 
 /**

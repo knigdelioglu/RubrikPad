@@ -98,6 +98,12 @@ import {
   INITIAL_SESSIONS,
 } from '../data/seedData.ts';
 import {
+  LITERARY_BOOK_PRESENTATION_RUBRIC,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+  LEGACY_BOOK_PRESENTATION_RUBRIC,
+  LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+} from '../data/bookPresentationRubric.ts';
+import {
   generatePaginatedSessionPdfBytes,
   decodePdfTextWithToUnicode,
   normalizePdfTextLine,
@@ -3231,14 +3237,14 @@ test('Focus Mode (Odak Modu): resolveFocusedCriterionIndex, getNextFocusedCriter
   assert.equal(summary.steps[3].scoreLabel, '20/25');
 });
 
-test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: 8 grade-11 rubrics and 1 shared book rubric validate', async () => {
+test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: 8 grade-11 rubrics and 2 shared book rubrics validate', async () => {
   // 1. Classrooms, students, and sessions seed arrays must be completely empty
   assert.deepEqual(INITIAL_CLASSROOMS, []);
   assert.deepEqual(INITIAL_STUDENTS, []);
   assert.deepEqual(INITIAL_SESSIONS, []);
 
-  // 2. Verify the original 8 course-specific rubrics without changing their original order
-  assert.equal(INITIAL_RUBRICS.length, 9);
+  // 2. Verify the original 8 course-specific rubrics + 2 book presentation rubrics without changing their order
+  assert.equal(INITIAL_RUBRICS.length, 10);
 
   const expectedSpecs: Array<{
     title: string;
@@ -3552,5 +3558,144 @@ test('Evaluation Session Lifecycle: archiveEvaluationSession, deleteEvaluationSe
   assert.equal(remaining.length, 1);
   assert.equal(remaining[0].id, 'ses-1');
 });
+
+test('Regression: purgeSyntheticSeedDataSync upgrades persisted catalog to the 2 new book rubrics while freezing legacy rub-tde-kitap-sunumu session snapshots and preserving scores', () => {
+  const mockStore = new Map<string, string>();
+  const prevWindow = (globalThis as unknown as { window?: unknown }).window;
+  (globalThis as unknown as { window: unknown }).window = {
+    localStorage: {
+      getItem: (k: string) => mockStore.get(k) ?? null,
+      setItem: (k: string, v: string) => mockStore.set(k, v),
+      removeItem: (k: string) => mockStore.delete(k),
+    },
+  };
+
+  try {
+    const existingClassroom: Classroom = {
+      id: 'cls-10b',
+      name: '10/B',
+      gradeLevel: '10. Sınıf',
+      subject: 'Türk Dili ve Edebiyatı',
+      academicYear: '2026-2027',
+    };
+    const existingStudent: Student = {
+      id: 'stu-10b-1',
+      studentNumber: '214',
+      firstName: 'Selin',
+      lastName: 'Yıldız',
+      fullName: 'Selin Yıldız',
+      classId: 'cls-10b',
+    };
+    // Legacy session without rubricSnapshot that used the old 8-criterion 'rub-tde-kitap-sunumu'
+    const legacySession: EvaluationSession = {
+      id: 'ses-legacy-book-1',
+      title: '1. Dönem Kitap Sunumu',
+      classId: 'cls-10b',
+      rubricId: LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+      date: '2026-10-20',
+      status: 'completed',
+      mode: 'individual',
+      generalSessionNote: 'Eski oturum notu korundu',
+      groups: [],
+      evaluations: {
+        'stu-10b-1': {
+          studentId: 'stu-10b-1',
+          criterionScores: {
+            'crit-ks-1': 2,
+            'crit-ks-2': 2,
+            'crit-ks-3': 1,
+            'crit-ks-4': 1,
+            'crit-ks-5': 2,
+            'crit-ks-6': 2,
+            'crit-ks-7': 2,
+            'crit-ks-8': 0,
+          }, // 20 + 20 + 8 + 8 + 10 + 10 + 5 + 0 = 81
+          note: 'Eski öğrenci değerlendirme notu',
+          tags: ['Aktif Katılım'],
+          updatedAt: '2026-10-20T09:00:00Z',
+        },
+      },
+    };
+
+    const persistedBundle = createVerifiedBackupBundle({
+      classrooms: [existingClassroom],
+      students: [existingStudent],
+      rubrics: [LEGACY_BOOK_PRESENTATION_RUBRIC],
+      sessions: [legacySession],
+    });
+    mockStore.set(STORAGE_KEY, JSON.stringify(persistedBundle));
+
+    purgeSyntheticSeedDataSync(INITIAL_RUBRICS);
+
+    const updatedRaw = mockStore.get(STORAGE_KEY);
+    assert.ok(updatedRaw);
+    const verified = verifyAndParseBackupBundle(updatedRaw);
+    assert.equal(verified.isValid, true);
+    assert.ok(verified.state);
+
+    // 1. User classrooms and students are preserved
+    assert.equal(verified.state.classrooms.length, 1);
+    assert.equal(verified.state.classrooms[0].id, 'cls-10b');
+    assert.equal(verified.state.students.length, 1);
+    assert.equal(verified.state.students[0].id, 'stu-10b-1');
+
+    // 2. Active rubrics catalog now has both new 7-criterion book rubrics and no longer lists the old unedited single rubric
+    assert.equal(
+      verified.state.rubrics.some(
+        (r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC.id
+      ),
+      true
+    );
+    assert.equal(
+      verified.state.rubrics.some(
+        (r) => r.id === INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id
+      ),
+      true
+    );
+    assert.equal(
+      verified.state.rubrics.some(
+        (r) => r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID
+      ),
+      false
+    );
+
+    // 3. Legacy session has its 8-criterion rubricSnapshot frozen and its 81-point score is 100% preserved
+    const preservedSession = verified.state.sessions[0];
+    assert.equal(preservedSession.id, 'ses-legacy-book-1');
+    assert.ok(preservedSession.rubricSnapshot);
+    assert.equal(
+      preservedSession.rubricSnapshot.id,
+      LEGACY_BOOK_PRESENTATION_RUBRIC_ID
+    );
+    assert.equal(preservedSession.rubricSnapshot.criteria.length, 8);
+
+    const rubricsById = Object.fromEntries(
+      verified.state.rubrics.map((r) => [r.id, r])
+    );
+    const effectiveRubric = getEffectiveSessionRubric(
+      preservedSession,
+      rubricsById
+    );
+    assert.ok(effectiveRubric);
+    assert.equal(effectiveRubric.criteria.length, 8);
+    const breakdown = getStudentEvaluationBreakdown(
+      effectiveRubric,
+      preservedSession.evaluations['stu-10b-1']
+    );
+    assert.equal(breakdown.effectiveCalc.isComplete, true);
+    assert.equal(breakdown.effectiveCalc.finalScoreOutOf100, 81);
+    assert.equal(
+      preservedSession.evaluations['stu-10b-1'].note,
+      'Eski öğrenci değerlendirme notu'
+    );
+  } finally {
+    if (prevWindow === undefined) {
+      delete (globalThis as unknown as { window?: unknown }).window;
+    } else {
+      (globalThis as unknown as { window: unknown }).window = prevWindow;
+    }
+  }
+});
+
 
 

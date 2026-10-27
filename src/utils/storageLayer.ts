@@ -14,6 +14,11 @@ import {
   isScoreAssigned,
   splitTurkishFullName,
 } from './rubricLogic.ts';
+import {
+  LEGACY_BOOK_PRESENTATION_RUBRIC,
+  LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+  BOOK_PRESENTATION_RUBRIC_IDS,
+} from '../data/bookPresentationRubric.ts';
 
 export const CURRENT_SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'rubrikpad_state_v3';
@@ -1566,6 +1571,8 @@ export function migrateV2ToV3(raw: Partial<AppDataState>): AppDataState {
       };
     } else if (matchingRubric) {
       snapshot = freezeRubricSnapshot(matchingRubric);
+    } else if (ses.rubricId === LEGACY_BOOK_PRESENTATION_RUBRIC_ID) {
+      snapshot = freezeRubricSnapshot(LEGACY_BOOK_PRESENTATION_RUBRIC);
     }
 
     const classIds =
@@ -3071,19 +3078,44 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
         }
 
         const seedById = new Map(seedRubrics.map((sr) => [sr.id, sr]));
-        let gradeBackfilled = false;
-        const syncedRubrics = cleaned.rubrics.map((r) => {
-          const seedMatch = seedById.get(r.id);
+        const hasNewBookSeedRubrics = BOOK_PRESENTATION_RUBRIC_IDS.every((id) =>
+          seedById.has(id)
+        );
+        const legacyBookRubricInState = cleaned.rubrics.find(
+          (r) => r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID
+        );
+
+        let sessionsUpdated = false;
+        const syncedSessions = cleaned.sessions.map((ses) => {
           if (
-            seedMatch &&
-            r.id === 'rub-tde-kitap-sunumu' &&
-            (r.maxLevelPoints === 4 || (r.version ?? 1) < (seedMatch.version ?? 2)) &&
-            r.criteria.length === seedMatch.criteria.length &&
-            r.criteria.every((c) => c.levels.length === 5)
+            ses.rubricId === LEGACY_BOOK_PRESENTATION_RUBRIC_ID &&
+            (!ses.rubricSnapshot ||
+              ses.rubricSnapshot.id !== LEGACY_BOOK_PRESENTATION_RUBRIC_ID)
           ) {
-            gradeBackfilled = true;
-            return JSON.parse(JSON.stringify(seedMatch)) as Rubric;
+            sessionsUpdated = true;
+            return {
+              ...ses,
+              rubricSnapshot: freezeRubricSnapshot(
+                legacyBookRubricInState || LEGACY_BOOK_PRESENTATION_RUBRIC
+              ),
+            };
           }
+          return ses;
+        });
+
+        let gradeBackfilled = false;
+        const filteredRubrics = hasNewBookSeedRubrics
+          ? cleaned.rubrics.filter((r) => {
+              if (r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID) {
+                gradeBackfilled = true;
+                return false;
+              }
+              return true;
+            })
+          : cleaned.rubrics;
+
+        const syncedRubrics = filteredRubrics.map((r) => {
+          const seedMatch = seedById.get(r.id);
           if (seedMatch?.gradeLevel && r.gradeLevel !== seedMatch.gradeLevel) {
             gradeBackfilled = true;
             return { ...r, gradeLevel: seedMatch.gradeLevel };
@@ -3096,10 +3128,16 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
           (sr) => !existingIds.has(sr.id)
         );
 
-        if (hadSynthetic || missingSeedRubrics.length > 0 || gradeBackfilled) {
+        if (
+          hadSynthetic ||
+          missingSeedRubrics.length > 0 ||
+          gradeBackfilled ||
+          sessionsUpdated
+        ) {
           const nextState: AppDataState = {
             ...cleaned,
             rubrics: [...syncedRubrics, ...missingSeedRubrics],
+            sessions: syncedSessions,
           };
           const newBundle = createVerifiedBackupBundle(nextState);
           storage.setItem(STORAGE_KEY, JSON.stringify(newBundle));
@@ -3167,20 +3205,46 @@ export async function purgeSyntheticSeedDataAsync(
                 }
 
                 const seedById = new Map(seedRubrics.map((sr) => [sr.id, sr]));
-                let gradeBackfilled = false;
-                const syncedRubrics = cleaned.rubrics.map((r) => {
-                  const seedMatch = seedById.get(r.id);
+                const hasNewBookSeedRubrics = BOOK_PRESENTATION_RUBRIC_IDS.every(
+                  (id) => seedById.has(id)
+                );
+                const legacyBookRubricInState = cleaned.rubrics.find(
+                  (r) => r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID
+                );
+
+                let sessionsUpdated = false;
+                const syncedSessions = cleaned.sessions.map((ses) => {
                   if (
-                    seedMatch &&
-                    r.id === 'rub-tde-kitap-sunumu' &&
-                    (r.maxLevelPoints === 4 ||
-                      (r.version ?? 1) < (seedMatch.version ?? 2)) &&
-                    r.criteria.length === seedMatch.criteria.length &&
-                    r.criteria.every((c) => c.levels.length === 5)
+                    ses.rubricId === LEGACY_BOOK_PRESENTATION_RUBRIC_ID &&
+                    (!ses.rubricSnapshot ||
+                      ses.rubricSnapshot.id !==
+                        LEGACY_BOOK_PRESENTATION_RUBRIC_ID)
                   ) {
-                    gradeBackfilled = true;
-                    return JSON.parse(JSON.stringify(seedMatch)) as Rubric;
+                    sessionsUpdated = true;
+                    return {
+                      ...ses,
+                      rubricSnapshot: freezeRubricSnapshot(
+                        legacyBookRubricInState ||
+                          LEGACY_BOOK_PRESENTATION_RUBRIC
+                      ),
+                    };
                   }
+                  return ses;
+                });
+
+                let gradeBackfilled = false;
+                const filteredRubrics = hasNewBookSeedRubrics
+                  ? cleaned.rubrics.filter((r) => {
+                      if (r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID) {
+                        gradeBackfilled = true;
+                        return false;
+                      }
+                      return true;
+                    })
+                  : cleaned.rubrics;
+
+                const syncedRubrics = filteredRubrics.map((r) => {
+                  const seedMatch = seedById.get(r.id);
                   if (
                     seedMatch?.gradeLevel &&
                     r.gradeLevel !== seedMatch.gradeLevel
@@ -3199,11 +3263,13 @@ export async function purgeSyntheticSeedDataAsync(
                 if (
                   hadSynthetic ||
                   missingSeedRubrics.length > 0 ||
-                  gradeBackfilled
+                  gradeBackfilled ||
+                  sessionsUpdated
                 ) {
                   const nextState: AppDataState = {
                     ...cleaned,
                     rubrics: [...syncedRubrics, ...missingSeedRubrics],
+                    sessions: syncedSessions,
                   };
                   const newBundle = createVerifiedBackupBundle(nextState);
                   store.put(newBundle, 'latest');

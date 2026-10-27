@@ -1,9 +1,22 @@
-import type { Rubric, RubricLevel } from '../types.ts';
+import type { Rubric, RubricCriterion, RubricLevel } from '../types.ts';
 
-export const BOOK_PRESENTATION_RUBRIC_ID = 'rub-tde-kitap-sunumu';
+export const LITERARY_BOOK_PRESENTATION_RUBRIC_ID = 'rub-tde-edebi-eser-sunumu';
+export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID =
+  'rub-tde-bilgilendirici-kitap-sunumu';
+export const LEGACY_BOOK_PRESENTATION_RUBRIC_ID = 'rub-tde-kitap-sunumu';
 
 /**
- * MEB ders kitaplarındaki 3 dereceli değerlendirme formlarına (Evet – Kısmen – Hayır)
+ * Varsayılan kitap sunumu rubrik kimliği (Edebî Eser Okuma ve Sunum).
+ */
+export const BOOK_PRESENTATION_RUBRIC_ID = LITERARY_BOOK_PRESENTATION_RUBRIC_ID;
+
+export const BOOK_PRESENTATION_RUBRIC_IDS: readonly string[] = [
+  LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
+] as const;
+
+/**
+ * 3 dereceli değerlendirme ölçeğine (Evet – Kısmen – Hayır)
  * uygun puan karşılıkları: Evet = %100, Kısmen = %50, Hayır = %0.
  */
 export const BOOK_PRESENTATION_LEVEL_PERCENTAGES: Record<number, number> = {
@@ -12,12 +25,6 @@ export const BOOK_PRESENTATION_LEVEL_PERCENTAGES: Record<number, number> = {
   2: 100,
 };
 
-/**
- * MEB TYMM Eleştirel Okuma, Dinleme/İzleme Formu (Ek-1) ve ders kitaplarındaki
- * 3 dereceli (Evet – Kısmen – Hayır) değerlendirme formları dikkate alınarak
- * kitap sunumuna uyarlanmış rubrik.
- * Bu 100 puanlık dağılım uygulamaya özeldir; MEB'in zorunlu puan anahtarı değildir.
- */
 function levels(no: string, partial: string, yes: string): RubricLevel[] {
   return [
     {
@@ -41,9 +48,207 @@ function levels(no: string, partial: string, yes: string): RubricLevel[] {
   ];
 }
 
-/** Bütün sınıf düzeylerindeki Türk Dili ve Edebiyatı şubelerinde kullanılabilir. */
-export const BOOK_PRESENTATION_RUBRIC: Rubric = {
-  id: BOOK_PRESENTATION_RUBRIC_ID,
+function createSharedPresentationCriteria(prefix: 'ees' | 'bks'): RubricCriterion[] {
+  return [
+    {
+      id: `crit-${prefix}-5`,
+      title: 'Türkçeyi doğru, açık ve akıcı kullanma',
+      category: 'Sözlü Anlatım ve Sunum',
+      weight: 10,
+      maxPoints: 10,
+      required: true,
+      levels: levels(
+        'Anlatım kopuk ilerlemiş; sözcük seçimi, telaffuz ve cümle kurgusu anlaşılırlığı güçleştirecek düzeyde sorunlu olmuştur.',
+        'Anlatım genel olarak anlaşılır olmakla birlikte sık tekrarlar, anlatım kusurları veya akıcılığı azaltan duraksamalar görülmüştür.',
+        'Konuya uygun söz varlığıyla Türkçenin kurallarına uygun, açık, anlaşılır ve akıcı bir anlatım sergilenmiştir.'
+      ),
+    },
+    {
+      id: `crit-${prefix}-6`,
+      title: 'Ses kullanımı ve dinleyiciyle iletişim',
+      category: 'Sözlü Anlatım ve Sunum',
+      weight: 10,
+      maxPoints: 10,
+      required: true,
+      levels: levels(
+        'Ses dinleyicilerin duyabileceği açıklıkta kullanılmamış; tekdüze anlatım nedeniyle dinleyiciyle iletişim kurulamamıştır.',
+        'Ses duyulabilir düzeydedir ancak vurgu, tonlama ve göz teması sunum boyunca kısmen korunabilmiştir.',
+        'Ses tonu, vurgu ve tonlama anlamı destekleyecek biçimde ayarlanmış; göz teması ve doğal duruşla dinleyiciyle canlı bir iletişim kurulmuştur.'
+      ),
+    },
+    {
+      id: `crit-${prefix}-7`,
+      title: 'Sunumu düzenleme ve süreyi yönetme',
+      category: 'Sözlü Anlatım ve Sunum',
+      weight: 10,
+      maxPoints: 10,
+      required: true,
+      levels: levels(
+        'Sunumda giriş, gelişme ve sonuç düzeni belirsiz kalmış; süre çok aşılmış ya da sunum tamamlanamamıştır.',
+        'Sunumun temel bölümleri bulunmakla birlikte geçişlerde veya bölümlere ayrılan sürede dengesizlikler yaşanmıştır.',
+        'Sunum giriş, gelişme ve sonuç bütünlüğü içinde tutarlı bir sırayla yürütülmüş ve ayrılan sürede dengeli biçimde tamamlanmıştır.'
+      ),
+    },
+  ];
+}
+
+/**
+ * 1. Edebî Eser Okuma ve Sunum Rubriği
+ * Roman, hikâye, şiir, tiyatro ve diğer edebî türler için 7 ölçütlü, 100 puanlık, 3 dereceli (Evet %100, Kısmen %50, Hayır %0) rubrik.
+ * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
+ */
+export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
+  id: LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+  title: 'Edebî Eser Okuma ve Sunum',
+  subject: 'Türk Dili ve Edebiyatı',
+  gradeLevel: 'Genel',
+  description:
+    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin okuma ve sunum süreçlerini; içeriği kavrama, türe özgü yapı ve anlatımı çözümleme, eleştirel değerlendirme, eserden örneklerle destekleme ve sözlü sunum becerileri doğrultusunda 3 dereceli (Evet %100, Kısmen %50, Hayır %0) ölçekle değerlendiren 7 ölçütlü, 100 puanlık rubrik.',
+  maxLevelPoints: 2,
+  createdAt: '2026-10-27',
+  version: 3,
+  criteria: [
+    {
+      id: 'crit-ees-1',
+      title: 'İçeriği ve temel anlamı kavrama',
+      category: 'Eseri Anlama ve Çözümleme',
+      weight: 20,
+      maxPoints: 20,
+      required: true,
+      levels: levels(
+        'Eserin konusu, izleği (teması) veya temel anlamı doğru aktarılmamış ya da hiç açıklanmamıştır.',
+        'Eserin konusu veya izleği genel hatlarıyla belirtilmiş ancak temel anlam bütünlüğü eksik ya da yüzeysel aktarılmıştır.',
+        'Eserin türüne göre konusu, izleği (teması) ve temel anlamı doğru, açık ve bütünlüklü biçimde açıklanmıştır.'
+      ),
+    },
+    {
+      id: 'crit-ees-2',
+      title: 'Türe uygun edebî yapı, dil ve anlatımı çözümleme',
+      category: 'Eseri Anlama ve Çözümleme',
+      weight: 20,
+      maxPoints: 20,
+      required: true,
+      levels: levels(
+        'Eserin türüne özgü yapı unsurlarına (anlatma/göstermeye dayalı türlerde kurgu, kişiler, çatışma, zaman-mekân; şiirde söyleyici, ahenk ve imge düzeni vb.) veya dil ve anlatım özelliklerine değinilmemiştir.',
+        'Eserin türüne özgü bazı yapı veya dil ve anlatım özellikleri sıralanmış ancak bunların eserin anlamıyla ilişkisi kısmen kurulmuştur.',
+        'Eserin türüne özgü yapı unsurları (kurgu, kişiler/söyleyici, çatışma, ahenk, imge veya sahneleme özellikleri) ile dil ve üslup özellikleri anlamla ilişkilendirilerek çözümlenmiştir.'
+      ),
+    },
+    {
+      id: 'crit-ees-3',
+      title: 'Yorumlama ve eleştirel değerlendirme',
+      category: 'Yorumlama ve Kanıtlama',
+      weight: 20,
+      maxPoints: 20,
+      required: true,
+      levels: levels(
+        'Eserin edebî değeri, bakış açısı veya etkisine ilişkin gerekçeli bir yorum ya da eleştirel değerlendirme paylaşılmamıştır.',
+        'Eserle ilgili kişisel beğeni veya değerlendirmeler dile getirilmiş ancak gerekçeleri yüzeysel ya da tek yönlü kalmıştır.',
+        'Eserin iletisi, sanatsal yönü, bakış açısı ve okur üzerindeki etkisi tutarlı ve gerekçeli bir bakışla değerlendirilmiştir.'
+      ),
+    },
+    {
+      id: 'crit-ees-4',
+      title: 'Yorumları eserden örneklerle destekleme',
+      category: 'Yorumlama ve Kanıtlama',
+      weight: 10,
+      maxPoints: 10,
+      required: true,
+      levels: levels(
+        'Yapılan açıklamalar ve yorumlar eserden herhangi bir bölüm, dize, replik, durum veya somut örnekle desteklenmemiştir.',
+        'Eserden sınırlı sayıda örnek veya gönderme paylaşılmış ancak bunların yapılan yorumlarla bağı kısmen kurulmuştur.',
+        'Açıklama ve yorumlar eserin türüne uygun somut örnekler, bölümler, dizeler, replikler veya metinsel göndermelerle yerinde desteklenmiştir.'
+      ),
+    },
+    ...createSharedPresentationCriteria('ees'),
+  ],
+};
+
+/**
+ * 2. Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum Rubriği
+ * Tarih, bilim, felsefe, araştırma ve düşünce kitapları için 7 ölçütlü, 100 puanlık, 3 dereceli (Evet %100, Kısmen %50, Hayır %0) rubrik.
+ * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
+ */
+export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC: Rubric = {
+  id: INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
+  title: 'Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum',
+  subject: 'Türk Dili ve Edebiyatı',
+  gradeLevel: 'Genel',
+  description:
+    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının okuma ve sunum süreçlerini; konuyu ve temel düşünceyi kavrama, kavramlar ve düşünceler arası ilişkileri açıklama, eleştirel değerlendirme ve çıkarımda bulunma, kitaptan örneklerle destekleme ve sözlü sunum becerileri doğrultusunda 3 dereceli (Evet %100, Kısmen %50, Hayır %0) ölçekle değerlendiren 7 ölçütlü, 100 puanlık rubrik.',
+  maxLevelPoints: 2,
+  createdAt: '2026-10-27',
+  version: 3,
+  criteria: [
+    {
+      id: 'crit-bks-1',
+      title: 'Konuyu, amacı ve temel düşünceyi kavrama',
+      category: 'İçeriği ve Düşünce Yapısını Kavrama',
+      weight: 20,
+      maxPoints: 20,
+      required: true,
+      levels: levels(
+        'Kitabın ele aldığı konu, yazılış amacı veya savunduğu temel düşünce (tez) doğru aktarılmamış ya da hiç açıklanmamıştır.',
+        'Kitabın konusu belirtilmiş ancak yazılış amacı veya temel düşüncesi eksik ya da yüzeysel biçimde ifade edilmiştir.',
+        'Kitabın konusu, yazılış amacı ve merkezî düşüncesi (tezi) doğru, açık ve bütünlüklü biçimde ortaya konulmuştur.'
+      ),
+    },
+    {
+      id: 'crit-bks-2',
+      title: 'Temel bilgileri, kavramları ve düşünceler arası ilişkileri açıklama',
+      category: 'İçeriği ve Düşünce Yapısını Kavrama',
+      weight: 20,
+      maxPoints: 20,
+      required: true,
+      levels: levels(
+        'Kitaptaki temel kavramlar, bilgiler veya yardımcı düşünceler açıklanmamış; düşünceler arası bağlar kurulmamıştır.',
+        'Kitaptaki bazı bilgi ve kavramlar sıralanmış ancak bunların ana düşünceyle ve birbirleriyle ilişkisi kısmen açıklanmıştır.',
+        'Kitaptaki temel bilgiler, anahtar kavramlar ve yardımcı düşünceler; neden-sonuç ve gerekçe-sonuç ilişkileriyle tutarlı biçimde açıklanmıştır.'
+      ),
+    },
+    {
+      id: 'crit-bks-3',
+      title: 'Eleştirel değerlendirme ve çıkarımda bulunma',
+      category: 'Eleştirel Değerlendirme ve Kanıtlama',
+      weight: 20,
+      maxPoints: 20,
+      required: true,
+      levels: levels(
+        'Yazarın yaklaşımı, sunduğu bilgilerin tutarlılığı veya kitabın katkısına ilişkin eleştirel bir değerlendirme ya da çıkarım paylaşılmamıştır.',
+        'Kitap hakkında genel görüşler belirtilmiş ancak argümanların gücü ve olası çıkarımlar yüzeysel değerlendirilmiştir.',
+        'Yazarın bakış açısı, dayanaklarının gücü ve kitabın düşünce/bilgi alanına katkısı sorgulanarak özgün ve gerekçeli çıkarımlarda bulunulmuştur.'
+      ),
+    },
+    {
+      id: 'crit-bks-4',
+      title: 'Bilgileri ve yorumları kitaptan örneklerle destekleme',
+      category: 'Eleştirel Değerlendirme ve Kanıtlama',
+      weight: 10,
+      maxPoints: 10,
+      required: true,
+      levels: levels(
+        'Aktarılan bilgiler ve değerlendirmeler kitaptan herhangi bir veri, olgu, argüman, tespit veya somut örnekle desteklenmemiştir.',
+        'Kitaptan sınırlı sayıda örnek veya tespit paylaşılmış ancak bunların yapılan değerlendirmelerle ilişkisi kısmen kurulmuştur.',
+        'Aktarılan bilgiler ve eleştirel yorumlar kitaptaki somut örnekler, olgular, veriler veya temel tespitlerle yerinde desteklenmiştir.'
+      ),
+    },
+    ...createSharedPresentationCriteria('bks'),
+  ],
+};
+
+export const BOOK_PRESENTATION_RUBRICS: readonly Rubric[] = [
+  LITERARY_BOOK_PRESENTATION_RUBRIC,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+] as const;
+
+export const BOOK_PRESENTATION_RUBRIC: Rubric = LITERARY_BOOK_PRESENTATION_RUBRIC;
+
+/**
+ * Geçmiş değerlendirme oturumlarının (`rub-tde-kitap-sunumu` kimlikli 8 ölçütlü sürüm)
+ * puanlarını ve rubrik yapısını değiştirmeden korumak için saklanan eski rubrik tanımı.
+ */
+export const LEGACY_BOOK_PRESENTATION_RUBRIC: Rubric = {
+  id: LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
   title: 'Kitap Okuma ve Sunum Değerlendirmesi',
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
@@ -159,4 +364,3 @@ export const BOOK_PRESENTATION_RUBRIC: Rubric = {
     },
   ],
 };
-

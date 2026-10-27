@@ -1,5 +1,9 @@
 import type { Classroom, Rubric } from '../types.ts';
-import { BOOK_PRESENTATION_RUBRIC_ID } from '../data/bookPresentationRubric.ts';
+import {
+  LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
+  LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+} from '../data/bookPresentationRubric.ts';
 
 /**
  * Standart lise ve ortaokul sınıf düzeyleri (Kademe / Seviye).
@@ -61,16 +65,27 @@ export const TDE_11_RUBRIC_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Yerleşik rubriklerin hangi sınıf seviyesi ve ders ile ilişkili olduğunu tutan kayıt tablosu.
+ * 9, 10, 11 ve 12. sınıfların tamamında Türk Dili ve Edebiyatı dersinde erişilebilir olan
+ * yerleşik kitap okuma ve sunum rubriklerinin kimlikleri.
  */
 export const ALL_GRADE_TDE_RUBRIC_IDS: ReadonlySet<string> = new Set([
-  BOOK_PRESENTATION_RUBRIC_ID,
+  LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
+  LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
 ]);
 
 export const RUBRIC_COURSE_REGISTRY: Readonly<
   Record<string, { gradeLevel: string; subject: string }>
 > = {
-  [BOOK_PRESENTATION_RUBRIC_ID]: {
+  [LITERARY_BOOK_PRESENTATION_RUBRIC_ID]: {
+    gradeLevel: 'Genel',
+    subject: 'Türk Dili ve Edebiyatı',
+  },
+  [INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID]: {
+    gradeLevel: 'Genel',
+    subject: 'Türk Dili ve Edebiyatı',
+  },
+  [LEGACY_BOOK_PRESENTATION_RUBRIC_ID]: {
     gradeLevel: 'Genel',
     subject: 'Türk Dili ve Edebiyatı',
   },
