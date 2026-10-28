@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import android.util.Base64;
 
 import androidx.activity.result.ActivityResult;
 
@@ -71,6 +72,22 @@ public class SafBackupPlugin extends Plugin {
         startActivityForResult(call, intent, "handleSaveDocumentResult");
     }
 
+    @PluginMethod
+    public void savePdfDocument(PluginCall call) {
+        String content = call.getString("content");
+        if (content == null || content.isEmpty() || content.length() > MAX_BACKUP_BYTES * 4L / 3L + 8) {
+            call.reject("PDF içeriği boş veya çok büyük.");
+            return;
+        }
+        String name = call.getString("fileName", "rapor.pdf").replaceAll("[\\\\/:*?\"<>|]", "_");
+        if (!name.toLowerCase().endsWith(".pdf")) name += ".pdf";
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/pdf");
+        intent.putExtra(Intent.EXTRA_TITLE, name);
+        startActivityForResult(call, intent, "handleSaveDocumentResult");
+    }
+
     @ActivityCallback
     private void handleSaveDocumentResult(PluginCall call, ActivityResult result) {
         if (call == null) {
@@ -99,7 +116,8 @@ public class SafBackupPlugin extends Plugin {
             }
 
             String content = call.getString("content");
-            String fallbackName = sanitizeFileName(call.getString("fileName", "rubrikpad_yedek.json"));
+            boolean isPdf = "savePdfDocument".equals(call.getMethodName());
+            String fallbackName = isPdf ? call.getString("fileName", "rapor.pdf") : sanitizeFileName(call.getString("fileName", "rubrikpad_yedek.json"));
             if (content == null || content.trim().isEmpty()) {
                 JSObject res = new JSObject();
                 res.put("saved", false);
@@ -109,7 +127,14 @@ public class SafBackupPlugin extends Plugin {
                 return;
             }
 
-            byte[] expectedBytes = content.getBytes(StandardCharsets.UTF_8);
+            byte[] expectedBytes;
+            try {
+                expectedBytes = isPdf ? Base64.decode(content, Base64.DEFAULT) : content.getBytes(StandardCharsets.UTF_8);
+                if (expectedBytes.length == 0 || expectedBytes.length > MAX_BACKUP_BYTES) throw new IllegalArgumentException("Dosya boyutu geçersiz.");
+            } catch (IllegalArgumentException ex) {
+                call.reject("Dosya içeriği geçersiz.", ex);
+                return;
+            }
             ContentResolver resolver = getContext().getContentResolver();
 
             try {

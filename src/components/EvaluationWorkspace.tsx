@@ -832,15 +832,19 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const handleExportPdf = (dualMode: DualReportMode = 'both') => {
+  const handleExportPdf = async (dualMode: DualReportMode = 'both') => {
     if (!activeSession || !activeRubric || !activeClassroom) return;
-    downloadSessionPdfFile(
+    try {
+      await downloadSessionPdfFile(
       activeSession,
       activeRubric,
       activeClassroom,
       students,
       { dualReportMode: dualMode }
-    );
+      );
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'PDF kaydedilemedi.');
+    }
   };
 
   if (!activeSession || !activeRubric) {

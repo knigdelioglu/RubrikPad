@@ -1,3 +1,4 @@
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import type {
   Classroom,
   EvaluationSession,
@@ -512,8 +513,8 @@ export function generatePaginatedSessionPdfBytes(
 
         const scoreCols = colOpts.showFinalScoreAndLevel
           ? isDualRubric
-            ? '  İçerik(70) Sunum(%30)   Kitap(100)  Düzey'
-            : '  Bireysel  Grup    Kesin(100)  Düzey'
+            ? '  İçerik(70) Sunum(%30)   Kitap(100)'
+            : '  Bireysel  Grup    Kesin(100)'
           : '';
 
         const headerLine =
@@ -621,7 +622,7 @@ export function generatePaginatedSessionPdfBytes(
             : '';
 
           const scoreVals = colOpts.showFinalScoreAndLevel
-            ? `  ${indStr}  ${grpStr}  ${finalStr}  ${effectiveCalc.performanceLabel}`
+            ? `  ${indStr}  ${grpStr}  ${finalStr}`
             : '';
 
           const dualContinuationSummary =
@@ -743,7 +744,7 @@ export function generatePaginatedSessionPdfBytes(
           .join(' ')
       : '';
     const spkScoreCols = colOpts.showFinalScoreAndLevel
-      ? '  Konuşma Sınavı (100)   Konuşma Düzeyi'
+      ? '  Konuşma Sınavı (100)'
       : '';
 
     pushTextOp(
@@ -799,14 +800,10 @@ export function generatePaginatedSessionPdfBytes(
           : '-'
       ).padEnd(28, ' ');
 
-      const spkLevelStr = dual
-        ? dual.speakingPerformanceLabel
-        : effectiveCalc.performanceLabel;
-
       const rowLine = `${stu.studentNumber.padEnd(6, ' ')} ${stu.fullName
         .slice(0, 24)
         .padEnd(25, ' ')} ${spkVals}${
-        colOpts.showFinalScoreAndLevel ? `  ${spkFinalStr}  ${spkLevelStr}` : ''
+        colOpts.showFinalScoreAndLevel ? `  ${spkFinalStr}` : ''
       }`;
 
       pushTextOp(ops, '/F1', 7.2, 36, y, rowLine);
@@ -1165,7 +1162,7 @@ export function generateStudentPortfolioPdfBytes(
                 item.speakingContributionOutOf30 ?? 0
               }/30)   |   Konuşma Sınavı Notu: ${
                 item.speakingExamScoreOutOf100 ?? '-'
-              } / 100   |   Başarı Düzeyi: ${item.performanceLabel}`
+              } / 100`
             );
           } else {
             pushTextOp(
@@ -1174,9 +1171,7 @@ export function generateStudentPortfolioPdfBytes(
               8,
               46,
               y,
-              `Kesin Puan: ${item.scoreOutOf100} / 100   |   Başarı Düzeyi: ${
-                item.performanceLabel
-              }${
+              `Kesin Puan: ${item.scoreOutOf100} / 100${
                 item.individualScoreOutOf100 !== null
                   ? `   |   Bireysel: ${item.individualScoreOutOf100}`
                   : ''
@@ -1480,10 +1475,20 @@ export function decodePdfTextWithToUnicode(pdfBytes: Uint8Array): string {
   return decodedLines.join('\n');
 }
 
-function triggerPdfBlobDownload(bytes: Uint8Array, filename: string): void {
-  const blob = new Blob([bytes.buffer as ArrayBuffer], {
-    type: 'application/pdf',
-  });
+const pdfBridge = registerPlugin<{ savePdfDocument(options: { fileName: string; content: string }): Promise<{ saved: boolean; cancelled: boolean; fileName?: string; error?: string }> }>('SafBackup');
+
+async function triggerPdfBlobDownload(bytes: Uint8Array, filename: string): Promise<string | null> {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 8192) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+    }
+    const result = await pdfBridge.savePdfDocument({ fileName: filename, content: btoa(binary) });
+    if (result.cancelled) return null;
+    if (!result.saved) throw new Error(result.error || 'PDF kaydedilemedi.');
+    return result.fileName || filename;
+  }
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -1491,19 +1496,20 @@ function triggerPdfBlobDownload(bytes: Uint8Array, filename: string): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return filename;
 }
 
 /**
  * Triggers direct browser download of the paginated `.pdf` file without window.print().
  */
-export function downloadSessionPdfFile(
+export async function downloadSessionPdfFile(
   session: EvaluationSession,
   rubric: Rubric | null | undefined,
   classroom: Classroom | null | undefined,
   students: Student[],
   columnOptions?: PdfColumnOptions
-): string {
+): Promise<string | null> {
   const bytes = generatePaginatedSessionPdfBytes(
     session,
     rubric,
@@ -1525,20 +1531,19 @@ export function downloadSessionPdfFile(
       ? 'konusma_sinavi_raporu'
       : 'degerlendirme_raporu';
   const filename = `${prefix}_${safeTitle}.pdf`;
-  triggerPdfBlobDownload(bytes, filename);
-  return filename;
+  return triggerPdfBlobDownload(bytes, filename);
 }
 
 /**
  * Triggers direct browser download of the parent-shareable Student Portfolio `.pdf` file.
  */
-export function downloadStudentPortfolioPdfFile(
+export async function downloadStudentPortfolioPdfFile(
   student: Student,
   classroom: Classroom | null | undefined,
   sessions: EvaluationSession[],
   rubricsById: Record<string, Rubric>,
   columnOptions?: PdfColumnOptions
-): string {
+): Promise<string | null> {
   const bytes = generateStudentPortfolioPdfBytes(
     student,
     classroom,
@@ -1553,20 +1558,19 @@ export function downloadStudentPortfolioPdfFile(
       .replace(/^_+|_+$/g, '')
       .slice(0, 48) || 'ogrenci';
   const filename = `veli_gelisim_raporu_${student.studentNumber}_${safeStudent}.pdf`;
-  triggerPdfBlobDownload(bytes, filename);
-  return filename;
+  return triggerPdfBlobDownload(bytes, filename);
 }
 
 /**
  * Triggers direct browser download of the Classroom & Rubric Evaluation Overview `.pdf` file.
  */
-export function downloadClassroomOverviewPdfFile(
+export async function downloadClassroomOverviewPdfFile(
   classroom: Classroom | null | undefined,
   students: Student[],
   sessions: EvaluationSession[],
   rubrics: Rubric[],
   columnOptions?: PdfColumnOptions
-): string {
+): Promise<string | null> {
   const bytes = generateClassroomOverviewPdfBytes(
     classroom,
     students,
@@ -1581,6 +1585,5 @@ export function downloadClassroomOverviewPdfFile(
       .replace(/^_+|_+$/g, '')
       .slice(0, 48) || 'sinif';
   const filename = `sinif_degerlendirme_raporu_${safeClass}.pdf`;
-  triggerPdfBlobDownload(bytes, filename);
-  return filename;
+  return triggerPdfBlobDownload(bytes, filename);
 }

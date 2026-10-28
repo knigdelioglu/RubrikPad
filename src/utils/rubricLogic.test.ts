@@ -4114,6 +4114,7 @@ test('Institution Settings & Official Signatures: Settings persist schoolName, t
       { dualReportMode: 'both' }
     );
     const decodedSessionPdf = decodePdfTextWithToUnicode(sessionPdfBytes);
+    assert.ok(!decodedSessionPdf.includes('Düzey'));
     assert.ok(decodedSessionPdf.includes('Atatürk Anadolu Lisesi'));
     assert.ok(decodedSessionPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
     assert.ok(decodedSessionPdf.includes('Okul Müdürü: Mehmet Demir'));
@@ -4130,6 +4131,7 @@ test('Institution Settings & Official Signatures: Settings persist schoolName, t
       }
     );
     const decodedPortfolioPdf = decodePdfTextWithToUnicode(portfolioPdfBytes);
+    assert.ok(!decodedPortfolioPdf.includes('Başarı Düzeyi'));
     assert.ok(decodedPortfolioPdf.includes('Atatürk Anadolu Lisesi'));
     assert.ok(decodedPortfolioPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
     assert.ok(decodedPortfolioPdf.includes('Okul Müdürü: Mehmet Demir'));

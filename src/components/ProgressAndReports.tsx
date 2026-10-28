@@ -208,6 +208,7 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
     'longitudinal' | 'group_history' | 'session_table'
   >('longitudinal');
   const [exportError, setExportError] = useState<string | null>(null);
+  const [pdfDownloading, setPdfDownloading] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState<boolean>(false);
   const [previewMode, setPreviewMode] =
@@ -401,9 +402,7 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
    */
   const handleDownloadReportPdf = () => {
     setExportError(null);
-    if (viewTab === 'longitudinal' && activeStudent) {
-      setPreviewMode('student_portfolio');
-    } else if (activeReportSession && activeReportRubric && activeClassroom) {
+    if (activeReportSession && activeReportRubric && activeClassroom) {
       setPreviewMode('session_table');
     } else {
       setPreviewMode('classroom_overview');
@@ -424,20 +423,22 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
   /**
    * Rapor Önizleme modalı içinden onaylandığında ilgili PDF dosyasını seçilen sütun ayarlarıyla indirir.
    */
-  const handleConfirmDownloadPdf = (
+  const handleConfirmDownloadPdf = async (
     mode: ReportPreviewMode,
     columnOptions: PdfColumnOptions
   ) => {
     setExportError(null);
+    setPdfDownloading(true);
     try {
       if (mode === 'student_portfolio' && activeStudent) {
-        const filename = downloadStudentPortfolioPdfFile(
+        const filename = await downloadStudentPortfolioPdfFile(
           activeStudent,
           activeClassroom,
           classSessions,
           rubricsById,
           columnOptions
         );
+        if (!filename) return;
         setIsPreviewModalOpen(false);
         showTemporaryNotice(
           `Veli paylaşım ve öğrenci gelişim PDF raporu indirildi (${filename}).`
@@ -451,13 +452,14 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
         activeReportRubric &&
         activeClassroom
       ) {
-        const filename = downloadSessionPdfFile(
+        const filename = await downloadSessionPdfFile(
           activeReportSession,
           activeReportRubric,
           activeClassroom,
           students,
           columnOptions
         );
+        if (!filename) return;
         setIsPreviewModalOpen(false);
         showTemporaryNotice(
           `Sınıf oturum değerlendirme PDF raporu indirildi (${filename}).`
@@ -465,13 +467,14 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
         return;
       }
 
-      const filename = downloadClassroomOverviewPdfFile(
+      const filename = await downloadClassroomOverviewPdfFile(
         activeClassroom,
         classStudents,
         classSessions,
         rubrics,
         columnOptions
       );
+      if (!filename) return;
       setIsPreviewModalOpen(false);
       showTemporaryNotice(
         `Sınıf ve rubrik değerlendirme PDF raporu indirildi (${filename}).`
@@ -480,6 +483,8 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
       setExportError(
         err instanceof Error ? err.message : 'PDF rapor oluşturma hatası.'
       );
+    } finally {
+      setPdfDownloading(false);
     }
   };
 
@@ -1395,10 +1400,6 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                                     Konuşma Sınavı: {item.speakingExamScoreOutOf100} / 100
                                   </span>
                                 )}
-                                <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
-                                  <Award className="w-3.5 h-3.5 text-blue-900" />
-                                  {item.performanceLabel}
-                                </span>
                               </>
                             ) : (
                               <>
@@ -1412,10 +1413,6 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                                     Grup: {item.groupScoreOutOf100}
                                   </span>
                                 )}
-                                <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
-                                  <Award className="w-3.5 h-3.5 text-blue-900" />
-                                  {item.performanceLabel}
-                                </span>
                                 <span className="font-mono-num text-sm font-bold px-3 py-1 rounded bg-blue-900 text-white">
                                   {item.scoreOutOf100} / 100
                                 </span>
@@ -1727,9 +1724,6 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                       </div>
                     )}
                     <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-700">
-                        {gh.performanceLabel}
-                      </span>
                       <span className="font-mono-num text-sm font-bold px-2.5 py-0.5 rounded bg-blue-900 text-white">
                         {gh.isComplete && gh.scoreOutOf100 !== null
                           ? `${gh.scoreOutOf100} / 100`
@@ -1983,7 +1977,6 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                             </th>
                           </>
                         )}
-                        <th className="py-3 px-3 w-32">Düzey</th>
                         <th className="py-3 px-3">Gözlem Notları</th>
                       </tr>
                     </thead>
@@ -2106,9 +2099,6 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                                 </td>
                               </>
                             )}
-                            <td className="py-2.5 px-3 font-medium text-slate-700">
-                              {effectiveCalc.performanceLabel}
-                            </td>
                             <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate">
                               {[
                                 ev?.note,
@@ -2188,7 +2178,6 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                           <th className="py-3 px-2.5 text-center w-28">
                             Konuşma Sınavı Notu (100)
                           </th>
-                          <th className="py-3 px-3 w-32">Konuşma Düzeyi</th>
                           <th className="py-3 px-3">Gözlem Notları</th>
                         </tr>
                       </thead>
@@ -2260,11 +2249,6 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                                 ) : (
                                   '—'
                                 )}
-                              </td>
-                              <td className="py-2.5 px-3 font-medium text-slate-700">
-                                {dual
-                                  ? dual.speakingPerformanceLabel
-                                  : effectiveCalc.performanceLabel}
                               </td>
                               <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate">
                                 {[
@@ -2445,6 +2429,8 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
       {/* Centered Report Preview Modal before PDF Download */}
       <ReportPreviewModal
         isOpen={isPreviewModalOpen}
+        downloadError={exportError}
+        isDownloading={pdfDownloading}
         previewMode={previewMode}
         onChangePreviewMode={setPreviewMode}
         onClose={() => setIsPreviewModalOpen(false)}

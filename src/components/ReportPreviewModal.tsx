@@ -4,7 +4,6 @@ import {
   Printer,
   X,
   Calendar,
-  Award,
   BookOpen,
   Eye,
   SlidersHorizontal,
@@ -42,6 +41,8 @@ export type ReportPreviewMode =
 
 interface ReportPreviewModalProps {
   isOpen: boolean;
+  downloadError?: string | null;
+  isDownloading?: boolean;
   previewMode: ReportPreviewMode;
   onChangePreviewMode: (mode: ReportPreviewMode) => void;
   onClose: () => void;
@@ -82,7 +83,7 @@ const PRESET_DEFINITIONS: {
   {
     id: 'with_scores',
     label: 'Puanlar ile',
-    description: 'İsimler, ölçüt puanları, kesin puan ve düzey sütunlarını içerir',
+    description: 'İsimler, ölçüt puanları ve kesin puanı içerir',
   },
   {
     id: 'with_notes',
@@ -93,6 +94,8 @@ const PRESET_DEFINITIONS: {
 
 export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
   isOpen,
+  downloadError,
+  isDownloading,
   previewMode,
   onChangePreviewMode,
   onClose,
@@ -112,10 +115,10 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
   onChangeDualReportMode,
 }) => {
   const [columnOptions, setColumnOptions] = useState<PdfColumnOptions>({
-    preset: 'with_notes',
+    preset: 'with_scores',
     showCriterionScores: true,
     showFinalScoreAndLevel: true,
-    showObservationNotes: true,
+    showObservationNotes: false,
     showSignatures: true,
     dualReportMode: initialDualReportMode,
   });
@@ -125,7 +128,11 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
       ...prev,
       dualReportMode: initialDualReportMode,
     }));
-  }, [initialDualReportMode, isOpen]);
+  }, [initialDualReportMode]);
+
+  useEffect(() => {
+    if (isOpen) setColumnOptions((prev) => ({ ...prev, preset: 'with_scores', showCriterionScores: true, showFinalScoreAndLevel: true, showObservationNotes: false }));
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -219,19 +226,6 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-lg bg-slate-100 border border-slate-200 p-0.5 gap-1">
-              {canPreviewStudent && (
-                <button
-                  type="button"
-                  onClick={() => onChangePreviewMode('student_portfolio')}
-                  className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-colors ${
-                    effectiveMode === 'student_portfolio'
-                      ? 'bg-blue-900 text-white'
-                      : 'text-slate-700 hover:text-slate-900'
-                  }`}
-                >
-                  Veli &amp; Öğrenci Raporu
-                </button>
-              )}
               {canPreviewSession && (
                 <button
                   type="button"
@@ -256,6 +250,19 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
               >
                 Sınıf &amp; Rubrik Özeti
               </button>
+              {canPreviewStudent && (
+                <button
+                  type="button"
+                  onClick={() => onChangePreviewMode('student_portfolio')}
+                  className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-colors ${
+                    effectiveMode === 'student_portfolio'
+                      ? 'bg-blue-900 text-white'
+                      : 'text-slate-700 hover:text-slate-900'
+                  }`}
+                >
+                  Veli &amp; Öğrenci Raporu
+                </button>
+              )}
             </div>
 
             <button
@@ -326,7 +333,7 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                 onChange={() => handleToggleColumn('showFinalScoreAndLevel')}
                 className="rounded border-slate-300 text-blue-900 focus:ring-blue-900 cursor-pointer"
               />
-              <span>Kesin Puan &amp; Düzey</span>
+              <span>Kesin Puan</span>
             </label>
 
             <label className="inline-flex items-center gap-1.5 font-medium text-slate-700 cursor-pointer select-none">
@@ -490,17 +497,9 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                                       Konuşma Sınavı: {item.speakingExamScoreOutOf100} / 100
                                     </span>
                                   )}
-                                  <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
-                                    <Award className="w-3.5 h-3.5 text-blue-900" />
-                                    {item.performanceLabel}
-                                  </span>
                                 </>
                               ) : (
                                 <>
-                                  <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
-                                    <Award className="w-3.5 h-3.5 text-blue-900" />
-                                    {item.performanceLabel}
-                                  </span>
                                   <span className="font-mono-num text-sm font-bold px-3 py-1 rounded bg-blue-900 text-white">
                                     {item.scoreOutOf100} / 100
                                   </span>
@@ -698,7 +697,6 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                                       Kesin (100)
                                     </th>
                                   )}
-                                  <th className="py-2.5 px-3 w-28">Düzey</th>
                                 </>
                               )}
                               {colOpts.showObservationNotes && (
@@ -796,9 +794,6 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                                             : '—'}
                                         </td>
                                       )}
-                                      <td className="py-2 px-3 text-slate-700">
-                                        {effectiveCalc.performanceLabel}
-                                      </td>
                                     </>
                                   )}
                                   {colOpts.showObservationNotes && (
@@ -879,9 +874,6 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                                   <>
                                     <th className="py-2.5 px-2 text-center w-28">
                                       Konuşma Sınavı (100)
-                                    </th>
-                                    <th className="py-2.5 px-3 w-32">
-                                      Konuşma Düzeyi
                                     </th>
                                   </>
                                 )}
@@ -964,11 +956,6 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                                             null
                                             ? dual.finalSpeakingScoreOutOf100
                                             : '—'}
-                                        </td>
-                                        <td className="py-2 px-3 text-slate-700">
-                                          {dual
-                                            ? dual.speakingPerformanceLabel
-                                            : effectiveCalc.performanceLabel}
                                         </td>
                                       </>
                                     )}
@@ -1182,6 +1169,7 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
         {/* Modal Footer Actions */}
         <div className="no-print bg-white border-t border-slate-200 px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs text-slate-600 font-medium">
+            {downloadError && <div role="alert" className="text-red-700 mb-1">{downloadError}</div>}
             Seçili Şablon: <strong>{activePresetMeta.label}</strong> · Format:{' '}
             <strong>A4 PDF (%PDF-1.4 · Türkçe Font Gömülü)</strong>
           </div>
@@ -1204,6 +1192,7 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
             </button>
             <button
               type="button"
+              disabled={isDownloading}
               onClick={() => onConfirmDownloadPdf(effectiveMode, colOpts)}
               className="px-4 py-2 text-xs font-bold text-white bg-blue-900 hover:bg-blue-950 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
             >
