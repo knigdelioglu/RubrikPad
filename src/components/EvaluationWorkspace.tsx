@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   CheckCircle2,
   Users,
@@ -190,7 +190,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   }, []);
 
   const [selectedStudentId, setSelectedStudentId] = useState<string>(() => {
-    return classStudents[0]?.id || '';
+    return (activeRubric && classStudents.find((student) => !getStudentEvaluationBreakdown(activeRubric, activeSession?.evaluations[student.id]).effectiveCalc.isComplete))?.id || classStudents[0]?.id || '';
   });
   const [studentFilter, setStudentFilter] = useState<
     'all' | 'pending' | 'completed'
@@ -323,16 +323,60 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     nextGroupName: string | null;
   } | null>(null);
 
+  const selectionContext = useRef(`${activeSession?.id || ''}:${activeClassroomId}`);
+  const [completionNotice, setCompletionNotice] = useState<{
+    studentId: string; studentName: string; advance: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    const context = `${activeSession?.id || ''}:${activeClassroomId}`;
+    if (selectionContext.current === context) return;
+    selectionContext.current = context;
+    const pending = activeRubric && classStudents.find((student) =>
+      !getStudentEvaluationBreakdown(activeRubric, activeSession?.evaluations[student.id]).effectiveCalc.isComplete
+    );
+    setSelectedStudentId(pending?.id || classStudents[0]?.id || '');
+    setActiveCriterionIndex(0);
+    setCompletionNotice(null);
+    setJustCompletedBanner(null);
+    setFastCompletionBanner(null);
+  }, [activeSession, activeClassroomId, activeRubric, classStudents]);
+
+  useEffect(() => {
+    if (!completionNotice || !activeSession || !activeRubric) return;
+    if (selectedStudentId !== completionNotice.studentId ||
+        !getStudentEvaluationBreakdown(activeRubric, activeSession.evaluations[completionNotice.studentId]).effectiveCalc.isComplete) {
+      setCompletionNotice(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (completionNotice.advance) {
+        const next = getNextPendingStudent(classStudents, activeSession.evaluations, activeRubric, completionNotice.studentId);
+        if (next) {
+          setSelectedStudentId(next.id);
+          setActiveCriterionIndex(0);
+        }
+      }
+      setCompletionNotice(null);
+      setJustCompletedBanner(null);
+      setFastCompletionBanner(null);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [completionNotice, selectedStudentId, activeSession, activeRubric, classStudents]);
+
   // Sync selected student when session/class changes
   useEffect(() => {
     if (
       classStudents.length > 0 &&
       !classStudents.some((s) => s.id === selectedStudentId)
     ) {
-      setSelectedStudentId(classStudents[0].id);
+      const pending = activeRubric && classStudents.find((student) =>
+        !getStudentEvaluationBreakdown(activeRubric, activeSession?.evaluations[student.id]).effectiveCalc.isComplete
+      );
+      setSelectedStudentId(pending?.id || classStudents[0].id);
       setActiveCriterionIndex(0);
     }
-  }, [classStudents, selectedStudentId]);
+  }, [classStudents, selectedStudentId, activeRubric, activeSession]);
 
   useEffect(() => {
     setPendingRubricChange(null);
@@ -476,7 +520,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             performanceLabel: newCalc.performanceLabel,
             nextStudentId: nextPending?.id || null,
             nextStudentName: nextPending?.fullName || null,
-            autoAdvanced: Boolean(shouldAdvance && nextPending),
+            autoAdvanced: false,
           });
         } else if (
           justCompletedBanner &&
@@ -489,17 +533,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           });
         }
 
-        if (shouldAdvance && nextPending) {
-          setFastCompletionBanner({
-            completedStudentId: selectedStudent.id,
-            completedStudentName: selectedStudent.fullName,
-            scoreOutOf100: newCalc.finalScoreOutOf100,
-            nextStudentId: nextPending.id,
-            nextStudentName: nextPending.fullName,
+        if (!prevCalc.isComplete) {
+          setCompletionNotice({
+            studentId: selectedStudent.id,
+            studentName: selectedStudent.fullName,
+            advance: Boolean(shouldAdvance && nextPending),
           });
-          setSelectedStudentId(nextPending.id);
-          setActiveCriterionIndex(0);
-        } else if (!prevCalc.isComplete && activeSession.mode === 'grid') {
+        }
+        if (!prevCalc.isComplete && activeSession.mode === 'grid') {
           setFastCompletionBanner({
             completedStudentId: selectedStudent.id,
             completedStudentName: selectedStudent.fullName,
@@ -587,7 +628,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             performanceLabel: newCalc.performanceLabel,
             nextStudentId: nextPending?.id || null,
             nextStudentName: nextPending?.fullName || null,
-            autoAdvanced: Boolean(shouldAdvance && nextPending),
+            autoAdvanced: false,
           });
         } else if (
           justCompletedBanner &&
@@ -600,17 +641,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           });
         }
 
-        if (shouldAdvance && nextPending) {
-          setFastCompletionBanner({
-            completedStudentId: selectedStudent.id,
-            completedStudentName: selectedStudent.fullName,
-            scoreOutOf100: newCalc.finalScoreOutOf100,
-            nextStudentId: nextPending.id,
-            nextStudentName: nextPending.fullName,
+        if (!prevCalc.isComplete) {
+          setCompletionNotice({
+            studentId: selectedStudent.id,
+            studentName: selectedStudent.fullName,
+            advance: Boolean(shouldAdvance && nextPending),
           });
-          setSelectedStudentId(nextPending.id);
-          setActiveCriterionIndex(0);
-        } else if (!prevCalc.isComplete && activeSession.mode === 'grid') {
+        }
+        if (!prevCalc.isComplete && activeSession.mode === 'grid') {
           setFastCompletionBanner({
             completedStudentId: selectedStudent.id,
             completedStudentName: selectedStudent.fullName,
@@ -1109,6 +1147,13 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     />
   ) : null;
 
+  const completionNoticeElement = completionNotice ? (
+    <div role="status" aria-live="polite" className="fixed top-5 right-5 z-50 rounded-xl bg-emerald-800 px-5 py-4 text-sm font-bold text-white shadow-lg">
+      {completionNotice.studentName} puanlaması tamamlandı.
+      {completionNotice.advance && <span className="block mt-1 text-xs font-normal text-emerald-100">Sıradaki öğrenciye geçiliyor…</span>}
+    </div>
+  ) : null;
+
   // Dedicated Single-Screen Views for Hızlı Değerlendirme (Serial Card & Matrix)
   if (activeSession.mode === 'grid') {
     if (fastFlowSubMode === 'matrix') {
@@ -1196,6 +1241,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
 
     return (
       <>
+        {completionNoticeElement}
         <FastEvaluationView
           activeSession={activeSession}
           activeRubric={activeRubric}
@@ -1251,6 +1297,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-8 py-4 space-y-4">
+      {completionNoticeElement}
       <div className="sr-only" role="status" aria-live="polite">
         {statusAnnouncement}
       </div>

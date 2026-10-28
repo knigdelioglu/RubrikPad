@@ -258,7 +258,7 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
                 step.isActive
                   ? 'bg-slate-900 text-white border-slate-950 shadow-2xs'
                   : step.isScored
-                  ? 'bg-white text-slate-800 border-slate-200 hover:border-slate-900'
+                  ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:border-emerald-500'
                   : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-white hover:text-slate-900'
               }`}
             >
@@ -515,7 +515,9 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
       }
       data-criterion-id={criterion.id}
       className={`px-5 sm:px-6 py-5 transition-colors ${
-        isFocusedStage
+        isAnswered
+          ? 'bg-emerald-50/70 ring-inset ring-1 ring-emerald-200'
+          : isFocusedStage
           ? 'bg-slate-50/60 ring-2 ring-slate-900/10'
           : 'bg-white hover:bg-slate-50/35'
       }`}
@@ -533,6 +535,11 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             <span className="font-mono-num text-xs font-semibold text-slate-400 ml-2">
               (%{critMaxPts})
             </span>
+            {isAnswered && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                <Check className="w-3 h-3" /> Puanlandı
+              </span>
+            )}
             {isScoreAssigned(reflectedGroupPoints) && (
               <span
                 className="font-mono-num text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md ml-2"
