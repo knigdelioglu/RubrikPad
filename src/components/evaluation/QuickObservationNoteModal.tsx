@@ -42,13 +42,13 @@ export const QuickObservationNoteModal: React.FC<
 }) => {
   const [noteText, setNoteText] = useState<string>(evaluation?.note || '');
   const [selectedTags, setSelectedTags] = useState<string[]>(
-    evaluation?.tags || []
+    (evaluation?.tags || []).map((tag) => tag === 'Yaratıcı Çözüm' ? 'Çözüm Odaklı' : tag)
   );
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     setNoteText(evaluation?.note || '');
-    setSelectedTags(evaluation?.tags || []);
+    setSelectedTags((evaluation?.tags || []).map((tag) => tag === 'Yaratıcı Çözüm' ? 'Çözüm Odaklı' : tag));
   }, [student.id, evaluation]);
 
   useEffect(() => {

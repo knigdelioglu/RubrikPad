@@ -604,8 +604,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       setConfirmOverwriteScoredGroups(e.target.checked)
                     }
                   />
-                  Puanlanmış grupların sıfırlanacağını onaylıyorum (Geri Al ile
-                  kurtarılabilir)
+                  Puanlanmış grupların sıfırlanacağını onaylıyorum
                 </label>
               )}
             </div>

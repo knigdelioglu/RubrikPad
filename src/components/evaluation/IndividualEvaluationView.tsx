@@ -12,7 +12,6 @@ import {
   Search,
   Sliders,
   Tag,
-  Undo2,
   Users,
   X,
 } from 'lucide-react';
@@ -87,7 +86,6 @@ interface IndividualEvaluationViewProps {
     autoAdvanced?: boolean;
   } | null;
   onDismissBanner: () => void;
-  onUndoLastAction?: () => void;
   onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
@@ -122,7 +120,6 @@ export const IndividualEvaluationView: React.FC<
   onTogglePrecisionScoring,
   justCompletedBanner,
   onDismissBanner,
-  onUndoLastAction,
   onOpenQuickNoteModal,
   allSessions,
   rubricsById,
@@ -778,20 +775,6 @@ export const IndividualEvaluationView: React.FC<
                     </button>
                   )}
 
-                {onUndoLastAction && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onUndoLastAction();
-                      onSelectStudent(justCompletedBanner.completedStudentId);
-                      onDismissBanner();
-                    }}
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Undo2 className="w-3.5 h-3.5" />
-                    Son Puanı Geri Al
-                  </button>
-                )}
 
                 <button
                   type="button"
@@ -1410,8 +1393,8 @@ export const IndividualEvaluationView: React.FC<
                     Etiketler:
                   </span>
                   {QUICK_OBSERVATION_TAGS.map((tag) => {
-                    const active = (currentStudentEval?.tags || []).includes(
-                      tag
+                    const active = (currentStudentEval?.tags || []).some(
+                      (savedTag) => savedTag === tag || (tag === 'Çözüm Odaklı' && savedTag === 'Yaratıcı Çözüm')
                     );
                     return (
                       <button

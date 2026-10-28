@@ -3,12 +3,10 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
-  FileDown,
   MessageSquare,
   RotateCcw,
   Sliders,
   Table,
-  Undo2,
   Zap,
 } from 'lucide-react';
 import type {
@@ -53,7 +51,6 @@ interface FastEvaluationViewProps {
   ) => void;
   onClearCriterionScore: (criterionId: string) => void;
   onResetStudentScores: (studentId: string) => void;
-  onUndoLastAction: () => void;
   autoAdvanceStudent: boolean;
   onToggleAutoAdvance: () => void;
   precisionScoringMode: boolean;
@@ -76,7 +73,7 @@ interface FastEvaluationViewProps {
   onCreateNewSessionWithRubric?: (targetRubric: Rubric) => void;
   onConfirmResetAndChangeRubric?: (targetRubric: Rubric) => void;
   onCancelRubricChange?: () => void;
-  onExportPdf?: () => void;
+  downloadControl?: React.ReactNode;
   onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
@@ -100,7 +97,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   onSetDirectCriterionScore,
   onClearCriterionScore,
   onResetStudentScores,
-  onUndoLastAction,
   autoAdvanceStudent,
   onToggleAutoAdvance,
   precisionScoringMode,
@@ -112,7 +108,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   onCreateNewSessionWithRubric,
   onConfirmResetAndChangeRubric,
   onCancelRubricChange,
-  onExportPdf,
+  downloadControl,
   onOpenQuickNoteModal,
   allSessions,
   rubricsById,
@@ -138,7 +134,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   );
   const currentScoreCalc = breakdown.effectiveCalc;
   const activeSource = breakdown.activeSource;
-  const undoCount = activeSession.undoHistory?.length || 0;
 
   return (
     <div className="w-full px-3 sm:px-5 py-2">
@@ -239,16 +234,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               Otomatik Geçiş: {autoAdvanceStudent ? 'Açık' : 'Kapalı'}
             </button>
 
-            <button
-              type="button"
-              disabled={undoCount === 0}
-              onClick={onUndoLastAction}
-              className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
-              title="Son puanlama işlemini geri al"
-            >
-              <Undo2 className="w-3.5 h-3.5" />
-              Geri Al {undoCount > 0 ? `(${undoCount})` : ''}
-            </button>
 
             <button
               type="button"
@@ -259,17 +244,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
               Toplu Matris Özeti
             </button>
 
-            {onExportPdf && (
-              <button
-                type="button"
-                onClick={onExportPdf}
-                data-testid="download-active-session-pdf-btn"
-                className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-800 bg-white border border-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-              >
-                <FileDown className="w-3.5 h-3.5 text-blue-900" />
-                PDF İndir
-              </button>
-            )}
+            {downloadControl}
           </div>
         </div>
 
@@ -307,7 +282,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                   }
                   className="px-2.5 py-1 rounded bg-white border border-amber-400 text-amber-950 font-semibold hover:bg-amber-100 cursor-pointer"
                 >
-                  Puanları Sıfırlayarak Değiştir (Geri Alınabilir)
+                  Puanları Sıfırlayarak Değiştir
                 </button>
               )}
               {onCancelRubricChange && (

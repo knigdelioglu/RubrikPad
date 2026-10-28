@@ -3,9 +3,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
-  FileDown,
   MessageSquare,
-  Undo2,
   Zap,
 } from 'lucide-react';
 import type {
@@ -43,8 +41,7 @@ interface MatrixEvaluationViewProps {
     points: number,
     onlyUnscored: boolean
   ) => void;
-  onUndoLastAction: () => void;
-  onExportPdf?: () => void;
+  downloadControl?: React.ReactNode;
   onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
   rubricsById?: Record<string, Rubric>;
@@ -63,8 +60,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
   onBackToFastCards,
   onSetStudentCriterionScore,
   onBulkAssignCriterion,
-  onUndoLastAction,
-  onExportPdf,
+  downloadControl,
   onOpenQuickNoteModal,
   allSessions,
   rubricsById,
@@ -80,7 +76,6 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
     Math.max(0, activeRubric.criteria.length - 1)
   );
   const currentCriterion = activeRubric.criteria[safeCriterionIdx];
-  const undoCount = activeSession.undoHistory?.length || 0;
 
   return (
     <div className="w-full px-3 sm:px-5 py-2">
@@ -166,27 +161,8 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
               </div>
             )}
 
-            <button
-              type="button"
-              disabled={undoCount === 0}
-              onClick={onUndoLastAction}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1 cursor-pointer"
-            >
-              <Undo2 className="w-3.5 h-3.5" />
-              Geri Al {undoCount > 0 ? `(${undoCount})` : ''}
-            </button>
 
-            {onExportPdf && (
-              <button
-                type="button"
-                onClick={onExportPdf}
-                data-testid="download-active-session-pdf-btn"
-                className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-800 bg-white border border-slate-300 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
-              >
-                <FileDown className="w-3.5 h-3.5 text-blue-900" />
-                PDF İndir
-              </button>
-            )}
+            {downloadControl}
           </div>
         </div>
 

@@ -6,8 +6,6 @@ import {
   UserCheck,
   Plus,
   Download,
-  FileDown,
-  Undo2,
   ShieldCheck,
   Archive,
   ArchiveRestore,
@@ -429,28 +427,6 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       classStudents[0],
     [classStudents, selectedStudentId]
   );
-
-  // Undo handler (P1 #7 & Issue #6 rubric restore)
-  const handleUndoLastAction = useCallback(() => {
-    if (
-      !activeSession ||
-      !activeSession.undoHistory ||
-      activeSession.undoHistory.length === 0
-    ) {
-      return;
-    }
-    const [latestUndo, ...remainingHistory] = activeSession.undoHistory;
-    onUpdateSession({
-      ...activeSession,
-      rubricId: latestUndo.previousRubricId ?? activeSession.rubricId,
-      rubricSnapshot:
-        latestUndo.previousRubricSnapshot ?? activeSession.rubricSnapshot,
-      evaluations: latestUndo.previousEvaluations,
-      groups: latestUndo.previousGroups ?? activeSession.groups,
-      undoHistory: remainingHistory,
-    });
-    setStatusAnnouncement(`Geri alındı: ${latestUndo.description}`);
-  }, [activeSession, onUpdateSession]);
 
   // Select Criterion Level (0..4) for a student
   const handleSelectCriterionLevel = useCallback(
@@ -1147,6 +1123,29 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     />
   ) : null;
 
+  const downloadControl = (
+    <details className="relative">
+      <summary className="list-none px-3 py-1.5 text-xs font-bold text-slate-900 bg-slate-100 border border-slate-300 rounded-xl hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer">
+        <Download className="w-3.5 h-3.5" /> İndir
+      </summary>
+      <div className="absolute right-0 top-full mt-1 z-50 min-w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+        {[
+          { label: 'PDF', action: () => handleExportPdf('both') },
+          { label: 'CSV', action: handleExportCsv },
+          ...(isDualBookSpeakingRubric(activeRubric) ? [
+            { label: 'Kitap raporu (PDF)', action: () => handleExportPdf('book') },
+            { label: 'Konuşma raporu (PDF)', action: () => handleExportPdf('speaking') },
+          ] : []),
+        ].map(({ label, action }) => (
+          <button key={label} type="button" className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100 cursor-pointer" onClick={(event) => {
+            event.currentTarget.closest('details')?.removeAttribute('open');
+            action();
+          }}>{label}</button>
+        ))}
+      </div>
+    </details>
+  );
+
   const completionNoticeElement = completionNotice ? (
     <div role="status" aria-live="polite" className="fixed top-5 right-5 z-50 rounded-xl bg-emerald-800 px-5 py-4 text-sm font-bold text-white shadow-lg">
       {completionNotice.studentName} puanlaması tamamlandı.
@@ -1231,8 +1230,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 undoHistory,
               });
             }}
-            onUndoLastAction={handleUndoLastAction}
-            onExportPdf={() => handleExportPdf('both')}
+            downloadControl={downloadControl}
             onOpenQuickNoteModal={(studentId) =>
               setQuickNoteModalStudentId(studentId)
             }
@@ -1268,7 +1266,6 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           onSetDirectCriterionScore={handleSetDirectCriterionScore}
           onClearCriterionScore={handleClearCriterionScore}
           onResetStudentScores={handleResetStudentScores}
-          onUndoLastAction={handleUndoLastAction}
           autoAdvanceStudent={autoAdvanceStudent}
           onToggleAutoAdvance={() => setAutoAdvanceStudent(!autoAdvanceStudent)}
           precisionScoringMode={precisionScoringMode}
@@ -1282,7 +1279,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           onCreateNewSessionWithRubric={handleCreateNewSessionWithRubric}
           onConfirmResetAndChangeRubric={handleConfirmResetAndChangeRubric}
           onCancelRubricChange={() => setPendingRubricChange(null)}
-          onExportPdf={handleExportPdf}
+          downloadControl={downloadControl}
           onOpenQuickNoteModal={(studentId) =>
             setQuickNoteModalStudentId(studentId)
           }
@@ -1294,7 +1291,6 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     );
   }
 
-  const undoCount = activeSession.undoHistory?.length || 0;
   const sessionClassNames = classrooms
     .filter((c) => sessionClassIds.includes(c.id))
     .map((c) => c.name)
@@ -1416,61 +1412,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               </button>
             </div>
 
-            <button
-              type="button"
-              disabled={undoCount === 0}
-              onClick={handleUndoLastAction}
-              className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
-              title="Son puanlama veya grup işlemini geri al"
-            >
-              <Undo2 className="w-3.5 h-3.5" />
-              Geri Al {undoCount > 0 ? `(${undoCount})` : ''}
-            </button>
-
-            {isDualBookSpeakingRubric(activeRubric) && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => handleExportPdf('book')}
-                  data-testid="download-book-only-pdf-btn"
-                  title="Yalnızca Kitap Sunumu Değerlendirme Raporunu (100 Puan) konuşma sınavı notu olmadan PDF olarak indir"
-                  className="px-3 py-1.5 text-xs font-bold text-blue-900 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <FileDown className="w-3.5 h-3.5 text-blue-900" />
-                  Kitap Raporu (PDF)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleExportPdf('speaking')}
-                  data-testid="download-speaking-only-pdf-btn"
-                  title="Yalnızca Konuşma Sınavı Değerlendirme Raporunu (100 Puan) PDF olarak indir"
-                  className="px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <FileDown className="w-3.5 h-3.5 text-emerald-800" />
-                  Konuşma Raporu (PDF)
-                </button>
-              </>
-            )}
-
-            <button
-              type="button"
-              onClick={() => handleExportPdf('both')}
-              data-testid="download-active-session-pdf-btn"
-              title="Aktif oturum sonuçlarını yapılandırılmış bir tablo halinde PDF olarak indir"
-              className="px-3 py-1.5 text-xs font-bold text-slate-900 bg-slate-100 border border-slate-300 rounded-xl hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
-            >
-              <FileDown className="w-3.5 h-3.5 text-blue-900" />
-              PDF İndir
-            </button>
-
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              CSV İndir
-            </button>
+            {downloadControl}
           </div>
         </div>
 
@@ -1650,14 +1592,6 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             data-testid="multi-class-session-switcher"
             className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2"
           >
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-700">
-                Sınıf Bazlı Değerlendirme — Şube Seçin:
-              </span>
-              <span className="text-[11px] text-slate-500">
-                Çoklu sınıf oturumlarında öğrenciler ve gruplar şube bazında ayrı değerlendirilir.
-              </span>
-            </div>
             <div
               className="flex flex-wrap items-center gap-1.5"
               role="tablist"
@@ -1741,7 +1675,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 }
                 className="px-3 py-1.5 rounded-lg bg-white border border-amber-400 text-amber-950 font-semibold hover:bg-amber-100 cursor-pointer"
               >
-                Puanları Sıfırlayarak Değiştir (Geri Alınabilir)
+                Puanları Sıfırlayarak Değiştir
               </button>
               <button
                 type="button"
@@ -1934,7 +1868,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           onToggleStudentTag={(tag) => {
             if (!selectedStudent) return;
             const existing = activeSession.evaluations[selectedStudent.id];
-            const currentTags = existing?.tags || [];
+            const currentTags = (existing?.tags || []).map((tag) => tag === 'Yaratıcı Çözüm' ? 'Çözüm Odaklı' : tag);
             const nextTags = currentTags.includes(tag)
               ? currentTags.filter((t) => t !== tag)
               : [...currentTags, tag];
@@ -1959,7 +1893,6 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           }
           justCompletedBanner={justCompletedBanner}
           onDismissBanner={() => setJustCompletedBanner(null)}
-          onUndoLastAction={handleUndoLastAction}
           onOpenQuickNoteModal={(studentId) =>
             setQuickNoteModalStudentId(studentId)
           }
