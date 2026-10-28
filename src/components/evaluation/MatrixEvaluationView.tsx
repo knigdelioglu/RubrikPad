@@ -357,7 +357,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                           className={`py-1.5 px-2 border-r border-slate-100 ${
                             isTargetCell
                               ? 'ring-2 ring-inset ring-blue-900 bg-blue-50/40'
-                              : ''
+                              : selectedPts != null ? 'bg-emerald-50' : ''
                           }`}
                         >
                           <div className="flex items-center gap-1">
@@ -390,7 +390,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                                   }
                                   className={`flex-1 py-1 px-1 rounded font-mono-num text-[11px] font-bold transition-all cursor-pointer min-h-[28px] border ${
                                     active
-                                      ? lvlTheme.compactSelected
+                                      ? 'bg-emerald-700 text-white font-bold shadow-xs'
                                       : lvlTheme.compactUnselected
                                   }`}
                                 >

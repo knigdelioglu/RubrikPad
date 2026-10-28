@@ -1159,6 +1159,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     if (fastFlowSubMode === 'matrix') {
       return (
         <>
+          {completionNoticeElement}
           <MatrixEvaluationView
             activeSession={activeSession}
             activeRubric={activeRubric}
@@ -1177,7 +1178,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             }
             onSetStudentCriterionScore={(studentId, criterionId, points) => {
               const existing = activeSession.evaluations[studentId];
-              const { updatedEvaluation } = applyIndividualCriterionEdit(
+              const { updatedEvaluation, prevCalc, newCalc } = applyIndividualCriterionEdit(
                 activeRubric,
                 existing,
                 studentId,
@@ -1188,6 +1189,10 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 },
                 new Date().toISOString()
               );
+              if (!prevCalc.isComplete && newCalc.isComplete) {
+                const student = classStudents.find((item) => item.id === studentId);
+                if (student) setCompletionNotice({ studentId, studentName: student.fullName, advance: true });
+              }
               const undoHistory = recordSessionUndoEntry(activeSession, {
                 scope: 'criterion',
                 studentId,
