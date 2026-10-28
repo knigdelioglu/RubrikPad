@@ -17,6 +17,10 @@ import {
 import {
   LEGACY_BOOK_PRESENTATION_RUBRIC,
   LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+  LEGACY_V3_LITERARY_BOOK_RUBRIC,
+  LEGACY_V3_INFORMATIVE_BOOK_RUBRIC,
+  LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
   BOOK_PRESENTATION_RUBRIC_IDS,
 } from '../data/bookPresentationRubric.ts';
 
@@ -1573,6 +1577,10 @@ export function migrateV2ToV3(raw: Partial<AppDataState>): AppDataState {
       snapshot = freezeRubricSnapshot(matchingRubric);
     } else if (ses.rubricId === LEGACY_BOOK_PRESENTATION_RUBRIC_ID) {
       snapshot = freezeRubricSnapshot(LEGACY_BOOK_PRESENTATION_RUBRIC);
+    } else if (ses.rubricId === LITERARY_BOOK_PRESENTATION_RUBRIC_ID) {
+      snapshot = freezeRubricSnapshot(LEGACY_V3_LITERARY_BOOK_RUBRIC);
+    } else if (ses.rubricId === INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID) {
+      snapshot = freezeRubricSnapshot(LEGACY_V3_INFORMATIVE_BOOK_RUBRIC);
     }
 
     const classIds =
@@ -3084,6 +3092,14 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
         const legacyBookRubricInState = cleaned.rubrics.find(
           (r) => r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID
         );
+        const existingBookRubricsById = new Map<string, Rubric>();
+        for (const r of cleaned.rubrics) {
+          if (
+            (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(r.id)
+          ) {
+            existingBookRubricsById.set(r.id, r);
+          }
+        }
 
         let sessionsUpdated = false;
         const syncedSessions = cleaned.sessions.map((ses) => {
@@ -3098,6 +3114,23 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
               rubricSnapshot: freezeRubricSnapshot(
                 legacyBookRubricInState || LEGACY_BOOK_PRESENTATION_RUBRIC
               ),
+            };
+          }
+          if (
+            (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(
+              ses.rubricId
+            ) &&
+            (!ses.rubricSnapshot || ses.rubricSnapshot.id !== ses.rubricId)
+          ) {
+            const existingRubric = existingBookRubricsById.get(ses.rubricId);
+            const fallbackV3 =
+              ses.rubricId === LITERARY_BOOK_PRESENTATION_RUBRIC_ID
+                ? LEGACY_V3_LITERARY_BOOK_RUBRIC
+                : LEGACY_V3_INFORMATIVE_BOOK_RUBRIC;
+            sessionsUpdated = true;
+            return {
+              ...ses,
+              rubricSnapshot: freezeRubricSnapshot(existingRubric || fallbackV3),
             };
           }
           return ses;
@@ -3116,6 +3149,15 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
 
         const syncedRubrics = filteredRubrics.map((r) => {
           const seedMatch = seedById.get(r.id);
+          if (
+            seedMatch &&
+            (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(r.id) &&
+            (r.version ?? 3) < (seedMatch.version ?? 4) &&
+            r.criteria.length === 7
+          ) {
+            gradeBackfilled = true;
+            return { ...seedMatch };
+          }
           if (seedMatch?.gradeLevel && r.gradeLevel !== seedMatch.gradeLevel) {
             gradeBackfilled = true;
             return { ...r, gradeLevel: seedMatch.gradeLevel };
@@ -3211,6 +3253,16 @@ export async function purgeSyntheticSeedDataAsync(
                 const legacyBookRubricInState = cleaned.rubrics.find(
                   (r) => r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID
                 );
+                const existingBookRubricsById = new Map<string, Rubric>();
+                for (const r of cleaned.rubrics) {
+                  if (
+                    (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(
+                      r.id
+                    )
+                  ) {
+                    existingBookRubricsById.set(r.id, r);
+                  }
+                }
 
                 let sessionsUpdated = false;
                 const syncedSessions = cleaned.sessions.map((ses) => {
@@ -3226,6 +3278,28 @@ export async function purgeSyntheticSeedDataAsync(
                       rubricSnapshot: freezeRubricSnapshot(
                         legacyBookRubricInState ||
                           LEGACY_BOOK_PRESENTATION_RUBRIC
+                      ),
+                    };
+                  }
+                  if (
+                    (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(
+                      ses.rubricId
+                    ) &&
+                    (!ses.rubricSnapshot ||
+                      ses.rubricSnapshot.id !== ses.rubricId)
+                  ) {
+                    const existingRubric = existingBookRubricsById.get(
+                      ses.rubricId
+                    );
+                    const fallbackV3 =
+                      ses.rubricId === LITERARY_BOOK_PRESENTATION_RUBRIC_ID
+                        ? LEGACY_V3_LITERARY_BOOK_RUBRIC
+                        : LEGACY_V3_INFORMATIVE_BOOK_RUBRIC;
+                    sessionsUpdated = true;
+                    return {
+                      ...ses,
+                      rubricSnapshot: freezeRubricSnapshot(
+                        existingRubric || fallbackV3
                       ),
                     };
                   }
@@ -3245,6 +3319,17 @@ export async function purgeSyntheticSeedDataAsync(
 
                 const syncedRubrics = filteredRubrics.map((r) => {
                   const seedMatch = seedById.get(r.id);
+                  if (
+                    seedMatch &&
+                    (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(
+                      r.id
+                    ) &&
+                    (r.version ?? 3) < (seedMatch.version ?? 4) &&
+                    r.criteria.length === 7
+                  ) {
+                    gradeBackfilled = true;
+                    return { ...seedMatch };
+                  }
                   if (
                     seedMatch?.gradeLevel &&
                     r.gradeLevel !== seedMatch.gradeLevel

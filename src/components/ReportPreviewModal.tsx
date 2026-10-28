@@ -20,6 +20,7 @@ import {
   getStudentEvaluationBreakdown,
   getStudentProgressHistory,
   isScoreAssigned,
+  isDualBookSpeakingRubric,
 } from '../utils/rubricLogic.ts';
 import {
   resolvePdfColumnOptions,
@@ -446,13 +447,32 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
 
                           {colOpts.showFinalScoreAndLevel && (
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
-                                <Award className="w-3.5 h-3.5 text-blue-900" />
-                                {item.performanceLabel}
-                              </span>
-                              <span className="font-mono-num text-sm font-bold px-3 py-1 rounded bg-blue-900 text-white">
-                                {item.scoreOutOf100} / 100
-                              </span>
+                              {item.isDualEvaluation ? (
+                                <>
+                                  <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-blue-900 text-white">
+                                    Kitap Sunumu: {item.bookPresentationScoreOutOf100 ?? item.scoreOutOf100} / 100
+                                  </span>
+                                  {item.speakingExamScoreOutOf100 !== null && (
+                                    <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-emerald-800 text-white">
+                                      Konuşma Sınavı: {item.speakingExamScoreOutOf100} / 100
+                                    </span>
+                                  )}
+                                  <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
+                                    <Award className="w-3.5 h-3.5 text-blue-900" />
+                                    {item.performanceLabel}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
+                                    <Award className="w-3.5 h-3.5 text-blue-900" />
+                                    {item.performanceLabel}
+                                  </span>
+                                  <span className="font-mono-num text-sm font-bold px-3 py-1 rounded bg-blue-900 text-white">
+                                    {item.scoreOutOf100} / 100
+                                  </span>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
@@ -552,9 +572,20 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                             ))}
                           {colOpts.showFinalScoreAndLevel && (
                             <>
-                              <th className="py-2.5 px-2 text-center w-24">
-                                Kesin (100)
-                              </th>
+                              {isDualBookSpeakingRubric(activeReportRubric) ? (
+                                <>
+                                  <th className="py-2.5 px-2 text-center w-24">
+                                    Kitap Sunumu (100)
+                                  </th>
+                                  <th className="py-2.5 px-2 text-center w-24">
+                                    Konuşma Sınavı (100)
+                                  </th>
+                                </>
+                              ) : (
+                                <th className="py-2.5 px-2 text-center w-24">
+                                  Kesin (100)
+                                </th>
+                              )}
                               <th className="py-2.5 px-3 w-28">Düzey</th>
                             </>
                           )}
@@ -571,6 +602,10 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                               activeReportRubric,
                               ev
                             );
+                          const isDual = isDualBookSpeakingRubric(
+                            activeReportRubric
+                          );
+                          const dual = effectiveCalc.dualResult;
                           const activeScores =
                             activeSource === 'group'
                               ? ev?.groupCriterionScores || {}
@@ -613,12 +648,30 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
                                 })}
                               {colOpts.showFinalScoreAndLevel && (
                                 <>
-                                  <td className="py-2 px-2 text-center font-mono-num font-bold text-slate-900">
-                                    {effectiveCalc.isComplete &&
-                                    effectiveCalc.finalScoreOutOf100 !== null
-                                      ? effectiveCalc.finalScoreOutOf100
-                                      : '—'}
-                                  </td>
+                                  {isDual && dual ? (
+                                    <>
+                                      <td className="py-2 px-2 text-center font-mono-num font-bold text-slate-900">
+                                        {dual.isBookPresentationComplete &&
+                                        dual.finalBookPresentationScoreOutOf100 !==
+                                          null
+                                          ? dual.finalBookPresentationScoreOutOf100
+                                          : '—'}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-mono-num font-bold text-emerald-900">
+                                        {dual.isSpeakingComplete &&
+                                        dual.finalSpeakingScoreOutOf100 !== null
+                                          ? dual.finalSpeakingScoreOutOf100
+                                          : '—'}
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <td className="py-2 px-2 text-center font-mono-num font-bold text-slate-900">
+                                      {effectiveCalc.isComplete &&
+                                      effectiveCalc.finalScoreOutOf100 !== null
+                                        ? effectiveCalc.finalScoreOutOf100
+                                        : '—'}
+                                    </td>
+                                  )}
                                   <td className="py-2 px-3 text-slate-700">
                                     {effectiveCalc.performanceLabel}
                                   </td>

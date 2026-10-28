@@ -7,6 +7,7 @@ import {
   calculateWeightedScore,
   getStudentEvaluationBreakdown,
   applyIndividualCriterionEdit,
+  applyCriterionScoreToStudents,
   freezeRubricSnapshot,
   getEffectiveSessionRubric,
   validateRubric,
@@ -102,6 +103,7 @@ import {
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
   LEGACY_BOOK_PRESENTATION_RUBRIC,
   LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+  LEGACY_V3_LITERARY_BOOK_RUBRIC,
 } from '../data/bookPresentationRubric.ts';
 import {
   generatePaginatedSessionPdfBytes,
@@ -3559,7 +3561,7 @@ test('Evaluation Session Lifecycle: archiveEvaluationSession, deleteEvaluationSe
   assert.equal(remaining[0].id, 'ses-1');
 });
 
-test('Regression: purgeSyntheticSeedDataSync upgrades persisted catalog to the 2 new book rubrics while freezing legacy rub-tde-kitap-sunumu session snapshots and preserving scores', () => {
+test('Regression: purgeSyntheticSeedDataSync upgrades persisted catalog to the 2 V4 10-criterion dual book rubrics while freezing legacy V2 (8-criterion) and V3 (7-criterion) session snapshots without retroactive recalculation', () => {
   const mockStore = new Map<string, string>();
   const prevWindow = (globalThis as unknown as { window?: unknown }).window;
   (globalThis as unknown as { window: unknown }).window = {
@@ -3586,10 +3588,10 @@ test('Regression: purgeSyntheticSeedDataSync upgrades persisted catalog to the 2
       fullName: 'Selin Yıldız',
       classId: 'cls-10b',
     };
-    // Legacy session without rubricSnapshot that used the old 8-criterion 'rub-tde-kitap-sunumu'
-    const legacySession: EvaluationSession = {
+    // 1. Legacy V2 session without rubricSnapshot that used the old 8-criterion 'rub-tde-kitap-sunumu'
+    const legacyV2Session: EvaluationSession = {
       id: 'ses-legacy-book-1',
-      title: '1. Dönem Kitap Sunumu',
+      title: '1. Dönem Kitap Sunumu (V2)',
       classId: 'cls-10b',
       rubricId: LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
       date: '2026-10-20',
@@ -3617,11 +3619,41 @@ test('Regression: purgeSyntheticSeedDataSync upgrades persisted catalog to the 2
       },
     };
 
+    // 2. Legacy V3 session without rubricSnapshot that used the 7-criterion 'rub-tde-edebi-eser-sunumu'
+    const legacyV3Session: EvaluationSession = {
+      id: 'ses-legacy-book-v3',
+      title: 'Edebî Eser Sunumu (7 Ölçütlü V3)',
+      classId: 'cls-10b',
+      rubricId: LITERARY_BOOK_PRESENTATION_RUBRIC.id,
+      date: '2026-10-25',
+      status: 'completed',
+      mode: 'individual',
+      generalSessionNote: '7 ölçütlü V3 oturumu',
+      groups: [],
+      evaluations: {
+        'stu-10b-1': {
+          studentId: 'stu-10b-1',
+          criterionScores: {
+            'crit-ees-1': 2, // 20
+            'crit-ees-2': 1, // 10
+            'crit-ees-3': 2, // 20
+            'crit-ees-4': 1, // 5
+            'crit-ees-5': 2, // 10
+            'crit-ees-6': 1, // 5
+            'crit-ees-7': 2, // 10 -> 80/100 single score
+          },
+          note: 'V3 öğrenci notu',
+          tags: [],
+          updatedAt: '2026-10-25T10:00:00Z',
+        },
+      },
+    };
+
     const persistedBundle = createVerifiedBackupBundle({
       classrooms: [existingClassroom],
       students: [existingStudent],
-      rubrics: [LEGACY_BOOK_PRESENTATION_RUBRIC],
-      sessions: [legacySession],
+      rubrics: [LEGACY_BOOK_PRESENTATION_RUBRIC, LEGACY_V3_LITERARY_BOOK_RUBRIC],
+      sessions: [legacyV2Session, legacyV3Session],
     });
     mockStore.set(STORAGE_KEY, JSON.stringify(persistedBundle));
 
@@ -3639,55 +3671,55 @@ test('Regression: purgeSyntheticSeedDataSync upgrades persisted catalog to the 2
     assert.equal(verified.state.students.length, 1);
     assert.equal(verified.state.students[0].id, 'stu-10b-1');
 
-    // 2. Active rubrics catalog now has both new 7-criterion book rubrics and no longer lists the old unedited single rubric
-    assert.equal(
-      verified.state.rubrics.some(
-        (r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC.id
-      ),
-      true
+    // 2. Active rubrics catalog now has both V4 10-criterion dual book rubrics
+    const upgradedLiterary = verified.state.rubrics.find(
+      (r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC.id
     );
-    assert.equal(
-      verified.state.rubrics.some(
-        (r) => r.id === INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id
-      ),
-      true
+    const upgradedInformative = verified.state.rubrics.find(
+      (r) => r.id === INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id
     );
-    assert.equal(
-      verified.state.rubrics.some(
-        (r) => r.id === LEGACY_BOOK_PRESENTATION_RUBRIC_ID
-      ),
-      false
-    );
-
-    // 3. Legacy session has its 8-criterion rubricSnapshot frozen and its 81-point score is 100% preserved
-    const preservedSession = verified.state.sessions[0];
-    assert.equal(preservedSession.id, 'ses-legacy-book-1');
-    assert.ok(preservedSession.rubricSnapshot);
-    assert.equal(
-      preservedSession.rubricSnapshot.id,
-      LEGACY_BOOK_PRESENTATION_RUBRIC_ID
-    );
-    assert.equal(preservedSession.rubricSnapshot.criteria.length, 8);
+    assert.ok(upgradedLiterary);
+    assert.ok(upgradedInformative);
+    assert.equal(upgradedLiterary.criteria.length, 10);
+    assert.equal(upgradedInformative.criteria.length, 10);
+    assert.equal(upgradedLiterary.scoringMode, 'dual_book_and_speaking');
+    assert.equal(upgradedInformative.scoringMode, 'dual_book_and_speaking');
 
     const rubricsById = Object.fromEntries(
       verified.state.rubrics.map((r) => [r.id, r])
     );
-    const effectiveRubric = getEffectiveSessionRubric(
-      preservedSession,
-      rubricsById
+
+    // 3. Legacy V2 session has its 8-criterion rubricSnapshot frozen and its 81-point score is preserved
+    const preservedV2 = verified.state.sessions.find(
+      (s) => s.id === 'ses-legacy-book-1'
     );
-    assert.ok(effectiveRubric);
-    assert.equal(effectiveRubric.criteria.length, 8);
-    const breakdown = getStudentEvaluationBreakdown(
-      effectiveRubric,
-      preservedSession.evaluations['stu-10b-1']
+    assert.ok(preservedV2?.rubricSnapshot);
+    assert.equal(preservedV2.rubricSnapshot.criteria.length, 8);
+    const effectiveV2 = getEffectiveSessionRubric(preservedV2, rubricsById);
+    assert.ok(effectiveV2);
+    const breakdownV2 = getStudentEvaluationBreakdown(
+      effectiveV2,
+      preservedV2.evaluations['stu-10b-1']
     );
-    assert.equal(breakdown.effectiveCalc.isComplete, true);
-    assert.equal(breakdown.effectiveCalc.finalScoreOutOf100, 81);
-    assert.equal(
-      preservedSession.evaluations['stu-10b-1'].note,
-      'Eski öğrenci değerlendirme notu'
+    assert.equal(breakdownV2.effectiveCalc.isComplete, true);
+    assert.equal(breakdownV2.effectiveCalc.finalScoreOutOf100, 81);
+
+    // 4. Legacy V3 session has its 7-criterion rubricSnapshot frozen and its 80-point single score is preserved without retroactive dual recalculation
+    const preservedV3 = verified.state.sessions.find(
+      (s) => s.id === 'ses-legacy-book-v3'
     );
+    assert.ok(preservedV3?.rubricSnapshot);
+    assert.equal(preservedV3.rubricSnapshot.criteria.length, 7);
+    const effectiveV3 = getEffectiveSessionRubric(preservedV3, rubricsById);
+    assert.ok(effectiveV3);
+    assert.equal(effectiveV3.criteria.length, 7);
+    const breakdownV3 = getStudentEvaluationBreakdown(
+      effectiveV3,
+      preservedV3.evaluations['stu-10b-1']
+    );
+    assert.equal(breakdownV3.effectiveCalc.isComplete, true);
+    assert.equal(breakdownV3.effectiveCalc.finalScoreOutOf100, 80);
+    assert.equal(breakdownV3.effectiveCalc.dualResult, undefined);
   } finally {
     if (prevWindow === undefined) {
       delete (globalThis as unknown as { window?: unknown }).window;
@@ -3696,6 +3728,166 @@ test('Regression: purgeSyntheticSeedDataSync upgrades persisted catalog to the 2
     }
   }
 });
+
+test('Regression: runtime legacy V3 session without rubricSnapshot, bulk criterion assignment, and group reconciliation preserve and persist dual scores accurately', () => {
+  const rubricsById: Record<string, Rubric> = {
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.id]: LITERARY_BOOK_PRESENTATION_RUBRIC,
+    [INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id]:
+      INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+  };
+
+  // 1. Completed legacy V3 session without rubricSnapshot at runtime is inferred as 7-criterion V3 (never retroactively recalculated as incomplete 7/10 V4)
+  const rawCompletedV3Session: EvaluationSession = {
+    id: 'ses-raw-v3',
+    title: 'Geçmiş Dönem Kitap Sunumu',
+    classId: 'cls-9a',
+    rubricId: LITERARY_BOOK_PRESENTATION_RUBRIC.id,
+    date: '2026-10-15',
+    status: 'completed',
+    mode: 'individual',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      'stu-1': {
+        studentId: 'stu-1',
+        criterionScores: {
+          'crit-ees-1': 2, // 20
+          'crit-ees-2': 2, // 20
+          'crit-ees-3': 1, // 10
+          'crit-ees-4': 2, // 10
+          'crit-ees-5': 1, // 5
+          'crit-ees-6': 2, // 10
+          'crit-ees-7': 1, // 5 -> 80
+        },
+        note: '',
+        tags: [],
+        updatedAt: '2026-10-15T10:00:00Z',
+      },
+    },
+  };
+
+  const inferredRubric = getEffectiveSessionRubric(
+    rawCompletedV3Session,
+    rubricsById
+  );
+  assert.ok(inferredRubric);
+  assert.equal(inferredRubric.criteria.length, 7);
+  assert.equal(inferredRubric.scoringMode, 'standard_100');
+
+  const v3Breakdown = getStudentEvaluationBreakdown(
+    inferredRubric,
+    rawCompletedV3Session.evaluations['stu-1']
+  );
+  assert.equal(v3Breakdown.effectiveCalc.isComplete, true);
+  assert.equal(v3Breakdown.effectiveCalc.finalScoreOutOf100, 80);
+  assert.equal(v3Breakdown.effectiveCalc.dualResult, undefined);
+
+  // 2. Bulk criterion assignment (applyCriterionScoreToStudents) persists dual scores when rubric is provided
+  let bulkEvals: EvaluationSession['evaluations'] = {};
+  for (let i = 1; i <= 10; i++) {
+    bulkEvals = applyCriterionScoreToStudents(
+      bulkEvals,
+      ['stu-bulk-1'],
+      `crit-ees-${i}`,
+      i <= 4 ? 2 : 1, // Content all Evet (70/70), Speaking all Kısmen (50/100 -> 30% = 15) => Book = 85, Speaking = 50
+      '2026-10-27T12:00:00Z',
+      false,
+      LITERARY_BOOK_PRESENTATION_RUBRIC
+    );
+    if (i === 9) {
+      // After 9 criteria (5 speaking criteria scored, 1 speaking missing): neither score is finalized yet
+      assert.equal(bulkEvals['stu-bulk-1'].bookPresentationScore, null);
+      assert.equal(bulkEvals['stu-bulk-1'].speakingExamScore, null);
+      assert.equal(bulkEvals['stu-bulk-1'].contentScoreOutOf70, 70);
+    }
+  }
+  assert.equal(bulkEvals['stu-bulk-1'].contentScoreOutOf70, 70);
+  assert.equal(bulkEvals['stu-bulk-1'].speakingExamScore, 50);
+  assert.equal(bulkEvals['stu-bulk-1'].bookPresentationScore, 85);
+
+  // 3. Group evaluation and membership reconciliation persist and clean up dual group scores
+  const groupSession: EvaluationSession = {
+    id: 'ses-dual-grp',
+    title: 'Grup Kitap Sunumu',
+    classId: 'cls-11a',
+    rubricId: INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id,
+    rubricSnapshot: INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+    date: '2026-10-27',
+    status: 'in_progress',
+    mode: 'group',
+    generalSessionNote: '',
+    groups: [
+      {
+        id: 'grp-1',
+        name: 'Bilim Grubu',
+        studentIds: ['stu-g1', 'stu-g2'],
+        criterionScores: {},
+        groupNote: 'Başarılı sunum',
+      },
+    ],
+    evaluations: {},
+  };
+
+  const fullGroupScores: Record<string, number> = {
+    'crit-bks-1': 1, // 10
+    'crit-bks-2': 2, // 20
+    'crit-bks-3': 2, // 20
+    'crit-bks-4': 1, // 5 -> Content = 55/70
+    'crit-bks-5': 2, // 20
+    'crit-bks-6': 2, // 20
+    'crit-bks-7': 1, // 10
+    'crit-bks-8': 2, // 20
+    'crit-bks-9': 1, // 5
+    'crit-bks-10': 1, // 5 -> Speaking = 80/100 (30% = 24) -> Book = 55 + 24 = 79/100
+  };
+
+  const grpRes = evaluateGroupAndTransferToMembers(
+    groupSession,
+    'grp-1',
+    (g) => ({ ...g, criterionScores: fullGroupScores }),
+    {
+      rubric: INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+      timestampIso: '2026-10-27T12:30:00Z',
+      autoTransferToMembers: true,
+    }
+  );
+
+  assert.equal(grpRes.isCompleteAfter, true);
+  assert.equal(grpRes.transferredToMembers, true);
+  const updatedGroup = grpRes.updatedSession.groups[0];
+  assert.equal(updatedGroup.groupContentScoreOutOf70, 55);
+  assert.equal(updatedGroup.groupSpeakingExamScore, 80);
+  assert.equal(updatedGroup.groupBookPresentationScore, 79);
+
+  const memberEval = grpRes.updatedSession.evaluations['stu-g1'];
+  assert.equal(memberEval.groupContentScoreOutOf70, 55);
+  assert.equal(memberEval.groupSpeakingExamScore, 80);
+  assert.equal(memberEval.groupBookPresentationScore, 79);
+
+  // Removing stu-g2 from the group clears their reflected group dual scores
+  const reconciledAfterRemoval = reconcileGroupEvaluationsWithMemberships(
+    grpRes.updatedSession.evaluations,
+    [{ ...updatedGroup, studentIds: ['stu-g1'] }],
+    '2026-10-27T12:35:00Z',
+    INFORMATIVE_BOOK_PRESENTATION_RUBRIC
+  );
+  assert.equal(
+    reconciledAfterRemoval['stu-g2'].groupBookPresentationScore,
+    undefined
+  );
+  assert.equal(
+    reconciledAfterRemoval['stu-g2'].groupSpeakingExamScore,
+    undefined
+  );
+  assert.equal(
+    reconciledAfterRemoval['stu-g2'].groupContentScoreOutOf70,
+    undefined
+  );
+  assert.equal(reconciledAfterRemoval['stu-g1'].groupBookPresentationScore, 79);
+  assert.equal(reconciledAfterRemoval['stu-g1'].groupSpeakingExamScore, 80);
+});
+
+
 
 
 

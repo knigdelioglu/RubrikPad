@@ -20,6 +20,8 @@ import {
   validateRubric,
   checkRubricDeletionImpact,
   createUniqueEntityId,
+  isDualBookSpeakingRubric,
+  getCriterionSection,
 } from '../utils/rubricLogic.ts';
 import {
   RubrikService,
@@ -525,15 +527,16 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                     <AlertTriangle className="w-4 h-4 shrink-0" />
                     Rubrik Doğrulama Hataları ({validationErrors.length}): Kaydetmeden önce düzeltilmelidir
                   </span>
-                  {(totalDraftPoints !== 100 || totalDraftWeight !== 100) && (
-                    <button
-                      type="button"
-                      onClick={handleBalanceWeights}
-                      className="px-2.5 py-1 text-xs font-bold text-white bg-red-700 hover:bg-red-800 rounded-md cursor-pointer"
-                    >
-                      Puan ve Ağırlıkları 100&apos;e Eşitle
-                    </button>
-                  )}
+                  {!isDualBookSpeakingRubric(draftRubric) &&
+                    (totalDraftPoints !== 100 || totalDraftWeight !== 100) && (
+                      <button
+                        type="button"
+                        onClick={handleBalanceWeights}
+                        className="px-2.5 py-1 text-xs font-bold text-white bg-red-700 hover:bg-red-800 rounded-md cursor-pointer"
+                      >
+                        Puan ve Ağırlıkları 100&apos;e Eşitle
+                      </button>
+                    )}
                 </div>
                 <ul className="list-disc list-inside space-y-0.5 text-red-800">
                   {validationErrors.map((err, i) => (
@@ -632,45 +635,61 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
             {/* Points & Weight Summary Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3.5">
               <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Scale className="w-4 h-4 text-slate-600" />
-                  <span className="text-xs font-semibold text-slate-700">
-                    Toplam Kriter Puanı:
-                  </span>
-                  <span
-                    className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
-                      totalDraftPoints === 100
-                        ? 'bg-blue-900 text-white'
-                        : 'bg-amber-100 text-amber-900'
-                    }`}
-                  >
-                    {totalDraftPoints} / 100 Puan
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-700">
-                    Toplam Ağırlık:
-                  </span>
-                  <span
-                    className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
-                      totalDraftWeight === 100
-                        ? 'bg-blue-900 text-white'
-                        : 'bg-amber-100 text-amber-900'
-                    }`}
-                  >
-                    %{totalDraftWeight}
-                  </span>
-                </div>
+                {isDualBookSpeakingRubric(draftRubric) ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Scale className="w-4 h-4 text-blue-900" />
+                    <span className="text-xs font-semibold text-slate-700">
+                      Tek Değerlendirme, İki Sonuç:
+                    </span>
+                    <span className="font-mono-num text-xs font-bold px-2.5 py-0.5 rounded bg-blue-900 text-white">
+                      1. Kitap İçeriği (70 Puan) + 2. Ortak Konuşma (100 Puan) → 2 Ayrı 100&apos;lük Not
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-4 h-4 text-slate-600" />
+                      <span className="text-xs font-semibold text-slate-700">
+                        Toplam Kriter Puanı:
+                      </span>
+                      <span
+                        className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
+                          totalDraftPoints === 100
+                            ? 'bg-blue-900 text-white'
+                            : 'bg-amber-100 text-amber-900'
+                        }`}
+                      >
+                        {totalDraftPoints} / 100 Puan
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-700">
+                        Toplam Ağırlık:
+                      </span>
+                      <span
+                        className={`font-mono-num text-sm font-bold px-2 py-0.5 rounded ${
+                          totalDraftWeight === 100
+                            ? 'bg-blue-900 text-white'
+                            : 'bg-amber-100 text-amber-900'
+                        }`}
+                      >
+                        %{totalDraftWeight}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleBalanceWeights}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 cursor-pointer"
-                >
-                  Puanları Eşitle (100 Puan)
-                </button>
+                {!isDualBookSpeakingRubric(draftRubric) && (
+                  <button
+                    type="button"
+                    onClick={handleBalanceWeights}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 cursor-pointer"
+                  >
+                    Puanları Eşitle (100 Puan)
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleAddCriterionToDraft}
@@ -911,7 +930,9 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                       </span>
                       {vCheck.isValid ? (
                         <span className="text-[10px] font-bold text-slate-700 bg-slate-200/80 px-1.5 py-0.5 rounded">
-                          {totalRubricPts}P
+                          {isDualBookSpeakingRubric(rub)
+                            ? '100P + 100P (2 Not)'
+                            : `${totalRubricPts}P`}
                         </span>
                       ) : (
                         <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
@@ -1047,6 +1068,28 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                   </div>
                 )}
 
+                {isDualBookSpeakingRubric(activeRubric) && (
+                  <div
+                    data-testid="rubric-dual-scoring-banner"
+                    className="bg-blue-50/80 border border-blue-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-800"
+                  >
+                    <div>
+                      <span className="font-bold text-blue-950">
+                        Tek Değerlendirme, İki Sonuç Sistemi:
+                      </span>{' '}
+                      4 kitap içeriği ölçütü (70 Puan) ve 6 ortak konuşma ölçütü (100 Puan) yalnızca birer kez puanlanır.
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0 font-mono-num font-bold">
+                      <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
+                        Kitap Sunumu: İçerik (70) + %30 Konuşma = 100P
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-emerald-800 text-white">
+                        Konuşma Sınavı: 6 Konuşma Ölçütü = 100P
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Rubric Matrix Table */}
                 <div className="border border-slate-200 rounded-xl overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[720px]">
@@ -1081,17 +1124,36 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                         );
                         const isThreeLevel =
                           crit.levels.length === 3 && maxLvlPts === 2;
+                        const isDual = isDualBookSpeakingRubric(activeRubric);
+                        const critSec = isDual
+                          ? getCriterionSection(crit, idx, activeRubric)
+                          : null;
                         return (
                           <tr key={crit.id} className="align-top">
                             <td className="py-3 px-4 bg-slate-50/60">
                               <span className="text-[11px] text-slate-500 block">
-                                0{idx + 1}. {crit.category}
+                                {idx + 1 < 10 ? `0${idx + 1}` : idx + 1}. {crit.category}
                               </span>
+                              {isDual && (
+                                <span
+                                  className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    critSec === 'speaking'
+                                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                                      : 'bg-blue-100 text-blue-900 border border-blue-300'
+                                  }`}
+                                >
+                                  {critSec === 'speaking'
+                                    ? '2. Ortak Konuşma (100P)'
+                                    : '1. Kitap İçeriği (70P)'}
+                                </span>
+                              )}
                               <span className="font-bold text-slate-900 text-sm block mt-0.5">
                                 {crit.title}
                               </span>
                               <span className="font-mono-num text-xs font-bold text-blue-900 mt-1 block">
-                                {critMaxPts} Puan · %{crit.weight}
+                                {isDual
+                                  ? `${critMaxPts} Puan`
+                                  : `${critMaxPts} Puan · %${crit.weight}`}
                               </span>
                             </td>
                             {crit.levels.map((lvl) => {

@@ -1,4 +1,21 @@
 import type { Rubric, RubricCriterion, RubricLevel } from '../types.ts';
+import {
+  SHARED_SPEAKING_CRITERIA_TEMPLATES,
+  SHARED_SPEAKING_SECTION_CATEGORY,
+  SHARED_SPEAKING_TOTAL_POINTS,
+  buildSharedSpeakingCriteria,
+  createReusableSpeakingRubric,
+  createThreeLevelScale,
+} from './speakingEvaluationCriteria.ts';
+
+export {
+  SHARED_SPEAKING_CRITERIA_TEMPLATES,
+  SHARED_SPEAKING_SECTION_CATEGORY,
+  SHARED_SPEAKING_TOTAL_POINTS,
+  buildSharedSpeakingCriteria,
+  createReusableSpeakingRubric,
+  createThreeLevelScale,
+};
 
 export const LITERARY_BOOK_PRESENTATION_RUBRIC_ID = 'rub-tde-edebi-eser-sunumu';
 export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID =
@@ -26,29 +43,203 @@ export const BOOK_PRESENTATION_LEVEL_PERCENTAGES: Record<number, number> = {
 };
 
 function levels(no: string, partial: string, yes: string): RubricLevel[] {
-  return [
-    {
-      level: 0,
-      label: 'Hayır',
-      points: 0,
-      description: no,
-    },
-    {
-      level: 1,
-      label: 'Kısmen',
-      points: 1,
-      description: partial,
-    },
-    {
-      level: 2,
-      label: 'Evet',
-      points: 2,
-      description: yes,
-    },
-  ];
+  return createThreeLevelScale(no, partial, yes);
 }
 
-function createSharedPresentationCriteria(prefix: 'ees' | 'bks'): RubricCriterion[] {
+/**
+ * Edebî Eser Okuma ve Sunum — 1. Kitap İçeriği Ölçütleri (70 Puan: 20 + 20 + 20 + 10)
+ */
+const LITERARY_CONTENT_CRITERIA: RubricCriterion[] = [
+  {
+    id: 'crit-ees-1',
+    title: 'İçeriği ve temel anlamı kavrama',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 20,
+    maxPoints: 20,
+    required: true,
+    levels: levels(
+      'Eserin konusu, izleği (teması) veya temel anlamı doğru aktarılmamış ya da hiç açıklanmamıştır.',
+      'Eserin konusu veya izleği genel hatlarıyla belirtilmiş ancak temel anlam bütünlüğü eksik ya da yüzeysel aktarılmıştır.',
+      'Eserin türüne göre konusu, izleği (teması) ve temel anlamı doğru, açık ve bütünlüklü biçimde açıklanmıştır.'
+    ),
+  },
+  {
+    id: 'crit-ees-2',
+    title: 'Türe uygun edebî yapı, dil ve anlatımı çözümleme',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 20,
+    maxPoints: 20,
+    required: true,
+    levels: levels(
+      'Eserin türüne özgü yapı unsurlarına (anlatma/göstermeye dayalı türlerde kurgu, kişiler, çatışma, zaman-mekân; şiirde söyleyici, ahenk ve imge düzeni vb.) veya dil ve anlatım özelliklerine değinilmemiştir.',
+      'Eserin türüne özgü bazı yapı veya dil ve anlatım özellikleri sıralanmış ancak bunların eserin anlamıyla ilişkisi kısmen kurulmuştur.',
+      'Eserin türüne özgü yapı unsurları (kurgu, kişiler/söyleyici, çatışma, ahenk, imge veya sahneleme özellikleri) ile dil ve üslup özellikleri anlamla ilişkilendirilerek çözümlenmiştir.'
+    ),
+  },
+  {
+    id: 'crit-ees-3',
+    title: 'Yorumlama ve eleştirel değerlendirme',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 20,
+    maxPoints: 20,
+    required: true,
+    levels: levels(
+      'Eserin edebî değeri, bakış açısı veya etkisine ilişkin gerekçeli bir yorum ya da eleştirel değerlendirme paylaşılmamıştır.',
+      'Eserle ilgili kişisel beğeni veya değerlendirmeler dile getirilmiş ancak gerekçeleri yüzeysel ya da tek yönlü kalmıştır.',
+      'Eserin iletisi, sanatsal yönü, bakış açısı ve okur üzerindeki etkisi tutarlı ve gerekçeli bir bakışla değerlendirilmiştir.'
+    ),
+  },
+  {
+    id: 'crit-ees-4',
+    title: 'Yorumları eserden örneklerle destekleme',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 10,
+    maxPoints: 10,
+    required: true,
+    levels: levels(
+      'Yapılan açıklamalar ve yorumlar eserden herhangi bir bölüm, dize, replik, durum veya somut örnekle desteklenmemiştir.',
+      'Eserden sınırlı sayıda örnek veya gönderme paylaşılmış ancak bunların yapılan yorumlarla bağı kısmen kurulmuştur.',
+      'Açıklama ve yorumlar eserin türüne uygun somut örnekler, bölümler, dizeler, replikler veya metinsel göndermelerle yerinde desteklenmiştir.'
+    ),
+  },
+];
+
+/**
+ * Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum — 1. Kitap İçeriği Ölçütleri (70 Puan: 20 + 20 + 20 + 10)
+ */
+const INFORMATIVE_CONTENT_CRITERIA: RubricCriterion[] = [
+  {
+    id: 'crit-bks-1',
+    title: 'Konuyu, amacı ve temel düşünceyi kavrama',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 20,
+    maxPoints: 20,
+    required: true,
+    levels: levels(
+      'Kitabın ele aldığı konu, yazılış amacı veya savunduğu temel düşünce (tez) doğru aktarılmamış ya da hiç açıklanmamıştır.',
+      'Kitabın konusu belirtilmiş ancak yazılış amacı veya temel düşüncesi eksik ya da yüzeysel biçimde ifade edilmiştir.',
+      'Kitabın konusu, yazılış amacı ve merkezî düşüncesi (tezi) doğru, açık ve bütünlüklü biçimde ortaya konulmuştur.'
+    ),
+  },
+  {
+    id: 'crit-bks-2',
+    title: 'Temel bilgileri, kavramları ve düşünceler arası ilişkileri açıklama',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 20,
+    maxPoints: 20,
+    required: true,
+    levels: levels(
+      'Kitaptaki temel kavramlar, bilgiler veya yardımcı düşünceler açıklanmamış; düşünceler arası bağlar kurulmamıştır.',
+      'Kitaptaki bazı bilgi ve kavramlar sıralanmış ancak bunların ana düşünceyle ve birbirleriyle ilişkisi kısmen açıklanmıştır.',
+      'Kitaptaki temel bilgiler, anahtar kavramlar ve yardımcı düşünceler; neden-sonuç ve gerekçe-sonuç ilişkileriyle tutarlı biçimde açıklanmıştır.'
+    ),
+  },
+  {
+    id: 'crit-bks-3',
+    title: 'Eleştirel değerlendirme ve çıkarımda bulunma',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 20,
+    maxPoints: 20,
+    required: true,
+    levels: levels(
+      'Yazarın yaklaşımı, sunduğu bilgilerin tutarlılığı veya kitabın katkısına ilişkin eleştirel bir değerlendirme ya da çıkarım paylaşılmamıştır.',
+      'Kitap hakkında genel görüşler belirtilmiş ancak argümanların gücü ve olası çıkarımlar yüzeysel değerlendirilmiştir.',
+      'Yazarın bakış açısı, dayanaklarının gücü ve kitabın düşünce/bilgi alanına katkısı sorgulanarak özgün ve gerekçeli çıkarımlarda bulunulmuştur.'
+    ),
+  },
+  {
+    id: 'crit-bks-4',
+    title: 'Bilgileri ve yorumları kitaptan örneklerle destekleme',
+    category: '1. Kitap İçeriği (70 Puan)',
+    section: 'content',
+    weight: 10,
+    maxPoints: 10,
+    required: true,
+    levels: levels(
+      'Aktarılan bilgiler ve değerlendirmeler kitaptan herhangi bir veri, olgu, argüman, tespit veya somut örnekle desteklenmemiştir.',
+      'Kitaptan sınırlı sayıda örnek veya tespit paylaşılmış ancak bunların yapılan değerlendirmelerle ilişkisi kısmen kurulmuştur.',
+      'Aktarılan bilgiler ve eleştirel yorumlar kitaptaki somut örnekler, olgular, veriler veya temel tespitlerle yerinde desteklenmiştir.'
+    ),
+  },
+];
+
+/**
+ * 1. Edebî Eser Okuma ve Sunum Rubriği (Tek Değerlendirme, İki Sonuç — v4)
+ * - 1. Kitap İçeriği: 4 ölçüt, 70 puan
+ * - 2. Ortak Konuşma Değerlendirmesi: 6 ölçüt, 100 puan
+ * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + Konuşma Puanının %30'u (30)
+ * - Konuşma Sınavı Notu (100 üzerinden): 6 Konuşma Ölçütünün Toplamı (100)
+ * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
+ */
+export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
+  id: LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+  title: 'Edebî Eser Okuma ve Sunum',
+  subject: 'Türk Dili ve Edebiyatı',
+  gradeLevel: 'Genel',
+  description:
+    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + %30 Konuşma = 100) hem de Konuşma Sınavı Notu (100) ayrı ayrı hesaplanır.',
+  maxLevelPoints: 2,
+  createdAt: '2026-10-27',
+  version: 4,
+  scoringMode: 'dual_book_and_speaking',
+  criteria: [
+    ...LITERARY_CONTENT_CRITERIA,
+    ...buildSharedSpeakingCriteria({
+      idPrefix: 'ees',
+      startCriterionNumber: 5,
+      category: '2. Ortak Konuşma Değerlendirmesi (100 Puan)',
+    }),
+  ],
+};
+
+/**
+ * 2. Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum Rubriği (Tek Değerlendirme, İki Sonuç — v4)
+ * - 1. Kitap İçeriği: 4 ölçüt, 70 puan
+ * - 2. Ortak Konuşma Değerlendirmesi: 6 ölçüt, 100 puan
+ * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + Konuşma Puanının %30'u (30)
+ * - Konuşma Sınavı Notu (100 üzerinden): 6 Konuşma Ölçütünün Toplamı (100)
+ * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
+ */
+export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC: Rubric = {
+  id: INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
+  title: 'Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum',
+  subject: 'Türk Dili ve Edebiyatı',
+  gradeLevel: 'Genel',
+  description:
+    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + %30 Konuşma = 100) hem de Konuşma Sınavı Notu (100) ayrı ayrı hesaplanır.',
+  maxLevelPoints: 2,
+  createdAt: '2026-10-27',
+  version: 4,
+  scoringMode: 'dual_book_and_speaking',
+  criteria: [
+    ...INFORMATIVE_CONTENT_CRITERIA,
+    ...buildSharedSpeakingCriteria({
+      idPrefix: 'bks',
+      startCriterionNumber: 5,
+      category: '2. Ortak Konuşma Değerlendirmesi (100 Puan)',
+    }),
+  ],
+};
+
+export const BOOK_PRESENTATION_RUBRICS: readonly Rubric[] = [
+  LITERARY_BOOK_PRESENTATION_RUBRIC,
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+] as const;
+
+export const BOOK_PRESENTATION_RUBRIC: Rubric = LITERARY_BOOK_PRESENTATION_RUBRIC;
+
+/**
+ * Önceki sürüm (v3 — 7 ölçütlü tek sonuçlu) kitap rubrikleriyle oluşturulmuş geçmiş oturumların
+ * geriye dönük yeniden hesaplanmaması için korunan dondurulmuş v3 rubrik tanımları.
+ */
+function createLegacyV3PresentationCriteria(prefix: 'ees' | 'bks'): RubricCriterion[] {
   return [
     {
       id: `crit-${prefix}-5`,
@@ -92,156 +283,53 @@ function createSharedPresentationCriteria(prefix: 'ees' | 'bks'): RubricCriterio
   ];
 }
 
-/**
- * 1. Edebî Eser Okuma ve Sunum Rubriği
- * Roman, hikâye, şiir, tiyatro ve diğer edebî türler için 7 ölçütlü, 100 puanlık, 3 dereceli (Evet %100, Kısmen %50, Hayır %0) rubrik.
- * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
- */
-export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
+export const LEGACY_V3_LITERARY_BOOK_RUBRIC: Rubric = {
   id: LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
   title: 'Edebî Eser Okuma ve Sunum',
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
   description:
-    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin okuma ve sunum süreçlerini; içeriği kavrama, türe özgü yapı ve anlatımı çözümleme, eleştirel değerlendirme, eserden örneklerle destekleme ve sözlü sunum becerileri doğrultusunda 3 dereceli (Evet %100, Kısmen %50, Hayır %0) ölçekle değerlendiren 7 ölçütlü, 100 puanlık rubrik.',
+    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin okuma ve sunum süreçlerini 7 ölçütle 100 puan üzerinden değerlendiren önceki sürüm (v3) rubrik.',
   maxLevelPoints: 2,
   createdAt: '2026-10-27',
   version: 3,
+  scoringMode: 'standard_100',
   criteria: [
-    {
-      id: 'crit-ees-1',
-      title: 'İçeriği ve temel anlamı kavrama',
-      category: 'Eseri Anlama ve Çözümleme',
-      weight: 20,
-      maxPoints: 20,
-      required: true,
-      levels: levels(
-        'Eserin konusu, izleği (teması) veya temel anlamı doğru aktarılmamış ya da hiç açıklanmamıştır.',
-        'Eserin konusu veya izleği genel hatlarıyla belirtilmiş ancak temel anlam bütünlüğü eksik ya da yüzeysel aktarılmıştır.',
-        'Eserin türüne göre konusu, izleği (teması) ve temel anlamı doğru, açık ve bütünlüklü biçimde açıklanmıştır.'
-      ),
-    },
-    {
-      id: 'crit-ees-2',
-      title: 'Türe uygun edebî yapı, dil ve anlatımı çözümleme',
-      category: 'Eseri Anlama ve Çözümleme',
-      weight: 20,
-      maxPoints: 20,
-      required: true,
-      levels: levels(
-        'Eserin türüne özgü yapı unsurlarına (anlatma/göstermeye dayalı türlerde kurgu, kişiler, çatışma, zaman-mekân; şiirde söyleyici, ahenk ve imge düzeni vb.) veya dil ve anlatım özelliklerine değinilmemiştir.',
-        'Eserin türüne özgü bazı yapı veya dil ve anlatım özellikleri sıralanmış ancak bunların eserin anlamıyla ilişkisi kısmen kurulmuştur.',
-        'Eserin türüne özgü yapı unsurları (kurgu, kişiler/söyleyici, çatışma, ahenk, imge veya sahneleme özellikleri) ile dil ve üslup özellikleri anlamla ilişkilendirilerek çözümlenmiştir.'
-      ),
-    },
-    {
-      id: 'crit-ees-3',
-      title: 'Yorumlama ve eleştirel değerlendirme',
-      category: 'Yorumlama ve Kanıtlama',
-      weight: 20,
-      maxPoints: 20,
-      required: true,
-      levels: levels(
-        'Eserin edebî değeri, bakış açısı veya etkisine ilişkin gerekçeli bir yorum ya da eleştirel değerlendirme paylaşılmamıştır.',
-        'Eserle ilgili kişisel beğeni veya değerlendirmeler dile getirilmiş ancak gerekçeleri yüzeysel ya da tek yönlü kalmıştır.',
-        'Eserin iletisi, sanatsal yönü, bakış açısı ve okur üzerindeki etkisi tutarlı ve gerekçeli bir bakışla değerlendirilmiştir.'
-      ),
-    },
-    {
-      id: 'crit-ees-4',
-      title: 'Yorumları eserden örneklerle destekleme',
-      category: 'Yorumlama ve Kanıtlama',
-      weight: 10,
-      maxPoints: 10,
-      required: true,
-      levels: levels(
-        'Yapılan açıklamalar ve yorumlar eserden herhangi bir bölüm, dize, replik, durum veya somut örnekle desteklenmemiştir.',
-        'Eserden sınırlı sayıda örnek veya gönderme paylaşılmış ancak bunların yapılan yorumlarla bağı kısmen kurulmuştur.',
-        'Açıklama ve yorumlar eserin türüne uygun somut örnekler, bölümler, dizeler, replikler veya metinsel göndermelerle yerinde desteklenmiştir.'
-      ),
-    },
-    ...createSharedPresentationCriteria('ees'),
+    ...LITERARY_CONTENT_CRITERIA.map((c) => ({
+      ...c,
+      category:
+        c.id === 'crit-ees-1' || c.id === 'crit-ees-2'
+          ? 'Eseri Anlama ve Çözümleme'
+          : 'Yorumlama ve Kanıtlama',
+      section: undefined,
+    })),
+    ...createLegacyV3PresentationCriteria('ees'),
   ],
 };
 
-/**
- * 2. Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum Rubriği
- * Tarih, bilim, felsefe, araştırma ve düşünce kitapları için 7 ölçütlü, 100 puanlık, 3 dereceli (Evet %100, Kısmen %50, Hayır %0) rubrik.
- * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
- */
-export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC: Rubric = {
+export const LEGACY_V3_INFORMATIVE_BOOK_RUBRIC: Rubric = {
   id: INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
   title: 'Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum',
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
   description:
-    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının okuma ve sunum süreçlerini; konuyu ve temel düşünceyi kavrama, kavramlar ve düşünceler arası ilişkileri açıklama, eleştirel değerlendirme ve çıkarımda bulunma, kitaptan örneklerle destekleme ve sözlü sunum becerileri doğrultusunda 3 dereceli (Evet %100, Kısmen %50, Hayır %0) ölçekle değerlendiren 7 ölçütlü, 100 puanlık rubrik.',
+    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının okuma ve sunum süreçlerini 7 ölçütle 100 puan üzerinden değerlendiren önceki sürüm (v3) rubrik.',
   maxLevelPoints: 2,
   createdAt: '2026-10-27',
   version: 3,
+  scoringMode: 'standard_100',
   criteria: [
-    {
-      id: 'crit-bks-1',
-      title: 'Konuyu, amacı ve temel düşünceyi kavrama',
-      category: 'İçeriği ve Düşünce Yapısını Kavrama',
-      weight: 20,
-      maxPoints: 20,
-      required: true,
-      levels: levels(
-        'Kitabın ele aldığı konu, yazılış amacı veya savunduğu temel düşünce (tez) doğru aktarılmamış ya da hiç açıklanmamıştır.',
-        'Kitabın konusu belirtilmiş ancak yazılış amacı veya temel düşüncesi eksik ya da yüzeysel biçimde ifade edilmiştir.',
-        'Kitabın konusu, yazılış amacı ve merkezî düşüncesi (tezi) doğru, açık ve bütünlüklü biçimde ortaya konulmuştur.'
-      ),
-    },
-    {
-      id: 'crit-bks-2',
-      title: 'Temel bilgileri, kavramları ve düşünceler arası ilişkileri açıklama',
-      category: 'İçeriği ve Düşünce Yapısını Kavrama',
-      weight: 20,
-      maxPoints: 20,
-      required: true,
-      levels: levels(
-        'Kitaptaki temel kavramlar, bilgiler veya yardımcı düşünceler açıklanmamış; düşünceler arası bağlar kurulmamıştır.',
-        'Kitaptaki bazı bilgi ve kavramlar sıralanmış ancak bunların ana düşünceyle ve birbirleriyle ilişkisi kısmen açıklanmıştır.',
-        'Kitaptaki temel bilgiler, anahtar kavramlar ve yardımcı düşünceler; neden-sonuç ve gerekçe-sonuç ilişkileriyle tutarlı biçimde açıklanmıştır.'
-      ),
-    },
-    {
-      id: 'crit-bks-3',
-      title: 'Eleştirel değerlendirme ve çıkarımda bulunma',
-      category: 'Eleştirel Değerlendirme ve Kanıtlama',
-      weight: 20,
-      maxPoints: 20,
-      required: true,
-      levels: levels(
-        'Yazarın yaklaşımı, sunduğu bilgilerin tutarlılığı veya kitabın katkısına ilişkin eleştirel bir değerlendirme ya da çıkarım paylaşılmamıştır.',
-        'Kitap hakkında genel görüşler belirtilmiş ancak argümanların gücü ve olası çıkarımlar yüzeysel değerlendirilmiştir.',
-        'Yazarın bakış açısı, dayanaklarının gücü ve kitabın düşünce/bilgi alanına katkısı sorgulanarak özgün ve gerekçeli çıkarımlarda bulunulmuştur.'
-      ),
-    },
-    {
-      id: 'crit-bks-4',
-      title: 'Bilgileri ve yorumları kitaptan örneklerle destekleme',
-      category: 'Eleştirel Değerlendirme ve Kanıtlama',
-      weight: 10,
-      maxPoints: 10,
-      required: true,
-      levels: levels(
-        'Aktarılan bilgiler ve değerlendirmeler kitaptan herhangi bir veri, olgu, argüman, tespit veya somut örnekle desteklenmemiştir.',
-        'Kitaptan sınırlı sayıda örnek veya tespit paylaşılmış ancak bunların yapılan değerlendirmelerle ilişkisi kısmen kurulmuştur.',
-        'Aktarılan bilgiler ve eleştirel yorumlar kitaptaki somut örnekler, olgular, veriler veya temel tespitlerle yerinde desteklenmiştir.'
-      ),
-    },
-    ...createSharedPresentationCriteria('bks'),
+    ...INFORMATIVE_CONTENT_CRITERIA.map((c) => ({
+      ...c,
+      category:
+        c.id === 'crit-bks-1' || c.id === 'crit-bks-2'
+          ? 'İçeriği ve Düşünce Yapısını Kavrama'
+          : 'Eleştirel Değerlendirme ve Kanıtlama',
+      section: undefined,
+    })),
+    ...createLegacyV3PresentationCriteria('bks'),
   ],
 };
-
-export const BOOK_PRESENTATION_RUBRICS: readonly Rubric[] = [
-  LITERARY_BOOK_PRESENTATION_RUBRIC,
-  INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
-] as const;
-
-export const BOOK_PRESENTATION_RUBRIC: Rubric = LITERARY_BOOK_PRESENTATION_RUBRIC;
 
 /**
  * Geçmiş değerlendirme oturumlarının (`rub-tde-kitap-sunumu` kimlikli 8 ölçütlü sürüm)

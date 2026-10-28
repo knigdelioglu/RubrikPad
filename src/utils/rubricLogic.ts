@@ -2,6 +2,8 @@ import type {
   Classroom,
   Rubric,
   RubricCriterion,
+  RubricCriterionSection,
+  DualEvaluationResult,
   Student,
   StudentAuditEntry,
   StudentEvaluation,
@@ -11,8 +13,12 @@ import type {
   EvaluationActionHistoryEntry,
 } from '../types.ts';
 import {
+  INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
   LEGACY_BOOK_PRESENTATION_RUBRIC,
   LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
+  LEGACY_V3_INFORMATIVE_BOOK_RUBRIC,
+  LEGACY_V3_LITERARY_BOOK_RUBRIC,
+  LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
 } from '../data/bookPresentationRubric.ts';
 
 export const MAX_STUDENT_AUDIT_LOG_ENTRIES = 50;
@@ -94,6 +100,97 @@ export function freezeRubricSnapshot(rubric: Rubric): Rubric {
  * editing a rubric template later never alters historical session grades.
  * Returns null if the rubric does not exist (never silently falls back to an unrelated rubric).
  */
+/**
+ * Detects whether a book presentation session without an explicit `rubricSnapshot`
+ * was recorded using the legacy 7-criterion v3 rubric (`edebi-1..7` or `bilgi-1..7`),
+ * ensuring historical v3 sessions are never retroactively recalculated under the 10-criterion v4 rubric.
+ */
+export function inferLegacyBookRubricSnapshotIfNeeded(
+  session: EvaluationSession | null | undefined
+): Rubric | null {
+  if (!session) return null;
+  if (session.rubricSnapshot && session.rubricSnapshot.id === session.rubricId) {
+    return session.rubricSnapshot;
+  }
+  if (
+    session.rubricId !== LITERARY_BOOK_PRESENTATION_RUBRIC_ID &&
+    session.rubricId !== INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID
+  ) {
+    return null;
+  }
+
+  const allCriterionKeys = new Set<string>();
+  let hasDualScoreFields = false;
+
+  for (const ev of Object.values(session.evaluations || {})) {
+    if (!ev) continue;
+    if (
+      ev.bookPresentationScore !== undefined ||
+      ev.speakingExamScore !== undefined ||
+      ev.contentScoreOutOf70 !== undefined ||
+      ev.groupBookPresentationScore !== undefined ||
+      ev.groupSpeakingExamScore !== undefined ||
+      ev.groupContentScoreOutOf70 !== undefined
+    ) {
+      hasDualScoreFields = true;
+    }
+    for (const k of Object.keys(ev.criterionScores || {})) allCriterionKeys.add(k);
+    for (const k of Object.keys(ev.directCriterionScores || {})) allCriterionKeys.add(k);
+    for (const k of Object.keys(ev.groupCriterionScores || {})) allCriterionKeys.add(k);
+    for (const k of Object.keys(ev.groupDirectScores || {})) allCriterionKeys.add(k);
+  }
+
+  for (const grp of session.groups || []) {
+    if (!grp) continue;
+    if (
+      grp.groupBookPresentationScore !== undefined ||
+      grp.groupSpeakingExamScore !== undefined ||
+      grp.groupContentScoreOutOf70 !== undefined
+    ) {
+      hasDualScoreFields = true;
+    }
+    for (const k of Object.keys(grp.criterionScores || {})) allCriterionKeys.add(k);
+    for (const k of Object.keys(grp.directCriterionScores || {})) allCriterionKeys.add(k);
+  }
+
+  const hasV4OnlyKey = Array.from(allCriterionKeys).some(
+    (k) =>
+      k.includes('-konusma-') ||
+      k.endsWith('-8') ||
+      k.endsWith('-9') ||
+      k.endsWith('-10')
+  );
+  if (hasV4OnlyKey || hasDualScoreFields) {
+    return null;
+  }
+
+  const hasLegacyNamedV3Criteria =
+    allCriterionKeys.has('edebi-5') ||
+    allCriterionKeys.has('edebi-6') ||
+    allCriterionKeys.has('edebi-7') ||
+    allCriterionKeys.has('bilgi-5') ||
+    allCriterionKeys.has('bilgi-6') ||
+    allCriterionKeys.has('bilgi-7');
+
+  const isCompletedHistoricalV3 =
+    session.status === 'completed' && allCriterionKeys.size > 0;
+
+  if (hasLegacyNamedV3Criteria || isCompletedHistoricalV3) {
+    return freezeRubricSnapshot(
+      session.rubricId === LITERARY_BOOK_PRESENTATION_RUBRIC_ID
+        ? LEGACY_V3_LITERARY_BOOK_RUBRIC
+        : LEGACY_V3_INFORMATIVE_BOOK_RUBRIC
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Resolves the authoritative rubric for a session: prefers the frozen snapshot so
+ * editing a rubric template later never alters historical session grades.
+ * Returns null if the rubric does not exist (never silently falls back to an unrelated rubric).
+ */
 export function getEffectiveSessionRubric(
   session: EvaluationSession | null | undefined,
   rubricsById: Record<string, Rubric>
@@ -101,6 +198,10 @@ export function getEffectiveSessionRubric(
   if (!session) return null;
   if (session.rubricSnapshot && session.rubricSnapshot.id === session.rubricId) {
     return session.rubricSnapshot;
+  }
+  const inferredLegacy = inferLegacyBookRubricSnapshotIfNeeded(session);
+  if (inferredLegacy) {
+    return inferredLegacy;
   }
   if (rubricsById[session.rubricId]) {
     return rubricsById[session.rubricId];
@@ -112,10 +213,69 @@ export function getEffectiveSessionRubric(
 }
 
 /**
+ * Checks whether a rubric uses the “Tek Değerlendirme, İki Sonuç” (Kitap İçeriği 70 + Ortak Konuşma 100)
+ * dual evaluation system.
+ * Historical 7-criterion (v3) or 8-criterion (v2) snapshots return false so past sessions are never recalculated.
+ */
+export function isDualBookSpeakingRubric(
+  rubric: Rubric | null | undefined
+): boolean {
+  if (!rubric || !Array.isArray(rubric.criteria)) return false;
+  if (rubric.scoringMode === 'standard_100') return false;
+  if (rubric.scoringMode === 'dual_book_and_speaking') return true;
+  const hasContent = rubric.criteria.some((c) => c.section === 'content');
+  const hasSpeaking = rubric.criteria.some((c) => c.section === 'speaking');
+  return hasContent && hasSpeaking;
+}
+
+/**
+ * Resolves which section ('content' | 'speaking') a criterion belongs to in a dual rubric.
+ */
+export function getCriterionSection(
+  criterion: RubricCriterion,
+  index?: number,
+  rubric?: Rubric | null
+): RubricCriterionSection | null {
+  if (criterion.section === 'content' || criterion.section === 'speaking') {
+    return criterion.section;
+  }
+  if (rubric && isDualBookSpeakingRubric(rubric)) {
+    const cat = (criterion.category || '').toLocaleLowerCase('tr-TR');
+    if (cat.includes('konuşma') || cat.includes('sözlü')) {
+      return 'speaking';
+    }
+    if (cat.includes('içerik') || cat.includes('içeriği') || cat.includes('eser')) {
+      return 'content';
+    }
+    if (typeof index === 'number') {
+      return index < 4 ? 'content' : 'speaking';
+    }
+  }
+  return null;
+}
+
+function getPerformanceBandAndLabel(scoreOutOf100: number): {
+  performanceBand: 'Ornek' | 'Yetkin' | 'Gelismekte' | 'DestekGerekli';
+  performanceLabel: string;
+} {
+  if (scoreOutOf100 >= 85) {
+    return { performanceBand: 'Ornek', performanceLabel: 'Örnek Düzey' };
+  }
+  if (scoreOutOf100 >= 70) {
+    return { performanceBand: 'Yetkin', performanceLabel: 'Yetkin' };
+  }
+  if (scoreOutOf100 >= 50) {
+    return { performanceBand: 'Gelismekte', performanceLabel: 'Gelişmekte' };
+  }
+  return { performanceBand: 'DestekGerekli', performanceLabel: 'Destek Gerekli' };
+}
+
+/**
  * Validates a rubric before saving (P1 #1):
  * - Non-empty title
  * - At least 1 criterion
- * - Total criterion points === 100 and total weight === 100
+ * - Standard rubrics: Total criterion points === 100 and total weight === 100
+ * - Dual book & speaking rubrics: Content section === 70 points and Speaking section === 100 points (total 170 raw criterion points)
  * - Each criterion has non-empty title, positive points/weight, and valid ordered levels
  */
 export function validateRubric(rubric: Rubric): {
@@ -135,6 +295,11 @@ export function validateRubric(rubric: Rubric): {
 
   let totalWeight = 0;
   let totalPoints = 0;
+  let contentWeight = 0;
+  let contentPoints = 0;
+  let speakingWeight = 0;
+  let speakingPoints = 0;
+  const isDual = isDualBookSpeakingRubric(rubric);
 
   rubric.criteria.forEach((crit, idx) => {
     const labelPrefix = `${idx + 1}. Ölçüt`;
@@ -143,17 +308,22 @@ export function validateRubric(rubric: Rubric): {
     }
     const weight = Number(crit.weight);
     const pts = Number(crit.maxPoints ?? crit.weight);
+    const sec = getCriterionSection(crit, idx, rubric);
 
     if (Number.isNaN(weight) || weight <= 0) {
       errors.push(`${labelPrefix}: Ağırlık 0'dan büyük olmalıdır.`);
     } else {
       totalWeight += weight;
+      if (sec === 'content') contentWeight += weight;
+      if (sec === 'speaking') speakingWeight += weight;
     }
 
     if (Number.isNaN(pts) || pts <= 0) {
       errors.push(`${labelPrefix}: Kriter puanı 0'dan büyük olmalıdır.`);
     } else {
       totalPoints += pts;
+      if (sec === 'content') contentPoints += pts;
+      if (sec === 'speaking') speakingPoints += pts;
     }
 
     if (!Array.isArray(crit.levels) || crit.levels.length < 2) {
@@ -176,12 +346,25 @@ export function validateRubric(rubric: Rubric): {
     }
   });
 
-  if (Math.round(totalWeight * 100) / 100 !== 100) {
-    errors.push(`Toplam ağırlık %100 olmalıdır (Şu an: %${totalWeight}).`);
-  }
+  if (isDual) {
+    if (Math.round(contentPoints * 100) / 100 !== 70 || Math.round(contentWeight * 100) / 100 !== 70) {
+      errors.push(
+        `Kitap içeriği bölümü toplam 70 puan olmalıdır (Şu an: ${contentPoints} Puan).`
+      );
+    }
+    if (Math.round(speakingPoints * 100) / 100 !== 100 || Math.round(speakingWeight * 100) / 100 !== 100) {
+      errors.push(
+        `Ortak konuşma değerlendirmesi bölümü toplam 100 puan olmalıdır (Şu an: ${speakingPoints} Puan).`
+      );
+    }
+  } else {
+    if (Math.round(totalWeight * 100) / 100 !== 100) {
+      errors.push(`Toplam ağırlık %100 olmalıdır (Şu an: %${totalWeight}).`);
+    }
 
-  if (Math.round(totalPoints * 100) / 100 !== 100) {
-    errors.push(`Toplam kriter puanı 100 olmalıdır (Şu an: ${totalPoints} Puan).`);
+    if (Math.round(totalPoints * 100) / 100 !== 100) {
+      errors.push(`Toplam kriter puanı 100 olmalıdır (Şu an: ${totalPoints} Puan).`);
+    }
   }
 
   return {
@@ -190,8 +373,6 @@ export function validateRubric(rubric: Rubric): {
   };
 }
 
-/**
- * Calculates a student's weighted score based on their rubric criterion selections.
 /**
  * Resolves the normalized [0, 1] achievement ratio for a selected level score on a criterion.
  * Supports both 5-level (0..4) and 3-level MEB (Hayır=0/%0, Kısmen=1/%50, Evet=2/%100) rubrics,
@@ -247,10 +428,173 @@ export function getCriterionEarnedPoints(
 }
 
 /**
+ * “Tek Değerlendirme, İki Sonuç” hesaplayıcısı:
+ * - 1. Kitap içeriği: 4 ölçüt, 70 puan
+ * - 2. Ortak konuşma değerlendirmesi: 6 ölçüt, 100 puan
+ * - Konuşma sınavı notu (100 üzerinden): 6 konuşma ölçütünün toplamı (yalnızca 6 konuşma ölçütü tamamlandığında kesinleşir).
+ * - Kitap sunumu notu (100 üzerinden): İçerik puanı (70 üzerinden) + konuşma puanının %30'u (yalnızca 10 ölçütün tamamı puanlandığında kesinleşir).
+ */
+export function calculateDualBookSpeakingScore(
+  rubric: Rubric,
+  criterionScores: Record<string, number | null | undefined>,
+  directCriterionScores?: Record<string, number | null | undefined>
+): DualEvaluationResult {
+  let contentEarnedPoints = 0;
+  let contentMaxPoints = 0;
+  let contentCompletedCount = 0;
+  let contentTotalCount = 0;
+  let contentRequiredCount = 0;
+  let contentCompletedRequiredCount = 0;
+
+  let speakingEarnedPoints = 0;
+  let speakingMaxPoints = 0;
+  let speakingCompletedCount = 0;
+  let speakingTotalCount = 0;
+  let speakingRequiredCount = 0;
+  let speakingCompletedRequiredCount = 0;
+
+  rubric.criteria.forEach((criterion, idx) => {
+    const sec = getCriterionSection(criterion, idx, rubric) || (idx < 4 ? 'content' : 'speaking');
+    const isRequired = criterion.required !== false;
+    const effectiveWeight =
+      typeof criterion.maxPoints === 'number' && criterion.maxPoints > 0
+        ? criterion.maxPoints
+        : criterion.weight;
+
+    const earned = getCriterionEarnedPoints(
+      criterion,
+      criterionScores?.[criterion.id],
+      directCriterionScores?.[criterion.id]
+    );
+
+    if (sec === 'content') {
+      contentTotalCount += 1;
+      contentMaxPoints += effectiveWeight;
+      if (isRequired) contentRequiredCount += 1;
+      if (earned !== null) {
+        contentCompletedCount += 1;
+        if (isRequired) contentCompletedRequiredCount += 1;
+        contentEarnedPoints += earned;
+      }
+    } else {
+      speakingTotalCount += 1;
+      speakingMaxPoints += effectiveWeight;
+      if (isRequired) speakingRequiredCount += 1;
+      if (earned !== null) {
+        speakingCompletedCount += 1;
+        if (isRequired) speakingCompletedRequiredCount += 1;
+        speakingEarnedPoints += earned;
+      }
+    }
+  });
+
+  const isContentComplete =
+    contentTotalCount > 0 &&
+    contentCompletedRequiredCount === contentRequiredCount &&
+    contentCompletedCount === contentTotalCount;
+
+  const isSpeakingComplete =
+    speakingTotalCount > 0 &&
+    speakingCompletedRequiredCount === speakingRequiredCount &&
+    speakingCompletedCount === speakingTotalCount;
+
+  const normalizedContentEarned =
+    contentMaxPoints > 0 && contentMaxPoints !== 70
+      ? (contentEarnedPoints / contentMaxPoints) * 70
+      : contentEarnedPoints;
+
+  const finalContentScoreOutOf70 = isContentComplete
+    ? Math.min(70, Math.max(0, Math.round(normalizedContentEarned)))
+    : null;
+
+  const normalizedSpeakingEarned =
+    speakingMaxPoints > 0 && speakingMaxPoints !== 100
+      ? (speakingEarnedPoints / speakingMaxPoints) * 100
+      : speakingEarnedPoints;
+
+  const provisionalSpeakingScoreOutOf100 = Math.min(
+    100,
+    Math.max(0, Math.round(normalizedSpeakingEarned))
+  );
+
+  const finalSpeakingScoreOutOf100 = isSpeakingComplete
+    ? provisionalSpeakingScoreOutOf100
+    : null;
+
+  const speakingContributionRaw = normalizedSpeakingEarned * 0.3;
+  const speakingContributionOutOf30 =
+    Math.round(speakingContributionRaw * 10) / 10;
+
+  const isBookPresentationComplete = isContentComplete && isSpeakingComplete;
+
+  const provisionalBookPresentationScoreOutOf100 = Math.min(
+    100,
+    Math.max(0, Math.round(normalizedContentEarned + speakingContributionRaw))
+  );
+
+  const finalBookPresentationScoreOutOf100 = isBookPresentationComplete
+    ? provisionalBookPresentationScoreOutOf100
+    : null;
+
+  const speakingPerformanceLabel =
+    speakingCompletedCount === 0
+      ? 'Değerlendirilmedi'
+      : !isSpeakingComplete
+      ? `Eksik Ölçüt (${speakingCompletedCount}/${speakingTotalCount})`
+      : getPerformanceBandAndLabel(provisionalSpeakingScoreOutOf100)
+          .performanceLabel;
+
+  const totalCompleted = contentCompletedCount + speakingCompletedCount;
+  const totalCount = contentTotalCount + speakingTotalCount;
+
+  const bookPresentationPerformanceLabel =
+    totalCompleted === 0
+      ? 'Değerlendirilmedi'
+      : !isBookPresentationComplete
+      ? `Eksik Ölçüt (${totalCompleted}/${totalCount})`
+      : getPerformanceBandAndLabel(provisionalBookPresentationScoreOutOf100)
+          .performanceLabel;
+
+  const roundedContentEarned = Math.round(normalizedContentEarned * 100) / 100;
+  const roundedSpeakingEarned = Math.round(normalizedSpeakingEarned * 100) / 100;
+
+  return {
+    isDualRubric: true,
+    contentEarnedPoints: roundedContentEarned,
+    contentScoreOutOf70: Math.min(70, Math.max(0, Math.round(normalizedContentEarned))),
+    contentMaxPoints: contentMaxPoints || 70,
+    contentCompletedCount,
+    completedContentCount: contentCompletedCount,
+    contentTotalCount,
+    totalContentCount: contentTotalCount,
+    isContentComplete,
+    finalContentScoreOutOf70,
+    speakingEarnedPoints: roundedSpeakingEarned,
+    speakingScoreOutOf100: provisionalSpeakingScoreOutOf100,
+    speakingMaxPoints: speakingMaxPoints || 100,
+    speakingCompletedCount,
+    completedSpeakingCount: speakingCompletedCount,
+    speakingTotalCount,
+    totalSpeakingCount: speakingTotalCount,
+    isSpeakingComplete,
+    finalSpeakingScoreOutOf100,
+    provisionalSpeakingScoreOutOf100,
+    speakingPerformanceLabel,
+    speakingContributionOutOf30,
+    isBookPresentationComplete,
+    finalBookPresentationScoreOutOf100,
+    provisionalBookPresentationScoreOutOf100,
+    bookPresentationPerformanceLabel,
+  };
+}
+
+/**
  * Strictly calculates weighted score out of 100:
  * - P0 #1: 0 is treated as a valid scored point; null/undefined is treated as unscored.
  * - P0 #2: Partial evaluations do NOT produce a final 100-point grade until all required criteria are scored.
  * - P1 #2: Supports direct integer criterion scores (directCriterionScores) within [0, maxPoints].
+ * - Dual Mode (“Tek Değerlendirme, İki Sonuç”): When `isDualBookSpeakingRubric(rubric)` is true,
+ *   computes both Kitap Sunumu Notu (İçerik 70 + %30 Konuşma = 100) and Konuşma Sınavı Notu (100) via `dualResult`.
  */
 export function calculateWeightedScore(
   rubric: Rubric,
@@ -273,6 +617,7 @@ export function calculateWeightedScore(
     | 'Kismi'
     | 'Baslanmadi';
   performanceLabel: string;
+  dualResult?: DualEvaluationResult;
 } {
   const totalCriteriaCount = rubric.criteria.length;
   if (totalCriteriaCount === 0) {
@@ -342,6 +687,68 @@ export function calculateWeightedScore(
     }
   }
 
+  if (isDualBookSpeakingRubric(rubric)) {
+    const dualResult = calculateDualBookSpeakingScore(
+      rubric,
+      criterionScores,
+      directCriterionScores
+    );
+
+    if (completedCriteriaCount === 0) {
+      return {
+        scoreOutOf100: 0,
+        finalScoreOutOf100: null,
+        provisionalScoreOutOf100: 0,
+        rawPoints: 0,
+        maxRawPoints,
+        completedCriteriaCount: 0,
+        totalCriteriaCount,
+        isComplete: false,
+        performanceBand: 'Baslanmadi',
+        performanceLabel: 'Değerlendirilmedi',
+        dualResult,
+      };
+    }
+
+    if (!dualResult.isBookPresentationComplete) {
+      return {
+        scoreOutOf100: 0,
+        finalScoreOutOf100: null,
+        provisionalScoreOutOf100:
+          dualResult.provisionalBookPresentationScoreOutOf100,
+        rawPoints,
+        maxRawPoints,
+        completedCriteriaCount,
+        totalCriteriaCount,
+        isComplete: false,
+        performanceBand: 'Kismi',
+        performanceLabel: dualResult.bookPresentationPerformanceLabel,
+        dualResult,
+      };
+    }
+
+    const scoreOutOf100 =
+      dualResult.finalBookPresentationScoreOutOf100 ??
+      dualResult.provisionalBookPresentationScoreOutOf100;
+    const { performanceBand, performanceLabel } =
+      getPerformanceBandAndLabel(scoreOutOf100);
+
+    return {
+      scoreOutOf100,
+      finalScoreOutOf100: scoreOutOf100,
+      provisionalScoreOutOf100:
+        dualResult.provisionalBookPresentationScoreOutOf100,
+      rawPoints,
+      maxRawPoints,
+      completedCriteriaCount,
+      totalCriteriaCount,
+      isComplete: true,
+      performanceBand,
+      performanceLabel,
+      dualResult,
+    };
+  }
+
   if (completedCriteriaCount === 0) {
     return {
       scoreOutOf100: 0,
@@ -381,20 +788,8 @@ export function calculateWeightedScore(
   }
 
   const scoreOutOf100 = Math.min(100, Math.max(0, provisionalScoreOutOf100));
-  let performanceBand: 'Ornek' | 'Yetkin' | 'Gelismekte' | 'DestekGerekli' =
-    'DestekGerekli';
-  let performanceLabel = 'Destek Gerekli';
-
-  if (scoreOutOf100 >= 85) {
-    performanceBand = 'Ornek';
-    performanceLabel = 'Örnek Düzey';
-  } else if (scoreOutOf100 >= 70) {
-    performanceBand = 'Yetkin';
-    performanceLabel = 'Yetkin';
-  } else if (scoreOutOf100 >= 50) {
-    performanceBand = 'Gelismekte';
-    performanceLabel = 'Gelişmekte';
-  }
+  const { performanceBand, performanceLabel } =
+    getPerformanceBandAndLabel(scoreOutOf100);
 
   return {
     scoreOutOf100,
@@ -528,6 +923,21 @@ export function applyIndividualCriterionEdit(
     delete nextDirect[action.criterionId];
   }
 
+  const newCalc = calculateWeightedScore(rubric, nextScores, nextDirect);
+
+  const dualFields: Partial<StudentEvaluation> = newCalc.dualResult
+    ? {
+        bookPresentationScore:
+          newCalc.dualResult.finalBookPresentationScoreOutOf100,
+        speakingExamScore: newCalc.dualResult.finalSpeakingScoreOutOf100,
+        contentScoreOutOf70: newCalc.dualResult.finalContentScoreOutOf70,
+      }
+    : {
+        bookPresentationScore: undefined,
+        speakingExamScore: undefined,
+        contentScoreOutOf70: undefined,
+      };
+
   const updatedEvaluation: StudentEvaluation = {
     ...existing,
     studentId,
@@ -537,9 +947,8 @@ export function applyIndividualCriterionEdit(
     note: existing?.note || '',
     tags: existing?.tags || [],
     updatedAt: timestampIso,
+    ...dualFields,
   };
-
-  const newCalc = calculateWeightedScore(rubric, nextScores, nextDirect);
 
   return {
     updatedEvaluation,
@@ -653,6 +1062,23 @@ export function applyGroupScoresToMembers(
     return currentEvaluations;
   }
 
+  const groupDualFields: Partial<StudentEvaluation> = {};
+  if (rubric && isDualBookSpeakingRubric(rubric)) {
+    const grpCalc = calculateWeightedScore(
+      rubric,
+      group.criterionScores || {},
+      group.directCriterionScores
+    );
+    if (grpCalc.dualResult) {
+      groupDualFields.groupBookPresentationScore =
+        grpCalc.dualResult.finalBookPresentationScoreOutOf100;
+      groupDualFields.groupSpeakingExamScore =
+        grpCalc.dualResult.finalSpeakingScoreOutOf100;
+      groupDualFields.groupContentScoreOutOf70 =
+        grpCalc.dualResult.finalContentScoreOutOf70;
+    }
+  }
+
   const updated: Record<string, StudentEvaluation> = { ...currentEvaluations };
 
   for (const studentId of group.studentIds) {
@@ -676,6 +1102,7 @@ export function applyGroupScoresToMembers(
       : [...existingTags, 'Grup Çalışması'];
 
     updated[studentId] = {
+      ...existing,
       studentId,
       criterionScores: preservedIndividualScores,
       directCriterionScores: preservedIndividualDirect,
@@ -688,6 +1115,7 @@ export function applyGroupScoresToMembers(
       tags: nextTags,
       updatedAt: timestampIso,
       evaluatedViaGroup: group.name,
+      ...groupDualFields,
     };
   }
 
@@ -724,6 +1152,7 @@ export interface GroupLifecycleStatus {
   appliedMemberCount: number;
   totalMemberCount: number;
   hasStaleMemberScores: boolean;
+  dualResult?: DualEvaluationResult;
 }
 
 /**
@@ -812,6 +1241,7 @@ export function getGroupLifecycleStatus(
       appliedMemberCount,
       totalMemberCount,
       hasStaleMemberScores,
+      dualResult: calc.dualResult,
     };
   }
 
@@ -828,6 +1258,7 @@ export function getGroupLifecycleStatus(
       appliedMemberCount,
       totalMemberCount,
       hasStaleMemberScores: false,
+      dualResult: calc.dualResult,
     };
   }
 
@@ -848,6 +1279,7 @@ export function getGroupLifecycleStatus(
     appliedMemberCount,
     totalMemberCount,
     hasStaleMemberScores,
+    dualResult: calc.dualResult,
   };
 }
 
@@ -893,33 +1325,57 @@ export function applyCriterionScoreToStudents(
   criterionId: string,
   points: number,
   timestampIso: string,
-  onlyUnscored = false
+  onlyUnscored = false,
+  rubric?: Rubric
 ): Record<string, StudentEvaluation> {
   const updated: Record<string, StudentEvaluation> = { ...currentEvaluations };
 
   for (const studentId of studentIds) {
     const existing = updated[studentId];
     const currentPoints = existing?.criterionScores?.[criterionId];
-    if (onlyUnscored && isScoreAssigned(currentPoints)) {
+    const currentDirect = existing?.directCriterionScores?.[criterionId];
+    if (
+      onlyUnscored &&
+      (isScoreAssigned(currentPoints) || isScoreAssigned(currentDirect))
+    ) {
       continue;
     }
 
+    const nextScores = {
+      ...(existing?.criterionScores || {}),
+      [criterionId]: points,
+    };
     const nextDirect = { ...(existing?.directCriterionScores || {}) };
     delete nextDirect[criterionId];
+
+    let scoreFields: Partial<StudentEvaluation> = {};
+    if (rubric) {
+      const calc = calculateWeightedScore(rubric, nextScores, nextDirect);
+      scoreFields = calc.dualResult
+        ? {
+            bookPresentationScore:
+              calc.dualResult.finalBookPresentationScoreOutOf100,
+            speakingExamScore: calc.dualResult.finalSpeakingScoreOutOf100,
+            contentScoreOutOf70: calc.dualResult.finalContentScoreOutOf70,
+          }
+        : {
+            bookPresentationScore: undefined,
+            speakingExamScore: undefined,
+            contentScoreOutOf70: undefined,
+          };
+    }
 
     updated[studentId] = {
       ...existing,
       studentId,
-      criterionScores: {
-        ...(existing?.criterionScores || {}),
-        [criterionId]: points,
-      },
+      criterionScores: nextScores,
       directCriterionScores: nextDirect,
       activeScoreSource: 'individual',
       note: existing?.note || '',
       tags: existing?.tags || [],
       updatedAt: timestampIso,
       evaluatedViaGroup: existing?.evaluatedViaGroup,
+      ...scoreFields,
     };
   }
 
@@ -2089,6 +2545,9 @@ export function reconcileGroupEvaluationsWithMemberships(
           ...existing,
           groupCriterionScores: {},
           groupDirectScores: undefined,
+          groupBookPresentationScore: undefined,
+          groupSpeakingExamScore: undefined,
+          groupContentScoreOutOf70: undefined,
           groupNote: '',
           groupId: undefined,
           evaluatedViaGroup: undefined,
@@ -2109,6 +2568,9 @@ export function reconcileGroupEvaluationsWithMemberships(
           ...existing,
           groupCriterionScores: {},
           groupDirectScores: undefined,
+          groupBookPresentationScore: undefined,
+          groupSpeakingExamScore: undefined,
+          groupContentScoreOutOf70: undefined,
           groupNote: '',
           groupId: assignedGroup.id,
           evaluatedViaGroup: undefined,
@@ -2128,6 +2590,25 @@ export function reconcileGroupEvaluationsWithMemberships(
         ? existingTags
         : [...existingTags, 'Grup Çalışması'];
 
+      let groupDualFields: Partial<StudentEvaluation> = {};
+      if (rubric && isDualBookSpeakingRubric(rubric)) {
+        const grpCalc = calculateWeightedScore(
+          rubric,
+          assignedGroup.criterionScores || {},
+          assignedGroup.directCriterionScores
+        );
+        if (grpCalc.dualResult) {
+          groupDualFields = {
+            groupBookPresentationScore:
+              grpCalc.dualResult.finalBookPresentationScoreOutOf100,
+            groupSpeakingExamScore:
+              grpCalc.dualResult.finalSpeakingScoreOutOf100,
+            groupContentScoreOutOf70:
+              grpCalc.dualResult.finalContentScoreOutOf70,
+          };
+        }
+      }
+
       updated[stuId] = {
         ...existing,
         groupCriterionScores: { ...(assignedGroup.criterionScores || {}) },
@@ -2142,6 +2623,7 @@ export function reconcileGroupEvaluationsWithMemberships(
           : 'group',
         tags: nextTags,
         updatedAt: timestampIso,
+        ...groupDualFields,
       };
     }
   }
@@ -2169,6 +2651,25 @@ export function reconcileGroupEvaluationsWithMemberships(
       isGroupEligibleToApply(grp) &&
       groupWasAlreadyApplied
     ) {
+      let groupDualFields: Partial<StudentEvaluation> = {};
+      if (rubric && isDualBookSpeakingRubric(rubric)) {
+        const grpCalc = calculateWeightedScore(
+          rubric,
+          grp.criterionScores || {},
+          grp.directCriterionScores
+        );
+        if (grpCalc.dualResult) {
+          groupDualFields = {
+            groupBookPresentationScore:
+              grpCalc.dualResult.finalBookPresentationScoreOutOf100,
+            groupSpeakingExamScore:
+              grpCalc.dualResult.finalSpeakingScoreOutOf100,
+            groupContentScoreOutOf70:
+              grpCalc.dualResult.finalContentScoreOutOf70,
+          };
+        }
+      }
+
       updated[stuId] = {
         studentId: stuId,
         criterionScores: {},
@@ -2183,6 +2684,7 @@ export function reconcileGroupEvaluationsWithMemberships(
         note: '',
         tags: ['Grup Çalışması'],
         updatedAt: timestampIso,
+        ...groupDualFields,
       };
     }
   }
@@ -2237,8 +2739,33 @@ export function evaluateGroupAndTransferToMembers(
   ).allowed;
 
   const nextGroupRaw = updater(targetGroup);
+  let groupDualFields: Partial<StudentGroup> = {};
+  if (effectiveRubric) {
+    const grpCalc = calculateWeightedScore(
+      effectiveRubric,
+      nextGroupRaw.criterionScores || {},
+      nextGroupRaw.directCriterionScores
+    );
+    groupDualFields = grpCalc.dualResult
+      ? {
+          groupBookPresentationScore:
+            grpCalc.dualResult.finalBookPresentationScoreOutOf100,
+          groupSpeakingExamScore: grpCalc.dualResult.finalSpeakingScoreOutOf100,
+          groupContentScoreOutOf70: grpCalc.dualResult.finalContentScoreOutOf70,
+        }
+      : {
+          groupBookPresentationScore: undefined,
+          groupSpeakingExamScore: undefined,
+          groupContentScoreOutOf70: undefined,
+        };
+  }
+  const nextGroupWithScores: StudentGroup = {
+    ...nextGroupRaw,
+    ...groupDualFields,
+  };
+
   const eligibilityAfter = canApplyGroupScoresToMembers(
-    nextGroupRaw,
+    nextGroupWithScores,
     effectiveRubric
   );
   const isCompleteAfter = eligibilityAfter.allowed;
@@ -2248,10 +2775,10 @@ export function evaluateGroupAndTransferToMembers(
     (autoTransfer || Boolean(targetGroup.lastAppliedAt));
 
   const finalizedGroup: StudentGroup = shouldTransferNow
-    ? { ...nextGroupRaw, lastAppliedAt: nowIso }
+    ? { ...nextGroupWithScores, lastAppliedAt: nowIso }
     : !isCompleteAfter
-    ? { ...nextGroupRaw, lastAppliedAt: undefined }
-    : nextGroupRaw;
+    ? { ...nextGroupWithScores, lastAppliedAt: undefined }
+    : nextGroupWithScores;
 
   const updatedGroups = (session.groups || []).map((g) =>
     g.id === groupId ? finalizedGroup : g
@@ -2347,8 +2874,31 @@ export function transferAllCompletedGroupsToMembers(
       timestampIso,
       effectiveRubric
     );
+    let grpDualFields: Partial<StudentGroup> = {};
+    if (effectiveRubric) {
+      const grpCalc = calculateWeightedScore(
+        effectiveRubric,
+        grp.criterionScores || {},
+        grp.directCriterionScores
+      );
+      grpDualFields = grpCalc.dualResult
+        ? {
+            groupBookPresentationScore:
+              grpCalc.dualResult.finalBookPresentationScoreOutOf100,
+            groupSpeakingExamScore:
+              grpCalc.dualResult.finalSpeakingScoreOutOf100,
+            groupContentScoreOutOf70:
+              grpCalc.dualResult.finalContentScoreOutOf70,
+          }
+        : {
+            groupBookPresentationScore: undefined,
+            groupSpeakingExamScore: undefined,
+            groupContentScoreOutOf70: undefined,
+          };
+    }
     return {
       ...grp,
+      ...grpDualFields,
       lastAppliedAt: timestampIso,
     };
   });
@@ -2630,6 +3180,11 @@ export function getStudentProgressHistory(
   finalScoreOutOf100: number | null;
   individualScoreOutOf100: number | null;
   groupScoreOutOf100: number | null;
+  isDualEvaluation?: boolean;
+  bookPresentationScoreOutOf100?: number | null;
+  speakingExamScoreOutOf100?: number | null;
+  contentScoreOutOf70?: number | null;
+  speakingContributionOutOf30?: number | null;
   isComplete: boolean;
   performanceLabel: string;
   note: string;
@@ -2639,6 +3194,7 @@ export function getStudentProgressHistory(
     scorePercent: number;
     selectedPoints: number;
     maxPoints: number;
+    section?: RubricCriterionSection | null;
   }>;
 }> {
   const sortedSessions = [...sessions].sort((a, b) => a.date.localeCompare(b.date));
@@ -2651,6 +3207,11 @@ export function getStudentProgressHistory(
     finalScoreOutOf100: number | null;
     individualScoreOutOf100: number | null;
     groupScoreOutOf100: number | null;
+    isDualEvaluation?: boolean;
+    bookPresentationScoreOutOf100?: number | null;
+    speakingExamScoreOutOf100?: number | null;
+    contentScoreOutOf70?: number | null;
+    speakingContributionOutOf30?: number | null;
     isComplete: boolean;
     performanceLabel: string;
     note: string;
@@ -2660,6 +3221,7 @@ export function getStudentProgressHistory(
       scorePercent: number;
       selectedPoints: number;
       maxPoints: number;
+      section?: RubricCriterionSection | null;
     }>;
   }> = [];
 
@@ -2683,7 +3245,8 @@ export function getStudentProgressHistory(
         ? evalRecord.groupDirectScores || {}
         : evalRecord.directCriterionScores || {};
 
-    const criterionBreakdown = rubric.criteria.map((c: RubricCriterion) => {
+    const criterionBreakdown = rubric.criteria.map((c: RubricCriterion, idx: number) => {
+      const section = getCriterionSection(c, idx, rubric);
       const directVal = activeDirect[c.id];
       if (isScoreAssigned(directVal)) {
         const maxDirect = c.maxPoints ?? c.weight;
@@ -2693,6 +3256,7 @@ export function getStudentProgressHistory(
           scorePercent,
           selectedPoints: directVal,
           maxPoints: maxDirect,
+          section,
         };
       }
 
@@ -2706,8 +3270,11 @@ export function getStudentProgressHistory(
         scorePercent,
         selectedPoints,
         maxPoints,
+        section,
       };
     });
+
+    const dual = effectiveCalc.dualResult;
 
     history.push({
       sessionId: session.id,
@@ -2718,6 +3285,17 @@ export function getStudentProgressHistory(
       finalScoreOutOf100: effectiveCalc.finalScoreOutOf100,
       individualScoreOutOf100: individualCalc.finalScoreOutOf100,
       groupScoreOutOf100: groupCalc.finalScoreOutOf100,
+      isDualEvaluation: Boolean(dual),
+      bookPresentationScoreOutOf100: dual
+        ? dual.finalBookPresentationScoreOutOf100
+        : undefined,
+      speakingExamScoreOutOf100: dual
+        ? dual.finalSpeakingScoreOutOf100
+        : undefined,
+      contentScoreOutOf70: dual ? dual.finalContentScoreOutOf70 : undefined,
+      speakingContributionOutOf30: dual
+        ? dual.speakingContributionOutOf30
+        : undefined,
       isComplete: true,
       performanceLabel: effectiveCalc.performanceLabel,
       note: evalRecord.note || '',
@@ -2967,7 +3545,7 @@ export function generateSessionCsv(
   const effectiveRubric =
     session.rubricSnapshot && session.rubricSnapshot.id === session.rubricId
       ? session.rubricSnapshot
-      : rubric;
+      : inferLegacyBookRubricSnapshotIfNeeded(session) ?? rubric;
 
   if (!effectiveRubric || effectiveRubric.id !== session.rubricId) {
     throw new Error(
@@ -3001,6 +3579,8 @@ export function generateSessionCsv(
     return safeStr;
   };
 
+  const isDual = isDualBookSpeakingRubric(effectiveRubric);
+
   const headers = [
     'Öğrenci No',
     'Ad',
@@ -3009,6 +3589,14 @@ export function generateSessionCsv(
     ...effectiveRubric.criteria.map(
       (c) => `${c.title} (${c.maxPoints ?? c.weight}P / %${c.weight})`
     ),
+    ...(isDual
+      ? [
+          'Kitap İçeriği Puanı (70)',
+          'Konuşma %30 Katkısı (30)',
+          'Kitap Sunumu Notu (100)',
+          'Konuşma Sınavı Notu (100)',
+        ]
+      : []),
     'Bireysel Puan (100)',
     'Grup Puanı (100)',
     'Kesin Toplam Puan (100)',
@@ -3074,12 +3662,43 @@ export function generateSessionCsv(
         ? `Eksik (${effectiveCalc.completedCriteriaCount}/${effectiveCalc.totalCriteriaCount})`
         : '-';
 
+    const dual = effectiveCalc.dualResult;
+    const dualCells = isDual
+      ? [
+          dual?.finalContentScoreOutOf70 !== null &&
+          dual?.finalContentScoreOutOf70 !== undefined
+            ? dual.finalContentScoreOutOf70
+            : dual && dual.contentCompletedCount > 0
+            ? `Eksik (${dual.contentCompletedCount}/${dual.contentTotalCount})`
+            : '-',
+          dual && dual.speakingCompletedCount > 0
+            ? dual.speakingContributionOutOf30
+            : '-',
+          dual?.finalBookPresentationScoreOutOf100 !== null &&
+          dual?.finalBookPresentationScoreOutOf100 !== undefined
+            ? dual.finalBookPresentationScoreOutOf100
+            : dual &&
+              dual.contentCompletedCount + dual.speakingCompletedCount > 0
+            ? `Eksik (${
+                dual.contentCompletedCount + dual.speakingCompletedCount
+              }/${dual.contentTotalCount + dual.speakingTotalCount})`
+            : '-',
+          dual?.finalSpeakingScoreOutOf100 !== null &&
+          dual?.finalSpeakingScoreOutOf100 !== undefined
+            ? dual.finalSpeakingScoreOutOf100
+            : dual && dual.speakingCompletedCount > 0
+            ? `Eksik (${dual.speakingCompletedCount}/${dual.speakingTotalCount})`
+            : '-',
+        ]
+      : [];
+
     return [
       student.studentNumber,
       firstName,
       lastName,
       student.fullName,
       ...criterionCells,
+      ...dualCells,
       indScoreCell,
       grpScoreCell,
       finalScoreCell,

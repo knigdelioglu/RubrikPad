@@ -24,6 +24,7 @@ import type {
 } from '../../types.ts';
 import { QUICK_OBSERVATION_TAGS } from '../../data/seedData.ts';
 import {
+  getCriterionSection,
   getFocusModeStepSummary,
   getNextFocusedCriterionIndexAfterScore,
   getSessionProgressStats,
@@ -31,6 +32,7 @@ import {
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
   hasStudentObservationData,
+  isDualBookSpeakingRubric,
   resolveFocusedCriterionIndex,
   type CriterionFocusDisplayMode,
 } from '../../utils/rubricLogic.ts';
@@ -134,10 +136,18 @@ export const IndividualEvaluationView: React.FC<
   const [searchQuery, setSearchQuery] = useState('');
   const [showPortraitRosterDrawer, setShowPortraitRosterDrawer] =
     useState(false);
-  const [focusModeEnabled, setFocusModeEnabled] = useState(true);
+  const [focusModeEnabled, setFocusModeEnabled] = useState(
+    () => !isDualBookSpeakingRubric(activeRubric)
+  );
   const [focusDisplayMode, setFocusDisplayMode] =
     useState<CriterionFocusDisplayMode>('hide_others');
   const [focusedCriterionIndex, setFocusedCriterionIndex] = useState(0);
+
+  useEffect(() => {
+    if (isDualBookSpeakingRubric(activeRubric)) {
+      setFocusModeEnabled(false);
+    }
+  }, [activeRubric.id]);
 
   const effectiveSessions = useMemo(
     () => (allSessions && allSessions.length > 0 ? allSessions : [activeSession]),
@@ -607,8 +617,54 @@ export const IndividualEvaluationView: React.FC<
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {/* Definitive score rule: NEVER show a 100-point grade unless isComplete === true */}
-                        {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
+                        {/* Definitive score rule: NEVER show a 100-point grade unless required criteria are complete */}
+                        {calc.dualResult ? (
+                          calc.dualResult.isBookPresentationComplete &&
+                          calc.dualResult.finalBookPresentationScoreOutOf100 !==
+                            null ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span
+                                className={`font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 ${
+                                  isSelected
+                                    ? 'bg-blue-900 text-white border-blue-950'
+                                    : 'bg-slate-100 text-slate-900 border-slate-300'
+                                }`}
+                              >
+                                <Check className="w-2.5 h-2.5 stroke-[2.5]" />
+                                Kitap:{' '}
+                                {
+                                  calc.dualResult
+                                    .finalBookPresentationScoreOutOf100
+                                }
+                              </span>
+                              <span className="font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-white">
+                                Konuşma:{' '}
+                                {calc.dualResult.finalSpeakingScoreOutOf100}
+                              </span>
+                            </div>
+                          ) : calc.dualResult.isSpeakingComplete &&
+                            calc.dualResult.finalSpeakingScoreOutOf100 !==
+                              null ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300">
+                                Kitap Taslak ({calc.completedCriteriaCount}/
+                                {calc.totalCriteriaCount})
+                              </span>
+                              <span className="font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-white">
+                                Konuşma:{' '}
+                                {calc.dualResult.finalSpeakingScoreOutOf100}
+                              </span>
+                            </div>
+                          ) : calc.completedCriteriaCount > 0 ? (
+                            <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 border border-slate-300">
+                              Taslak ({calc.completedCriteriaCount}/
+                              {calc.totalCriteriaCount})
+                            </span>
+                          ) : (
+                            <Clock className="w-4 h-4 text-slate-300" />
+                          )
+                        ) : calc.isComplete &&
+                          calc.finalScoreOutOf100 !== null ? (
                           <span
                             className={`font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1 ${
                               isSelected
@@ -964,6 +1020,139 @@ export const IndividualEvaluationView: React.FC<
                     </div>
                   )}
                 </div>
+
+                {/* Tek Değerlendirme, İki Sonuç — Anlık Çift Sonuç Paneli (Kitap Sunumu Notu & Konuşma Sınavı Notu) */}
+                {effectiveCalc.dualResult && (
+                  <div
+                    data-testid="dual-evaluation-results-strip"
+                    className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1"
+                  >
+                    <div
+                      data-testid="dual-book-presentation-score"
+                      className={`p-3 rounded-xl border flex flex-col justify-between gap-1.5 ${
+                        effectiveCalc.dualResult.isBookPresentationComplete &&
+                        effectiveCalc.dualResult
+                          .finalBookPresentationScoreOutOf100 !== null
+                          ? 'bg-blue-50/90 border-blue-900 text-slate-900'
+                          : 'bg-slate-50 border-slate-300 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-slate-900">
+                          1. Kitap Sunumu Notu (100 Üzerinden)
+                        </span>
+                        {effectiveCalc.dualResult.isBookPresentationComplete &&
+                        effectiveCalc.dualResult
+                          .finalBookPresentationScoreOutOf100 !== null ? (
+                          <span className="font-mono-num text-xs font-bold px-2.5 py-0.5 rounded-lg bg-blue-900 text-white flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[2.5]" />
+                            Kesin:{' '}
+                            {
+                              effectiveCalc.dualResult
+                                .finalBookPresentationScoreOutOf100
+                            }{' '}
+                            / 100
+                          </span>
+                        ) : (
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200 text-slate-800">
+                            Anlık Taslak:{' '}
+                            {
+                              effectiveCalc.dualResult
+                                .provisionalBookPresentationScoreOutOf100
+                            }{' '}
+                            / 100 ({effectiveCalc.completedCriteriaCount}/
+                            {effectiveCalc.totalCriteriaCount} ölçüt)
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 font-mono-num">
+                        <span>
+                          İçerik: {effectiveCalc.dualResult.contentScoreOutOf70}
+                          /70 ({effectiveCalc.dualResult.completedContentCount}/
+                          {effectiveCalc.dualResult.totalContentCount}) + %30
+                          Konuşma:{' '}
+                          {effectiveCalc.dualResult.speakingContributionOutOf30}
+                          /30
+                        </span>
+                        <span className="font-sans font-semibold text-slate-700">
+                          {
+                            effectiveCalc.dualResult
+                              .bookPresentationPerformanceLabel
+                          }
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      data-testid="dual-speaking-exam-score"
+                      className={`p-3 rounded-xl border flex flex-col justify-between gap-1.5 ${
+                        effectiveCalc.dualResult.isSpeakingComplete &&
+                        effectiveCalc.dualResult.finalSpeakingScoreOutOf100 !==
+                          null
+                          ? 'bg-slate-900 border-slate-950 text-white'
+                          : 'bg-slate-50 border-slate-300 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`text-xs font-bold ${
+                            effectiveCalc.dualResult.isSpeakingComplete
+                              ? 'text-white'
+                              : 'text-slate-900'
+                          }`}
+                        >
+                          2. Konuşma Sınavı Notu (100 Üzerinden)
+                        </span>
+                        {effectiveCalc.dualResult.isSpeakingComplete &&
+                        effectiveCalc.dualResult.finalSpeakingScoreOutOf100 !==
+                          null ? (
+                          <span className="font-mono-num text-xs font-bold px-2.5 py-0.5 rounded-lg bg-white text-slate-950 flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[2.5]" />
+                            Kesin:{' '}
+                            {
+                              effectiveCalc.dualResult
+                                .finalSpeakingScoreOutOf100
+                            }{' '}
+                            / 100
+                          </span>
+                        ) : (
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200 text-slate-800">
+                            Anlık Taslak:{' '}
+                            {
+                              effectiveCalc.dualResult
+                                .provisionalSpeakingScoreOutOf100
+                            }{' '}
+                            / 100 (
+                            {effectiveCalc.dualResult.completedSpeakingCount}/
+                            {effectiveCalc.dualResult.totalSpeakingCount} ölçüt)
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        className={`flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-num ${
+                          effectiveCalc.dualResult.isSpeakingComplete
+                            ? 'text-slate-300'
+                            : 'text-slate-600'
+                        }`}
+                      >
+                        <span>
+                          6 Ortak Konuşma Ölçütü Toplamı (
+                          {effectiveCalc.dualResult.completedSpeakingCount}/
+                          {effectiveCalc.dualResult.totalSpeakingCount})
+                        </span>
+                        <span
+                          className={`font-sans font-semibold ${
+                            effectiveCalc.dualResult.isSpeakingComplete
+                              ? 'text-blue-200'
+                              : 'text-slate-700'
+                          }`}
+                        >
+                          {effectiveCalc.dualResult.speakingPerformanceLabel}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Single-Criterion Focus Mode Stepper Bar */}
@@ -1018,21 +1207,118 @@ export const IndividualEvaluationView: React.FC<
                   const directPts = activeDirectScoresMap?.[criterion.id];
                   const groupPts =
                     currentStudentEval?.groupCriterionScores?.[criterion.id];
+                  const isDual = Boolean(effectiveCalc.dualResult);
+                  const currentSection = getCriterionSection(
+                    criterion,
+                    cIdx,
+                    activeRubric
+                  );
+                  const prevSection =
+                    cIdx > 0
+                      ? getCriterionSection(
+                          activeRubric.criteria[cIdx - 1],
+                          cIdx - 1,
+                          activeRubric
+                        )
+                      : null;
+                  const showContentHeader =
+                    isDual &&
+                    currentSection === 'content' &&
+                    (cIdx === 0 ||
+                      (focusModeEnabled &&
+                        focusDisplayMode === 'hide_others' &&
+                        isFocused));
+                  const showSpeakingHeader =
+                    isDual &&
+                    currentSection === 'speaking' &&
+                    (prevSection !== 'speaking' ||
+                      (focusModeEnabled &&
+                        focusDisplayMode === 'hide_others' &&
+                        isFocused));
 
                   return (
-                    <RubricCriterionCard
-                      key={criterion.id}
-                      criterion={criterion}
-                      criterionIndex={cIdx}
-                      selectedPoints={selectedPts}
-                      directPoints={directPts}
-                      reflectedGroupPoints={groupPts}
-                      viewMode={cardViewMode}
-                      precisionScoringMode={precisionScoringMode}
-                      isNextUnscored={
-                        !focusModeEnabled &&
-                        criterion.id === firstUnscoredCriterionId
-                      }
+                    <React.Fragment key={criterion.id}>
+                      {showContentHeader && effectiveCalc.dualResult && (
+                        <div
+                          data-testid="section-header-content"
+                          className="bg-slate-100 border border-slate-300 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-md bg-blue-900 text-white text-xs font-bold font-mono-num">
+                              BÖLÜM 1
+                            </span>
+                            <h3 className="text-xs sm:text-sm font-bold text-slate-900">
+                              1. Kitap İçeriği — 70 Puan (Kitap Türüne Özgü 4
+                              Ölçüt)
+                            </h3>
+                          </div>
+                          <span className="font-mono-num text-xs font-bold text-slate-800 bg-white px-2.5 py-1 rounded-lg border border-slate-300">
+                            İçerik Puanı:{' '}
+                            {effectiveCalc.dualResult.contentScoreOutOf70} / 70
+                            ({effectiveCalc.dualResult.completedContentCount}/
+                            {effectiveCalc.dualResult.totalContentCount} ölçüt)
+                          </span>
+                        </div>
+                      )}
+
+                      {showSpeakingHeader && effectiveCalc.dualResult && (
+                        <div
+                          data-testid="section-header-speaking"
+                          className="bg-slate-100 border border-slate-300 rounded-xl px-3.5 py-2.5 space-y-1"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-white text-xs font-bold font-mono-num">
+                                BÖLÜM 2
+                              </span>
+                              <h3 className="text-xs sm:text-sm font-bold text-slate-900">
+                                2. Ortak Konuşma Değerlendirmesi — 100 Puan
+                                (Ortak 6 Ölçüt)
+                              </h3>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 font-mono-num text-xs">
+                              <span className="font-bold text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-slate-300">
+                                Konuşma Sınavı:{' '}
+                                {effectiveCalc.dualResult.speakingScoreOutOf100}{' '}
+                                / 100 (
+                                {
+                                  effectiveCalc.dualResult
+                                    .completedSpeakingCount
+                                }
+                                /{effectiveCalc.dualResult.totalSpeakingCount}{' '}
+                                ölçüt)
+                              </span>
+                              <span className="font-bold text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
+                                Kitap Sunumuna %30 Katkı: +
+                                {
+                                  effectiveCalc.dualResult
+                                    .speakingContributionOutOf30
+                                }{' '}
+                                / 30 Puan
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-slate-600">
+                            Not: Öğretmen isterse sunum sonunda soru
+                            yöneltebilir; soruya verilen cevap ayrı bir zorunlu
+                            konuşma ölçütü değildir (gözlem notuna
+                            eklenebilir).
+                          </p>
+                        </div>
+                      )}
+
+                      <RubricCriterionCard
+                        criterion={criterion}
+                        criterionIndex={cIdx}
+                        selectedPoints={selectedPts}
+                        directPoints={directPts}
+                        reflectedGroupPoints={groupPts}
+                        viewMode={cardViewMode}
+                        precisionScoringMode={precisionScoringMode}
+                        isNextUnscored={
+                          !focusModeEnabled &&
+                          criterion.id === firstUnscoredCriterionId
+                        }
                       adhdFocusMode={!focusModeEnabled}
                       isFocusedStage={focusModeEnabled && isFocused}
                       isDimmedByFocus={
@@ -1109,7 +1395,8 @@ export const IndividualEvaluationView: React.FC<
                         }
                       }}
                       onClearScore={onClearCriterionScore}
-                    />
+                      />
+                    </React.Fragment>
                   );
                 })}
               </div>

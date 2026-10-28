@@ -478,6 +478,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
     return (
       <div
         data-testid={`dimmed-criterion-card-${criterionIndex}`}
+        data-criterion-id={criterion.id}
         onClick={() => onFocusSelect?.()}
         className="rounded-xl border border-slate-300/80 bg-slate-100/75 px-4 py-3 opacity-40 hover:opacity-85 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 select-none"
       >
@@ -490,7 +491,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             }`}
           >
             {isAnswered && <Check className="w-3 h-3 stroke-[2.5]" />}
-            Ölçüt 0{criterionIndex + 1}
+            Ölçüt {String(criterionIndex + 1).padStart(2, '0')}
           </span>
           <span className="text-sm font-semibold text-slate-800 truncate">
             {criterion.title}
@@ -536,6 +537,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
     return (
       <div
         data-testid={`criterion-card-${criterionIndex}`}
+        data-criterion-id={criterion.id}
         className={`rounded-xl border transition-all px-3.5 py-2 md:h-[66px] flex flex-col md:flex-row md:items-center justify-between gap-2.5 ${
           isNextUnscored
             ? 'bg-white border-2 border-blue-900 ring-2 ring-blue-900/10 shadow-xs'
@@ -558,7 +560,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             }`}
           >
             {isAnswered && <Check className="w-3 h-3 stroke-[2.5]" />}
-            0{criterionIndex + 1}
+            {String(criterionIndex + 1).padStart(2, '0')}
           </span>
           <span
             className="text-sm font-bold text-slate-900 truncate min-w-0 flex-1"
@@ -695,6 +697,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
           ? 'active-focused-criterion-stage'
           : `criterion-card-${criterionIndex}`
       }
+      data-criterion-id={criterion.id}
       className={`rounded-2xl border transition-all ${
         isFocusedStage
           ? 'bg-white border-2 border-blue-900 ring-4 ring-blue-900/10 p-5 sm:p-6 space-y-4 shadow-md'
@@ -724,7 +727,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
               }`}
             >
               {isAnswered && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
-              Ölçüt 0{criterionIndex + 1}
+              Ölçüt {String(criterionIndex + 1).padStart(2, '0')}
             </span>
 
             <h3

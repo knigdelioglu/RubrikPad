@@ -9,6 +9,7 @@ import {
   getEffectiveSessionRubric,
   getStudentEvaluationBreakdown,
   getStudentProgressHistory,
+  isDualBookSpeakingRubric,
   isScoreAssigned,
 } from './rubricLogic.ts';
 import {
@@ -445,8 +446,11 @@ export function generatePaginatedSessionPdfBytes(
               .join(' ')
           : '';
 
+        const isDual = isDualBookSpeakingRubric(effectiveRubric);
         const scoreCols = colOpts.showFinalScoreAndLevel
-          ? '  Bireysel  Grup    Kesin(100)  Düzey'
+          ? isDual
+            ? '  İçerik(70) Konuşma(100) Kitap(100)  Düzey'
+            : '  Bireysel  Grup    Kesin(100)  Düzey'
           : '';
 
         const headerLine =
@@ -480,24 +484,45 @@ export function generatePaginatedSessionPdfBytes(
           ? ev?.groupDirectScores || {}
           : ev?.directCriterionScores || {};
 
+      const isDual = isDualBookSpeakingRubric(effectiveRubric);
+      const dual = effectiveCalc.dualResult;
+
       const indStr = (
-        individualCalc.finalScoreOutOf100 !== null
+        isDual && dual
+          ? dual.isContentComplete
+            ? `${dual.contentScoreOutOf70}/70`
+            : dual.completedContentCount > 0
+            ? `Eksik(${dual.completedContentCount}/${dual.totalContentCount})`
+            : '-'
+          : individualCalc.finalScoreOutOf100 !== null
           ? String(individualCalc.finalScoreOutOf100)
           : individualCalc.completedCriteriaCount > 0
           ? `Eksik(${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount})`
           : '-'
-      ).padEnd(8, ' ');
+      ).padEnd(isDual ? 10 : 8, ' ');
 
       const grpStr = (
-        groupCalc.finalScoreOutOf100 !== null
+        isDual && dual
+          ? dual.finalSpeakingScoreOutOf100 !== null
+            ? String(dual.finalSpeakingScoreOutOf100)
+            : dual.completedSpeakingCount > 0
+            ? `Eksik(${dual.completedSpeakingCount}/${dual.totalSpeakingCount})`
+            : '-'
+          : groupCalc.finalScoreOutOf100 !== null
           ? String(groupCalc.finalScoreOutOf100)
           : groupCalc.completedCriteriaCount > 0
           ? `Eksik(${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount})`
           : '-'
-      ).padEnd(6, ' ');
+      ).padEnd(isDual ? 12 : 6, ' ');
 
       const finalStr = (
-        effectiveCalc.finalScoreOutOf100 !== null
+        isDual && dual
+          ? dual.finalBookPresentationScoreOutOf100 !== null
+            ? String(dual.finalBookPresentationScoreOutOf100)
+            : effectiveCalc.completedCriteriaCount > 0
+            ? `Taslak(${effectiveCalc.completedCriteriaCount}/${effectiveCalc.totalCriteriaCount})`
+            : '-'
+          : effectiveCalc.finalScoreOutOf100 !== null
           ? String(effectiveCalc.finalScoreOutOf100)
           : effectiveCalc.completedCriteriaCount > 0
           ? `Taslak(${effectiveCalc.completedCriteriaCount}/${effectiveCalc.totalCriteriaCount})`
@@ -532,12 +557,27 @@ export function generatePaginatedSessionPdfBytes(
             ? `  ${indStr}  ${grpStr}  ${finalStr}  ${effectiveCalc.performanceLabel}`
             : '';
 
+          const dualContinuationSummary =
+            isDual && dual && colOpts.showFinalScoreAndLevel
+              ? `   |   Kitap Sunumu Notu: ${
+                  dual.finalBookPresentationScoreOutOf100 !== null
+                    ? `${dual.finalBookPresentationScoreOutOf100}/100`
+                    : 'Eksik'
+                } (İçerik: ${dual.contentScoreOutOf70}/70 + %30 Konuşma: ${
+                  dual.speakingContributionOutOf30
+                }/30)   |   Konuşma Sınavı Notu: ${
+                  dual.finalSpeakingScoreOutOf100 !== null
+                    ? `${dual.finalSpeakingScoreOutOf100}/100`
+                    : 'Eksik'
+                }`
+              : '';
+
           const rowLine =
             bandIdx === 0
               ? `${stu.studentNumber.padEnd(6, ' ')} ${stu.fullName
                   .slice(0, 24)
                   .padEnd(25, ' ')} ${critVals}${scoreVals}`
-              : `       (Ek Ölçüt Puanları)       ${critVals}`;
+              : `       (Ek Ölçüt Puanları)       ${critVals}${dualContinuationSummary}`;
 
           pushTextOp(ops, '/F1', 7.2, 36, y, rowLine);
           y -= 12;
@@ -880,24 +920,41 @@ export function generateStudentPortfolioPdfBytes(
         y -= 12;
 
         if (colOpts.showFinalScoreAndLevel) {
-          pushTextOp(
-            ops,
-            '/F2',
-            8,
-            46,
-            y,
-            `Kesin Puan: ${item.scoreOutOf100} / 100   |   Başarı Düzeyi: ${
-              item.performanceLabel
-            }${
-              item.individualScoreOutOf100 !== null
-                ? `   |   Bireysel: ${item.individualScoreOutOf100}`
-                : ''
-            }${
-              item.groupScoreOutOf100 !== null
-                ? `   |   Grup: ${item.groupScoreOutOf100}`
-                : ''
-            }`
-          );
+          if (item.isDualEvaluation) {
+            pushTextOp(
+              ops,
+              '/F2',
+              8,
+              46,
+              y,
+              `Kesin Puan: ${item.scoreOutOf100} / 100   |   Kitap Sunumu Notu: ${
+                item.bookPresentationScoreOutOf100 ?? item.scoreOutOf100
+              } / 100 (İçerik: ${item.contentScoreOutOf70 ?? 0}/70 + %30 Konuşma: ${
+                item.speakingContributionOutOf30 ?? 0
+              }/30)   |   Konuşma Sınavı Notu: ${
+                item.speakingExamScoreOutOf100 ?? '-'
+              } / 100   |   Başarı Düzeyi: ${item.performanceLabel}`
+            );
+          } else {
+            pushTextOp(
+              ops,
+              '/F2',
+              8,
+              46,
+              y,
+              `Kesin Puan: ${item.scoreOutOf100} / 100   |   Başarı Düzeyi: ${
+                item.performanceLabel
+              }${
+                item.individualScoreOutOf100 !== null
+                  ? `   |   Bireysel: ${item.individualScoreOutOf100}`
+                  : ''
+              }${
+                item.groupScoreOutOf100 !== null
+                  ? `   |   Grup: ${item.groupScoreOutOf100}`
+                  : ''
+              }`
+            );
+          }
           y -= 12;
         }
 
@@ -1041,6 +1098,7 @@ export function generateClassroomOverviewPdfBytes(
   y -= 14;
 
   rubrics.slice(0, 10).forEach((rub, idx) => {
+    const isDual = isDualBookSpeakingRubric(rub);
     const totalPts = rub.criteria.reduce(
       (s, c) => s + Number(c.maxPoints ?? c.weight ?? 0),
       0
@@ -1059,9 +1117,15 @@ export function generateClassroomOverviewPdfBytes(
       36,
       y,
       colOpts.showFinalScoreAndLevel
-        ? `${idx + 1}. ${rub.title} [${rub.gradeLevel || gradeLevel} · ${
-            rub.subject
-          }] — Toplam: ${totalPts} Puan (${rub.criteria.length} Ölçüt)`
+        ? isDual
+          ? `${idx + 1}. ${rub.title} [${rub.gradeLevel || gradeLevel} · ${
+              rub.subject
+            }] — Tek Değerlendirme, İki Sonuç: Kitap Sunumu (100P) + Konuşma Sınavı (100P) (${
+              rub.criteria.length
+            } Ölçüt)`
+          : `${idx + 1}. ${rub.title} [${rub.gradeLevel || gradeLevel} · ${
+              rub.subject
+            }] — Toplam: ${totalPts} Puan (${rub.criteria.length} Ölçüt)`
         : `${idx + 1}. ${rub.title} [${rub.gradeLevel || gradeLevel} · ${
             rub.subject
           }] (${rub.criteria.length} Ölçüt)`

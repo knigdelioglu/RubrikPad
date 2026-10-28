@@ -18,6 +18,7 @@ import type {
   Student,
 } from '../../types.ts';
 import {
+  getCriterionSection,
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
   hasStudentObservationData,
@@ -393,7 +394,55 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
-                        {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
+                        {calc.dualResult ? (
+                          calc.dualResult.isBookPresentationComplete &&
+                          calc.dualResult.finalBookPresentationScoreOutOf100 !==
+                            null ? (
+                            <span
+                              className={`font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                                isSelected
+                                  ? 'bg-white text-blue-950'
+                                  : 'bg-slate-700 text-white'
+                              }`}
+                            >
+                              <Check className="w-2.5 h-2.5 stroke-[2.5]" />
+                              Kitap:{' '}
+                              {
+                                calc.dualResult
+                                  .finalBookPresentationScoreOutOf100
+                              }{' '}
+                              · Konuşma:{' '}
+                              {calc.dualResult.finalSpeakingScoreOutOf100}
+                            </span>
+                          ) : calc.dualResult.isSpeakingComplete &&
+                            calc.dualResult.finalSpeakingScoreOutOf100 !==
+                              null ? (
+                            <span
+                              className={`font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                isSelected
+                                  ? 'bg-blue-800 text-blue-100'
+                                  : 'bg-slate-200 text-slate-800'
+                              }`}
+                            >
+                              Konuşma:{' '}
+                              {calc.dualResult.finalSpeakingScoreOutOf100} ·
+                              Taslak ({calc.completedCriteriaCount}/
+                              {calc.totalCriteriaCount})
+                            </span>
+                          ) : calc.completedCriteriaCount > 0 ? (
+                            <span
+                              className={`font-mono-num text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                isSelected
+                                  ? 'bg-blue-800 text-blue-100'
+                                  : 'bg-slate-200 text-slate-800'
+                              }`}
+                            >
+                              Taslak ({calc.completedCriteriaCount}/
+                              {calc.totalCriteriaCount})
+                            </span>
+                          ) : null
+                        ) : calc.isComplete &&
+                          calc.finalScoreOutOf100 !== null ? (
                           <span
                             className={`font-mono-num text-[11px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
                               isSelected
@@ -469,8 +518,92 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                     <h2 className="text-base font-bold text-slate-900 truncate">
                       {selectedStudent.fullName}
                     </h2>
-                    {currentScoreCalc.isComplete &&
-                    currentScoreCalc.finalScoreOutOf100 !== null ? (
+                    {currentScoreCalc.dualResult ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          data-testid="fast-dual-book-score"
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold font-mono-num border ${
+                            currentScoreCalc.dualResult
+                              .isBookPresentationComplete &&
+                            currentScoreCalc.dualResult
+                              .finalBookPresentationScoreOutOf100 !== null
+                              ? 'bg-blue-900 text-white border-blue-950'
+                              : 'bg-slate-100 text-slate-800 border-slate-300'
+                          }`}
+                        >
+                          {currentScoreCalc.dualResult
+                            .isBookPresentationComplete &&
+                          currentScoreCalc.dualResult
+                            .finalBookPresentationScoreOutOf100 !== null ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-blue-200 stroke-[2.5]" />
+                              Kitap Sunumu:{' '}
+                              {
+                                currentScoreCalc.dualResult
+                                  .finalBookPresentationScoreOutOf100
+                              }{' '}
+                              / 100
+                            </>
+                          ) : (
+                            <>
+                              Kitap Sunumu Taslak:{' '}
+                              {
+                                currentScoreCalc.dualResult
+                                  .provisionalBookPresentationScoreOutOf100
+                              }{' '}
+                              / 100 (İçerik:{' '}
+                              {currentScoreCalc.dualResult.contentScoreOutOf70}
+                              /70 + %30 Konuşma:{' '}
+                              {
+                                currentScoreCalc.dualResult
+                                  .speakingContributionOutOf30
+                              }
+                              /30)
+                            </>
+                          )}
+                        </span>
+                        <span
+                          data-testid="fast-dual-speaking-score"
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold font-mono-num border ${
+                            currentScoreCalc.dualResult.isSpeakingComplete &&
+                            currentScoreCalc.dualResult
+                              .finalSpeakingScoreOutOf100 !== null
+                              ? 'bg-slate-900 text-white border-slate-950'
+                              : 'bg-slate-100 text-slate-800 border-slate-300'
+                          }`}
+                        >
+                          {currentScoreCalc.dualResult.isSpeakingComplete &&
+                          currentScoreCalc.dualResult
+                            .finalSpeakingScoreOutOf100 !== null ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-blue-200 stroke-[2.5]" />
+                              Konuşma Sınavı:{' '}
+                              {
+                                currentScoreCalc.dualResult
+                                  .finalSpeakingScoreOutOf100
+                              }{' '}
+                              / 100
+                            </>
+                          ) : (
+                            <>
+                              Konuşma Sınavı Taslak:{' '}
+                              {
+                                currentScoreCalc.dualResult
+                                  .provisionalSpeakingScoreOutOf100
+                              }{' '}
+                              / 100 (
+                              {
+                                currentScoreCalc.dualResult
+                                  .completedSpeakingCount
+                              }
+                              /
+                              {currentScoreCalc.dualResult.totalSpeakingCount})
+                            </>
+                          )}
+                        </span>
+                      </div>
+                    ) : currentScoreCalc.isComplete &&
+                      currentScoreCalc.finalScoreOutOf100 !== null ? (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num">
                         <Check className="w-3.5 h-3.5 text-blue-200 stroke-[2.5]" />
                         Kesin Not: {currentScoreCalc.finalScoreOutOf100} / 100 ·{' '}
@@ -615,30 +748,93 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                             ];
                       const groupPts =
                         currentStudentEval?.groupCriterionScores?.[criterion.id];
+                      const isDual = Boolean(currentScoreCalc.dualResult);
+                      const currentSec = getCriterionSection(
+                        criterion,
+                        cIdx,
+                        activeRubric
+                      );
+                      const prevSec =
+                        cIdx > 0
+                          ? getCriterionSection(
+                              activeRubric.criteria[cIdx - 1],
+                              cIdx - 1,
+                              activeRubric
+                            )
+                          : null;
+                      const showContentHeader =
+                        isDual && currentSec === 'content' && cIdx === 0;
+                      const showSpeakingHeader =
+                        isDual &&
+                        currentSec === 'speaking' &&
+                        prevSec !== 'speaking';
 
                       return (
-                        <RubricCriterionCard
-                          key={criterion.id}
-                          criterion={criterion}
-                          criterionIndex={cIdx}
-                          selectedPoints={selectedPts}
-                          directPoints={directPts}
-                          reflectedGroupPoints={groupPts}
-                          viewMode={viewMode}
-                          precisionScoringMode={precisionScoringMode}
-                          isNextUnscored={firstUnscoredCrit?.id === criterion.id}
-                          onSelectLevel={(critId, pts) =>
-                            onSelectCriterionLevel(critId, pts, {
-                              advanceStudentOnComplete: autoAdvanceStudent,
-                            })
-                          }
-                          onSetDirectScore={(critId, dPts) =>
-                            onSetDirectCriterionScore(critId, dPts, {
-                              advanceStudentOnComplete: autoAdvanceStudent,
-                            })
-                          }
-                          onClearScore={onClearCriterionScore}
-                        />
+                        <React.Fragment key={criterion.id}>
+                          {showContentHeader && currentScoreCalc.dualResult && (
+                            <div className="bg-slate-100 border border-slate-300 rounded-xl px-3 py-1.5 flex items-center justify-between text-xs font-bold text-slate-900">
+                              <span>
+                                1. Kitap İçeriği — 70 Puan (Kitap Türüne Özgü 4
+                                Ölçüt)
+                              </span>
+                              <span className="font-mono-num text-blue-900">
+                                {currentScoreCalc.dualResult.contentScoreOutOf70}{' '}
+                                / 70 Puan (
+                                {
+                                  currentScoreCalc.dualResult
+                                    .completedContentCount
+                                }
+                                /{currentScoreCalc.dualResult.totalContentCount}
+                                )
+                              </span>
+                            </div>
+                          )}
+                          {showSpeakingHeader &&
+                            currentScoreCalc.dualResult && (
+                              <div className="bg-slate-100 border border-slate-300 rounded-xl px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-slate-900">
+                                <span>
+                                  2. Ortak Konuşma Değerlendirmesi — 100 Puan
+                                  (Ortak 6 Ölçüt)
+                                </span>
+                                <span className="font-mono-num text-slate-800">
+                                  Konuşma:{' '}
+                                  {
+                                    currentScoreCalc.dualResult
+                                      .speakingScoreOutOf100
+                                  }{' '}
+                                  / 100 · Kitap Sunumuna %30 Katkı: +
+                                  {
+                                    currentScoreCalc.dualResult
+                                      .speakingContributionOutOf30
+                                  }{' '}
+                                  / 30 Puan
+                                </span>
+                              </div>
+                            )}
+                          <RubricCriterionCard
+                            criterion={criterion}
+                            criterionIndex={cIdx}
+                            selectedPoints={selectedPts}
+                            directPoints={directPts}
+                            reflectedGroupPoints={groupPts}
+                            viewMode={viewMode}
+                            precisionScoringMode={precisionScoringMode}
+                            isNextUnscored={
+                              firstUnscoredCrit?.id === criterion.id
+                            }
+                            onSelectLevel={(critId, pts) =>
+                              onSelectCriterionLevel(critId, pts, {
+                                advanceStudentOnComplete: autoAdvanceStudent,
+                              })
+                            }
+                            onSetDirectScore={(critId, dPts) =>
+                              onSetDirectCriterionScore(critId, dPts, {
+                                advanceStudentOnComplete: autoAdvanceStudent,
+                              })
+                            }
+                            onClearScore={onClearCriterionScore}
+                          />
+                        </React.Fragment>
                       );
                     });
                   })()}

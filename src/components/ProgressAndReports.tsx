@@ -34,6 +34,7 @@ import {
   generateSessionCsv,
   isScoreAssigned,
   sanitizeExportFilename,
+  isDualBookSpeakingRubric,
 } from '../utils/rubricLogic.ts';
 import {
   downloadSessionPdfFile,
@@ -1212,7 +1213,9 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                             : 'bg-slate-100 text-slate-800 border border-slate-200'
                         }`}
                       >
-                        Son: {latest.scoreOutOf100}
+                        {latest.isDualEvaluation
+                          ? `Kitap: ${latest.bookPresentationScoreOutOf100 ?? latest.scoreOutOf100} · Konuşma: ${latest.speakingExamScoreOutOf100 ?? '—'}`
+                          : `Son: ${latest.scoreOutOf100}`}
                       </span>
                     ) : (
                       <span className="text-xs text-slate-400">—</span>
@@ -1344,23 +1347,54 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2">
-                            {item.individualScoreOutOf100 !== null && (
-                              <span className="text-xs font-mono-num font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
-                                Bireysel: {item.individualScoreOutOf100}
-                              </span>
+                            {item.isDualEvaluation ? (
+                              <>
+                                <span
+                                  data-testid={`report-dual-book-score-${item.sessionId}`}
+                                  className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-blue-900 text-white"
+                                >
+                                  Kitap Sunumu: {item.bookPresentationScoreOutOf100 ?? item.scoreOutOf100} / 100
+                                  {item.contentScoreOutOf70 !== null &&
+                                    item.speakingContributionOutOf30 !== null && (
+                                      <span className="font-normal text-blue-200 ml-1">
+                                        (İçerik: {item.contentScoreOutOf70}/70 + %30 Konuşma: {item.speakingContributionOutOf30}/30)
+                                      </span>
+                                    )}
+                                </span>
+                                {item.speakingExamScoreOutOf100 !== null && (
+                                  <span
+                                    data-testid={`report-dual-speaking-score-${item.sessionId}`}
+                                    className="font-mono-num text-xs font-bold px-2.5 py-1 rounded bg-emerald-800 text-white"
+                                  >
+                                    Konuşma Sınavı: {item.speakingExamScoreOutOf100} / 100
+                                  </span>
+                                )}
+                                <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
+                                  <Award className="w-3.5 h-3.5 text-blue-900" />
+                                  {item.performanceLabel}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                {item.individualScoreOutOf100 !== null && (
+                                  <span className="text-xs font-mono-num font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
+                                    Bireysel: {item.individualScoreOutOf100}
+                                  </span>
+                                )}
+                                {item.groupScoreOutOf100 !== null && (
+                                  <span className="text-xs font-mono-num font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
+                                    Grup: {item.groupScoreOutOf100}
+                                  </span>
+                                )}
+                                <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
+                                  <Award className="w-3.5 h-3.5 text-blue-900" />
+                                  {item.performanceLabel}
+                                </span>
+                                <span className="font-mono-num text-sm font-bold px-3 py-1 rounded bg-blue-900 text-white">
+                                  {item.scoreOutOf100} / 100
+                                </span>
+                              </>
                             )}
-                            {item.groupScoreOutOf100 !== null && (
-                              <span className="text-xs font-mono-num font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-300">
-                                Grup: {item.groupScoreOutOf100}
-                              </span>
-                            )}
-                            <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1">
-                              <Award className="w-3.5 h-3.5 text-blue-900" />
-                              {item.performanceLabel}
-                            </span>
-                            <span className="font-mono-num text-sm font-bold px-3 py-1 rounded bg-blue-900 text-white">
-                              {item.scoreOutOf100} / 100
-                            </span>
                           </div>
                         </div>
 
@@ -1495,10 +1529,12 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-blue-900">
-                            0{idx + 1}. {rub.title}
+                            {String(idx + 1).padStart(2, '0')}. {rub.title}
                           </span>
-                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded bg-blue-900 text-white">
-                            100 Puan
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded bg-blue-900 text-white shrink-0">
+                            {rub.scoringMode === 'dual_book_and_speaking'
+                              ? '100P + 100P (2 Not)'
+                              : '100 Puan'}
                           </span>
                         </div>
                         <div className="text-[11px] text-slate-600">
@@ -1776,13 +1812,29 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                         </div>
                       </th>
                     ))}
-                    <th className="py-3 px-2.5 text-center w-24">
-                      Bireysel (100)
-                    </th>
-                    <th className="py-3 px-2.5 text-center w-24">Grup (100)</th>
-                    <th className="py-3 px-2.5 text-center w-28">
-                      Kesin Not (100)
-                    </th>
+                    {isDualBookSpeakingRubric(activeReportRubric) ? (
+                      <>
+                        <th className="py-3 px-2.5 text-center w-24">
+                          Kitap İçeriği (70)
+                        </th>
+                        <th className="py-3 px-2.5 text-center w-28">
+                          Kitap Sunumu Notu (100)
+                        </th>
+                        <th className="py-3 px-2.5 text-center w-28">
+                          Konuşma Sınavı Notu (100)
+                        </th>
+                      </>
+                    ) : (
+                      <>
+                        <th className="py-3 px-2.5 text-center w-24">
+                          Bireysel (100)
+                        </th>
+                        <th className="py-3 px-2.5 text-center w-24">Grup (100)</th>
+                        <th className="py-3 px-2.5 text-center w-28">
+                          Kesin Not (100)
+                        </th>
+                      </>
+                    )}
                     <th className="py-3 px-3 w-32">Düzey</th>
                     <th className="py-3 px-3">Gözlem Notları</th>
                   </tr>
@@ -1796,6 +1848,8 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                       effectiveCalc,
                       activeSource,
                     } = getStudentEvaluationBreakdown(activeReportRubric, ev);
+                    const isDual = isDualBookSpeakingRubric(activeReportRubric);
+                    const dual = effectiveCalc.dualResult;
 
                     const activeScores =
                       activeSource === 'group'
@@ -1830,35 +1884,83 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                             </td>
                           );
                         })}
-                        <td className="py-2.5 px-2.5 text-center font-mono-num">
-                          {individualCalc.finalScoreOutOf100 !== null
-                            ? individualCalc.finalScoreOutOf100
-                            : individualCalc.completedCriteriaCount > 0
-                            ? `Eksik (${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount})`
-                            : '—'}
-                        </td>
-                        <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
-                          {groupCalc.finalScoreOutOf100 !== null
-                            ? groupCalc.finalScoreOutOf100
-                            : groupCalc.completedCriteriaCount > 0
-                            ? `Eksik (${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount})`
-                            : '—'}
-                        </td>
-                        <td className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900">
-                          {effectiveCalc.isComplete &&
-                          effectiveCalc.finalScoreOutOf100 !== null ? (
-                            <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
-                              {effectiveCalc.finalScoreOutOf100}
-                            </span>
-                          ) : effectiveCalc.completedCriteriaCount > 0 ? (
-                            <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
-                              Eksik ({effectiveCalc.completedCriteriaCount}/
-                              {effectiveCalc.totalCriteriaCount})
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
+                        {isDual && dual ? (
+                          <>
+                            <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
+                              {dual.completedContentCount > 0
+                                ? `${dual.contentScoreOutOf70}/70`
+                                : '—'}
+                            </td>
+                            <td
+                              data-testid={`session-table-book-score-${stu.id}`}
+                              className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900"
+                            >
+                              {dual.isBookPresentationComplete &&
+                              dual.finalBookPresentationScoreOutOf100 !== null ? (
+                                <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
+                                  {dual.finalBookPresentationScoreOutOf100}
+                                </span>
+                              ) : effectiveCalc.completedCriteriaCount > 0 ? (
+                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                                  Eksik ({effectiveCalc.completedCriteriaCount}/
+                                  {effectiveCalc.totalCriteriaCount})
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td
+                              data-testid={`session-table-speaking-score-${stu.id}`}
+                              className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900"
+                            >
+                              {dual.isSpeakingComplete &&
+                              dual.finalSpeakingScoreOutOf100 !== null ? (
+                                <span className="px-2 py-0.5 rounded bg-emerald-800 text-white">
+                                  {dual.finalSpeakingScoreOutOf100}
+                                </span>
+                              ) : dual.completedSpeakingCount > 0 ? (
+                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                                  Eksik ({dual.completedSpeakingCount}/
+                                  {dual.totalSpeakingCount})
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="py-2.5 px-2.5 text-center font-mono-num">
+                              {individualCalc.finalScoreOutOf100 !== null
+                                ? individualCalc.finalScoreOutOf100
+                                : individualCalc.completedCriteriaCount > 0
+                                ? `Eksik (${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount})`
+                                : '—'}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
+                              {groupCalc.finalScoreOutOf100 !== null
+                                ? groupCalc.finalScoreOutOf100
+                                : groupCalc.completedCriteriaCount > 0
+                                ? `Eksik (${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount})`
+                                : '—'}
+                            </td>
+                            <td className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900">
+                              {effectiveCalc.isComplete &&
+                              effectiveCalc.finalScoreOutOf100 !== null ? (
+                                <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
+                                  {effectiveCalc.finalScoreOutOf100}
+                                </span>
+                              ) : effectiveCalc.completedCriteriaCount > 0 ? (
+                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                                  Eksik ({effectiveCalc.completedCriteriaCount}/
+                                  {effectiveCalc.totalCriteriaCount})
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          </>
+                        )}
                         <td className="py-2.5 px-3 font-medium text-slate-700">
                           {effectiveCalc.performanceLabel}
                         </td>

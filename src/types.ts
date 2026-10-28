@@ -33,13 +33,52 @@ export interface RubricLevel {
   description: string;
 }
 
+export type RubricCriterionSection = 'content' | 'speaking';
+
+export type RubricScoringMode = 'standard_100' | 'dual_book_and_speaking';
+
+export interface DualEvaluationResult {
+  isDualRubric: true;
+  /** 1. Kitap içeriği — 70 puan üzerinden kazanılan puan */
+  contentEarnedPoints: number;
+  contentScoreOutOf70: number;
+  contentMaxPoints: number;
+  contentCompletedCount: number;
+  completedContentCount: number;
+  contentTotalCount: number;
+  totalContentCount: number;
+  isContentComplete: boolean;
+  finalContentScoreOutOf70: number | null;
+  /** 2. Ortak konuşma değerlendirmesi — 100 puan üzerinden kazanılan puan */
+  speakingEarnedPoints: number;
+  speakingScoreOutOf100: number;
+  speakingMaxPoints: number;
+  speakingCompletedCount: number;
+  completedSpeakingCount: number;
+  speakingTotalCount: number;
+  totalSpeakingCount: number;
+  isSpeakingComplete: boolean;
+  /** Konuşma sınavı notu (100 üzerinden; yalnızca 6 konuşma ölçütü tamamlandığında kesinleşir) */
+  finalSpeakingScoreOutOf100: number | null;
+  provisionalSpeakingScoreOutOf100: number;
+  speakingPerformanceLabel: string;
+  /** Konuşma puanının kitap sunumu notuna %30 katkısı (30 üzerinden) */
+  speakingContributionOutOf30: number;
+  /** Kitap sunumu notu: İçerik puanı (70) + konuşma puanının %30'u (100 üzerinden; 10 ölçüt tamamlandığında kesinleşir) */
+  isBookPresentationComplete: boolean;
+  finalBookPresentationScoreOutOf100: number | null;
+  provisionalBookPresentationScoreOutOf100: number;
+  bookPresentationPerformanceLabel: string;
+}
+
 export interface RubricCriterion {
   id: string;
   title: string;
   category: string;
-  weight: number; // percentage weight, e.g., 25 (sum of weights in a rubric = 100)
-  maxPoints?: number; // criterion point value out of 100, e.g., 25, 15, 10
+  weight: number; // percentage weight, e.g., 25 (sum of weights in a standard rubric = 100; 70 content + 100 speaking in dual rubrics)
+  maxPoints?: number; // criterion point value, e.g., 20, 10
   required?: boolean; // default true
+  section?: RubricCriterionSection; // 'content' (Kitap İçeriği — 70 Puan) | 'speaking' (Ortak Konuşma Değerlendirmesi — 100 Puan)
   levels: RubricLevel[];
 }
 
@@ -53,6 +92,7 @@ export interface Rubric {
   criteria: RubricCriterion[];
   createdAt: string;
   version?: number;
+  scoringMode?: RubricScoringMode;
 }
 
 export interface StudentGroup {
@@ -64,6 +104,9 @@ export interface StudentGroup {
   directCriterionScores?: Record<string, number | null>; // criterionId -> exact integer points (0..maxPoints)
   groupNote: string;
   lastAppliedAt?: string;
+  groupBookPresentationScore?: number | null;
+  groupSpeakingExamScore?: number | null;
+  groupContentScoreOutOf70?: number | null;
 }
 
 export interface StudentEvaluation {
@@ -79,6 +122,12 @@ export interface StudentEvaluation {
   tags: string[];
   updatedAt: string;
   evaluatedViaGroup?: string; // group name if group evaluation was also recorded
+  bookPresentationScore?: number | null; // Kitap sunumu notu (100 üzerinden: İçerik 70 + %30 Konuşma)
+  speakingExamScore?: number | null; // Konuşma sınavı notu (100 üzerinden: 6 konuşma ölçütü toplamı)
+  contentScoreOutOf70?: number | null; // Kitap içeriği puanı (70 üzerinden)
+  groupBookPresentationScore?: number | null;
+  groupSpeakingExamScore?: number | null;
+  groupContentScoreOutOf70?: number | null;
 }
 
 export interface EvaluationActionHistoryEntry {

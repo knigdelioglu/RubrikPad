@@ -18,6 +18,7 @@ import {
   getStudentConsecutiveLowScoreReminder,
   getStudentEvaluationBreakdown,
   hasStudentObservationData,
+  isDualBookSpeakingRubric,
 } from '../../utils/rubricLogic.ts';
 import { getScoreLevelVisualTheme } from './RubricCriterionCard.tsx';
 
@@ -207,7 +208,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1 text-[10px] font-mono-num text-slate-500">
-                      <span>ÖLÇÜT 0{idx + 1}</span>
+                      <span>ÖLÇÜT {String(idx + 1).padStart(2, '0')}</span>
                       <span className="font-bold text-slate-800">
                         {c.maxPoints ?? c.weight}P
                       </span>
@@ -217,9 +218,20 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                     </div>
                   </th>
                 ))}
-                <th className="py-2.5 px-3 w-32 text-right bg-slate-100">
-                  Kesin Not (100)
-                </th>
+                {isDualBookSpeakingRubric(activeRubric) ? (
+                  <>
+                    <th className="py-2.5 px-3 w-32 text-right bg-slate-100 border-r border-slate-200">
+                      Kitap Sunumu (100)
+                    </th>
+                    <th className="py-2.5 px-3 w-32 text-right bg-slate-100">
+                      Konuşma Sınavı (100)
+                    </th>
+                  </>
+                ) : (
+                  <th className="py-2.5 px-3 w-32 text-right bg-slate-100">
+                    Kesin Not (100)
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 text-xs">
@@ -391,20 +403,61 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
                       );
                     })}
 
-                    <td className="py-2 px-3 text-right font-mono-num">
-                      {calc.isComplete && calc.finalScoreOutOf100 !== null ? (
-                        <span className="font-bold text-white bg-blue-900 border border-blue-950 px-2 py-0.5 rounded">
-                          {calc.finalScoreOutOf100}
-                        </span>
-                      ) : calc.completedCriteriaCount > 0 ? (
-                        <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded">
-                          Eksik ({calc.completedCriteriaCount}/
-                          {calc.totalCriteriaCount})
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
+                    {calc.dualResult ? (
+                      <>
+                        <td className="py-2 px-3 text-right font-mono-num border-r border-slate-100">
+                          {calc.dualResult.isBookPresentationComplete &&
+                          calc.dualResult.finalBookPresentationScoreOutOf100 !==
+                            null ? (
+                            <span className="font-bold text-white bg-blue-900 border border-blue-950 px-2 py-0.5 rounded">
+                              {
+                                calc.dualResult
+                                  .finalBookPresentationScoreOutOf100
+                              }
+                            </span>
+                          ) : calc.completedCriteriaCount > 0 ? (
+                            <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded">
+                              Eksik ({calc.completedCriteriaCount}/
+                              {calc.totalCriteriaCount})
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono-num">
+                          {calc.dualResult.isSpeakingComplete &&
+                          calc.dualResult.finalSpeakingScoreOutOf100 !==
+                            null ? (
+                            <span className="font-bold text-white bg-slate-900 border border-slate-950 px-2 py-0.5 rounded">
+                              {calc.dualResult.finalSpeakingScoreOutOf100}
+                            </span>
+                          ) : calc.dualResult.completedSpeakingCount > 0 ? (
+                            <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded">
+                              Eksik ({calc.dualResult.completedSpeakingCount}/
+                              {calc.dualResult.totalSpeakingCount})
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                      </>
+                    ) : (
+                      <td className="py-2 px-3 text-right font-mono-num">
+                        {calc.isComplete &&
+                        calc.finalScoreOutOf100 !== null ? (
+                          <span className="font-bold text-white bg-blue-900 border border-blue-950 px-2 py-0.5 rounded">
+                            {calc.finalScoreOutOf100}
+                          </span>
+                        ) : calc.completedCriteriaCount > 0 ? (
+                          <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 border border-slate-300 px-1.5 py-0.5 rounded">
+                            Eksik ({calc.completedCriteriaCount}/
+                            {calc.totalCriteriaCount})
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}

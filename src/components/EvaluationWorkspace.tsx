@@ -686,6 +686,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             ...existing,
             criterionScores: {},
             directCriterionScores: {},
+            bookPresentationScore: undefined,
+            speakingExamScore: undefined,
+            contentScoreOutOf70: undefined,
             updatedAt: new Date().toISOString(),
           },
         },
@@ -1162,7 +1165,8 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 criterionId,
                 points,
                 new Date().toISOString(),
-                onlyUnscored
+                onlyUnscored,
+                activeRubric
               );
               onUpdateSession({
                 ...activeSession,

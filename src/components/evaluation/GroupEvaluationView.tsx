@@ -28,6 +28,7 @@ import type {
 import {
   canApplyGroupScoresToMembers,
   findDuplicateGroupMemberships,
+  getCriterionSection,
   getFocusModeStepSummary,
   getGroupLifecycleStatus,
   getGroupProgressHistory,
@@ -37,6 +38,7 @@ import {
   getSessionStudentsForClassroom,
   getStudentEvaluationBreakdown,
   hasGroupEvaluationData,
+  isDualBookSpeakingRubric,
   isScoreAssigned,
   redistributeGroupsSafely,
   resolveFocusedCriterionIndex,
@@ -155,7 +157,13 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   const [showMemberPicker, setShowMemberPicker] = useState(false);
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [showPortraitGroupDrawer, setShowPortraitGroupDrawer] = useState(false);
-  const [focusModeEnabled, setFocusModeEnabled] = useState(true);
+  const isDualRubric = useMemo(
+    () => isDualBookSpeakingRubric(activeRubric),
+    [activeRubric]
+  );
+  const [focusModeEnabled, setFocusModeEnabled] = useState(
+    () => !isDualBookSpeakingRubric(activeRubric)
+  );
   const [focusDisplayMode, setFocusDisplayMode] =
     useState<CriterionFocusDisplayMode>('hide_others');
   const [focusedCriterionIndex, setFocusedCriterionIndex] = useState(0);
@@ -172,6 +180,10 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
       effectiveGroups[0],
     [effectiveGroups, selectedGroupId]
   );
+
+  useEffect(() => {
+    setFocusModeEnabled(!isDualBookSpeakingRubric(activeRubric));
+  }, [activeRubric.id]);
 
   useEffect(() => {
     setFocusedCriterionIndex(
@@ -1097,7 +1109,37 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
 
                     {/* Definitive Group Score vs Draft Status */}
                     {activeGroupLifecycle.isComplete &&
-                    activeGroupLifecycle.finalScoreOutOf100 !== null ? (
+                    activeGroupLifecycle.dualResult ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border font-mono-num shrink-0 ${
+                            activeGroupLifecycle.dualResult
+                              .isBookPresentationComplete
+                              ? 'bg-blue-900 text-white border-blue-950'
+                              : 'bg-slate-100 text-slate-800 border-slate-300'
+                          }`}
+                        >
+                          Kitap Sunumu:{' '}
+                          {activeGroupLifecycle.dualResult
+                            .finalBookPresentationScoreOutOf100 !== null
+                            ? `${activeGroupLifecycle.dualResult.finalBookPresentationScoreOutOf100} / 100`
+                            : `Eksik (${activeGroupLifecycle.completedCriteriaCount}/${activeGroupLifecycle.totalCriteriaCount})`}
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border font-mono-num shrink-0 ${
+                            activeGroupLifecycle.dualResult.isSpeakingComplete
+                              ? 'bg-teal-900 text-white border-teal-950'
+                              : 'bg-slate-100 text-slate-800 border-slate-300'
+                          }`}
+                        >
+                          Konuşma Sınavı:{' '}
+                          {activeGroupLifecycle.dualResult
+                            .finalSpeakingScoreOutOf100 !== null
+                            ? `${activeGroupLifecycle.dualResult.finalSpeakingScoreOutOf100} / 100`
+                            : `Eksik (${activeGroupLifecycle.dualResult.speakingCompletedCount}/${activeGroupLifecycle.dualResult.speakingTotalCount})`}
+                        </span>
+                      </div>
+                    ) : activeGroupLifecycle.finalScoreOutOf100 !== null ? (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num shrink-0">
                         <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
                         Kesin Grup Notu:{' '}
@@ -1503,92 +1545,137 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     const directPts =
                       selectedGroup.directCriterionScores?.[criterion.id];
 
+                    const currentSection = getCriterionSection(
+                      criterion,
+                      cIdx,
+                      activeRubric
+                    );
+                    const prevSection =
+                      cIdx > 0
+                        ? getCriterionSection(
+                            activeRubric.criteria[cIdx - 1],
+                            cIdx - 1,
+                            activeRubric
+                          )
+                        : null;
+                    const showSectionBanner =
+                      isDualRubric &&
+                      !focusModeEnabled &&
+                      currentSection !== null &&
+                      currentSection !== prevSection;
+
                     return (
-                      <RubricCriterionCard
-                        key={criterion.id}
-                        criterion={criterion}
-                        criterionIndex={cIdx}
-                        selectedPoints={selectedPts}
-                        directPoints={directPts}
-                        viewMode={cardViewMode}
-                        precisionScoringMode={precisionScoringMode}
-                        isNextUnscored={
-                          !focusModeEnabled &&
-                          firstUnscoredCrit?.id === criterion.id
-                        }
-                        adhdFocusMode={!focusModeEnabled}
-                        isFocusedStage={focusModeEnabled && isFocused}
-                        isDimmedByFocus={
-                          focusModeEnabled &&
-                          focusDisplayMode === 'dim_others' &&
-                          !isFocused
-                        }
-                        onFocusSelect={() => setFocusedCriterionIndex(cIdx)}
-                        focusStageNav={
-                          focusModeEnabled && isFocused
-                            ? {
-                                currentStep: focusStepSummary.activeIndex + 1,
-                                totalSteps: focusStepSummary.totalCount,
-                                canGoPrev: focusStepSummary.canGoPrev,
-                                canGoNext: focusStepSummary.canGoNext,
-                                onPrev: () =>
-                                  setFocusedCriterionIndex(
-                                    Math.max(0, focusStepSummary.activeIndex - 1)
-                                  ),
-                                onNext: () =>
-                                  setFocusedCriterionIndex(
-                                    Math.min(
-                                      focusStepSummary.totalCount - 1,
-                                      focusStepSummary.activeIndex + 1
-                                    )
-                                  ),
+                      <React.Fragment key={criterion.id}>
+                        {showSectionBanner && (
+                          <div
+                            className={`rounded-xl border px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 ${
+                              currentSection === 'content'
+                                ? 'bg-blue-50/80 border-blue-200 text-blue-950'
+                                : 'bg-teal-50/80 border-teal-200 text-teal-950'
+                            }`}
+                          >
+                            <div>
+                              <div className="text-xs font-bold">
+                                {currentSection === 'content'
+                                  ? '1. Kitap İçeriği — 70 Puan'
+                                  : '2. Ortak Konuşma Değerlendirmesi — 100 Puan'}
+                              </div>
+                              <div className="text-[11px] opacity-80">
+                                {currentSection === 'content'
+                                  ? 'Kitap türüne özgü 4 içerik ölçütü (70 puan)'
+                                  : 'Sözlü anlatım ve iletişim becerilerine yönelik 6 ortak ölçüt (100 puan)'}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        <RubricCriterionCard
+                          criterion={criterion}
+                          criterionIndex={cIdx}
+                          selectedPoints={selectedPts}
+                          directPoints={directPts}
+                          viewMode={cardViewMode}
+                          precisionScoringMode={precisionScoringMode}
+                          isNextUnscored={
+                            !focusModeEnabled &&
+                            firstUnscoredCrit?.id === criterion.id
+                          }
+                          adhdFocusMode={!focusModeEnabled}
+                          isFocusedStage={focusModeEnabled && isFocused}
+                          isDimmedByFocus={
+                            focusModeEnabled &&
+                            focusDisplayMode === 'dim_others' &&
+                            !isFocused
+                          }
+                          onFocusSelect={() => setFocusedCriterionIndex(cIdx)}
+                          focusStageNav={
+                            focusModeEnabled && isFocused
+                              ? {
+                                  currentStep: focusStepSummary.activeIndex + 1,
+                                  totalSteps: focusStepSummary.totalCount,
+                                  canGoPrev: focusStepSummary.canGoPrev,
+                                  canGoNext: focusStepSummary.canGoNext,
+                                  onPrev: () =>
+                                    setFocusedCriterionIndex(
+                                      Math.max(
+                                        0,
+                                        focusStepSummary.activeIndex - 1
+                                      )
+                                    ),
+                                  onNext: () =>
+                                    setFocusedCriterionIndex(
+                                      Math.min(
+                                        focusStepSummary.totalCount - 1,
+                                        focusStepSummary.activeIndex + 1
+                                      )
+                                    ),
+                                }
+                              : undefined
+                          }
+                          onSelectLevel={(critId, pts) => {
+                            onSelectGroupCriterionLevel(critId, pts);
+                            if (focusModeEnabled) {
+                              const nextScores = {
+                                ...(selectedGroup.criterionScores || {}),
+                                [critId]: pts,
+                              };
+                              const nextDirect = {
+                                ...(selectedGroup.directCriterionScores || {}),
+                              };
+                              delete nextDirect[critId];
+                              const nextFocus =
+                                getNextFocusedCriterionIndexAfterScore(
+                                  activeRubric.criteria,
+                                  cIdx,
+                                  nextScores,
+                                  nextDirect
+                                );
+                              if (!nextFocus.allCompleted) {
+                                setFocusedCriterionIndex(nextFocus.nextIndex);
                               }
-                            : undefined
-                        }
-                        onSelectLevel={(critId, pts) => {
-                          onSelectGroupCriterionLevel(critId, pts);
-                          if (focusModeEnabled) {
-                            const nextScores = {
-                              ...(selectedGroup.criterionScores || {}),
-                              [critId]: pts,
-                            };
-                            const nextDirect = {
-                              ...(selectedGroup.directCriterionScores || {}),
-                            };
-                            delete nextDirect[critId];
-                            const nextFocus =
-                              getNextFocusedCriterionIndexAfterScore(
-                                activeRubric.criteria,
-                                cIdx,
-                                nextScores,
-                                nextDirect
-                              );
-                            if (!nextFocus.allCompleted) {
-                              setFocusedCriterionIndex(nextFocus.nextIndex);
                             }
-                          }
-                        }}
-                        onSetDirectScore={(critId, dPts) => {
-                          onSetGroupDirectCriterionScore(critId, dPts);
-                          if (focusModeEnabled && dPts !== null) {
-                            const nextDirect = {
-                              ...(selectedGroup.directCriterionScores || {}),
-                              [critId]: dPts,
-                            };
-                            const nextFocus =
-                              getNextFocusedCriterionIndexAfterScore(
-                                activeRubric.criteria,
-                                cIdx,
-                                selectedGroup.criterionScores || {},
-                                nextDirect
-                              );
-                            if (!nextFocus.allCompleted) {
-                              setFocusedCriterionIndex(nextFocus.nextIndex);
+                          }}
+                          onSetDirectScore={(critId, dPts) => {
+                            onSetGroupDirectCriterionScore(critId, dPts);
+                            if (focusModeEnabled && dPts !== null) {
+                              const nextDirect = {
+                                ...(selectedGroup.directCriterionScores || {}),
+                                [critId]: dPts,
+                              };
+                              const nextFocus =
+                                getNextFocusedCriterionIndexAfterScore(
+                                  activeRubric.criteria,
+                                  cIdx,
+                                  selectedGroup.criterionScores || {},
+                                  nextDirect
+                                );
+                              if (!nextFocus.allCompleted) {
+                                setFocusedCriterionIndex(nextFocus.nextIndex);
+                              }
                             }
-                          }
-                        }}
-                        onClearScore={onClearGroupCriterionScore}
-                      />
+                          }}
+                          onClearScore={onClearGroupCriterionScore}
+                        />
+                      </React.Fragment>
                     );
                   });
                 })()}
@@ -1730,9 +1817,30 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                               <td className="py-2.5 px-3 text-right font-mono-num">
                                 {isTransferred &&
                                 grpCalc.finalScoreOutOf100 !== null ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-blue-900 text-white font-bold">
-                                    {grpCalc.finalScoreOutOf100} / 100
-                                  </span>
+                                  grpCalc.dualResult ? (
+                                    <div className="inline-flex flex-col items-end gap-0.5">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-900 text-white font-bold text-[11px]">
+                                        Kitap:{' '}
+                                        {
+                                          grpCalc.dualResult
+                                            .finalBookPresentationScoreOutOf100
+                                        }{' '}
+                                        / 100
+                                      </span>
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-900 text-white font-bold text-[11px]">
+                                        Konuşma:{' '}
+                                        {
+                                          grpCalc.dualResult
+                                            .finalSpeakingScoreOutOf100
+                                        }{' '}
+                                        / 100
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-blue-900 text-white font-bold">
+                                      {grpCalc.finalScoreOutOf100} / 100
+                                    </span>
+                                  )
                                 ) : (
                                   <span className="text-slate-400">—</span>
                                 )}

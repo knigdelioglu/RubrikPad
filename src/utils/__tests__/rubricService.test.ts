@@ -12,12 +12,22 @@ import {
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
   LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
   LEGACY_BOOK_PRESENTATION_RUBRIC,
+  LEGACY_V3_LITERARY_BOOK_RUBRIC,
+  LEGACY_V3_INFORMATIVE_BOOK_RUBRIC,
   BOOK_PRESENTATION_LEVEL_PERCENTAGES,
 } from '../../data/bookPresentationRubric.ts';
+import {
+  SHARED_SPEAKING_CRITERIA_TEMPLATES,
+  buildSharedSpeakingCriteria,
+  createReusableSpeakingRubric,
+} from '../../data/speakingEvaluationCriteria.ts';
 import {
   isScoreAssigned,
   validateRubric,
   calculateWeightedScore,
+  calculateDualBookSpeakingScore,
+  isDualBookSpeakingRubric,
+  getCriterionSection,
   getCriterionLevelPercentage,
   getCriterionEarnedPoints,
   getStudentConsecutiveLowScoreReminder,
@@ -25,6 +35,8 @@ import {
   getStudentEvaluationBreakdown,
   getNextUnscoredCriterion,
   applyCriterionScoreToStudents,
+  applyIndividualCriterionEdit,
+  generateSessionCsv,
 } from '../rubricLogic.ts';
 import type { Classroom, EvaluationSession, Rubric } from '../../types.ts';
 import {
@@ -237,8 +249,30 @@ test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exce
   assert.equal(summary.length, 5);
 });
 
-test('both Edebî Eser and Bilgilendirici Kitap rubrics have 7 criteria, 100 points, 3 levels (Evet %100 - Kısmen %50 - Hayır %0), and support grades 9-12 TDE', () => {
+test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlendirme, İki Sonuç (4 content criteria = 70 pts + 6 shared speaking criteria = 100 pts) and support grades 9-12 TDE', () => {
   assert.equal(BOOK_PRESENTATION_RUBRICS.length, 2);
+
+  // Reusable speaking criteria templates total 100 points across 6 criteria
+  assert.equal(SHARED_SPEAKING_CRITERIA_TEMPLATES.length, 6);
+  assert.equal(
+    SHARED_SPEAKING_CRITERIA_TEMPLATES.reduce((s, c) => s + c.weight, 0),
+    100
+  );
+  const reusableDebateRubric = createReusableSpeakingRubric({
+    id: 'rub-test-hazirlikli-konusma',
+    title: 'Hazırlıklı Konuşma Değerlendirme Rubriği',
+    description: 'Ortak konuşma ölçütlerini kullanan bağımsız konuşma rubriği.',
+    idPrefix: 'crit-hk-konusma',
+  });
+  assert.equal(reusableDebateRubric.criteria.length, 6);
+  assert.equal(validateRubric(reusableDebateRubric).isValid, true);
+  assert.equal(
+    buildSharedSpeakingCriteria({ idPrefix: 'munazara' }).reduce(
+      (s, c) => s + c.weight,
+      0
+    ),
+    100
+  );
 
   const literary = INITIAL_RUBRICS.find(
     (r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC_ID
@@ -255,40 +289,49 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics have 7 criteria, 100 poi
     'Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum'
   );
 
-  // Check exact criterion titles and weights for Literary rubric
+  // Check exact criterion titles, weights, and sections for Literary rubric (4 content + 6 speaking = 10)
   assert.deepEqual(
-    literary.criteria.map((c) => [c.title, c.weight, c.maxPoints]),
+    literary.criteria.map((c) => [c.title, c.weight, c.maxPoints, c.section]),
     [
-      ['İçeriği ve temel anlamı kavrama', 20, 20],
-      ['Türe uygun edebî yapı, dil ve anlatımı çözümleme', 20, 20],
-      ['Yorumlama ve eleştirel değerlendirme', 20, 20],
-      ['Yorumları eserden örneklerle destekleme', 10, 10],
-      ['Türkçeyi doğru, açık ve akıcı kullanma', 10, 10],
-      ['Ses kullanımı ve dinleyiciyle iletişim', 10, 10],
-      ['Sunumu düzenleme ve süreyi yönetme', 10, 10],
+      ['İçeriği ve temel anlamı kavrama', 20, 20, 'content'],
+      ['Türe uygun edebî yapı, dil ve anlatımı çözümleme', 20, 20, 'content'],
+      ['Yorumlama ve eleştirel değerlendirme', 20, 20, 'content'],
+      ['Yorumları eserden örneklerle destekleme', 10, 10, 'content'],
+      ['Konuşmayı planlama, düzenleme ve konu bütünlüğü', 20, 20, 'speaking'],
+      ['Türkçeyi doğru kullanma ve uygun söz varlığı', 20, 20, 'speaking'],
+      ['Açık, anlaşılır ve akıcı konuşma', 20, 20, 'speaking'],
+      ['Ses, telaffuz, vurgu ve tonlama', 20, 20, 'speaking'],
+      ['Dinleyiciyle etkili iletişim', 10, 10, 'speaking'],
+      ['Süreyi uygun kullanma', 10, 10, 'speaking'],
     ]
   );
 
-  // Check exact criterion titles and weights for Informative rubric
+  // Check exact criterion titles, weights, and sections for Informative rubric (4 content + 6 speaking = 10)
   assert.deepEqual(
-    informative.criteria.map((c) => [c.title, c.weight, c.maxPoints]),
+    informative.criteria.map((c) => [c.title, c.weight, c.maxPoints, c.section]),
     [
-      ['Konuyu, amacı ve temel düşünceyi kavrama', 20, 20],
+      ['Konuyu, amacı ve temel düşünceyi kavrama', 20, 20, 'content'],
       [
         'Temel bilgileri, kavramları ve düşünceler arası ilişkileri açıklama',
         20,
         20,
+        'content',
       ],
-      ['Eleştirel değerlendirme ve çıkarımda bulunma', 20, 20],
-      ['Bilgileri ve yorumları kitaptan örneklerle destekleme', 10, 10],
-      ['Türkçeyi doğru, açık ve akıcı kullanma', 10, 10],
-      ['Ses kullanımı ve dinleyiciyle iletişim', 10, 10],
-      ['Sunumu düzenleme ve süreyi yönetme', 10, 10],
+      ['Eleştirel değerlendirme ve çıkarımda bulunma', 20, 20, 'content'],
+      ['Bilgileri ve yorumları kitaptan örneklerle destekleme', 10, 10, 'content'],
+      ['Konuşmayı planlama, düzenleme ve konu bütünlüğü', 20, 20, 'speaking'],
+      ['Türkçeyi doğru kullanma ve uygun söz varlığı', 20, 20, 'speaking'],
+      ['Açık, anlaşılır ve akıcı konuşma', 20, 20, 'speaking'],
+      ['Ses, telaffuz, vurgu ve tonlama', 20, 20, 'speaking'],
+      ['Dinleyiciyle etkili iletişim', 10, 10, 'speaking'],
+      ['Süreyi uygun kullanma', 10, 10, 'speaking'],
     ]
   );
 
   for (const rubric of [literary, informative]) {
     assert.equal(ALL_GRADE_TDE_RUBRIC_IDS.has(rubric.id), true);
+    assert.equal(isDualBookSpeakingRubric(rubric), true);
+    assert.equal(rubric.scoringMode, 'dual_book_and_speaking');
     assert.equal(rubric.gradeLevel, 'Genel');
     assert.equal(RubrikService.getEffectiveRubricGradeLevel(rubric), 'Genel');
     assert.equal(
@@ -297,14 +340,23 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics have 7 criteria, 100 poi
     );
     assert.equal(validateRubric(rubric).isValid, true);
     assert.equal(rubric.maxLevelPoints, 2);
-    assert.equal(rubric.criteria.length, 7);
-    assert.deepEqual(
-      rubric.criteria.map((c) => c.weight),
-      [20, 20, 20, 10, 10, 10, 10]
+    assert.equal(rubric.criteria.length, 10);
+
+    const contentCriteria = rubric.criteria.filter(
+      (c, idx) => getCriterionSection(c, idx, rubric) === 'content'
     );
-    assert.deepEqual(
-      rubric.criteria.map((c) => c.maxPoints),
-      [20, 20, 20, 10, 10, 10, 10]
+    const speakingCriteria = rubric.criteria.filter(
+      (c, idx) => getCriterionSection(c, idx, rubric) === 'speaking'
+    );
+    assert.equal(contentCriteria.length, 4);
+    assert.equal(speakingCriteria.length, 6);
+    assert.equal(
+      contentCriteria.reduce((s, c) => s + c.weight, 0),
+      70
+    );
+    assert.equal(
+      speakingCriteria.reduce((s, c) => s + c.weight, 0),
+      100
     );
     assert.equal(
       new Set(rubric.criteria.map((c) => c.id)).size,
@@ -379,70 +431,181 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics have 7 criteria, 100 poi
       false
     );
 
-    // 3-level scoring & 100-point calculation:
-    // All Evet (%100 -> 2 points) = 100
-    assert.equal(
-      calculateWeightedScore(
-        rubric,
-        Object.fromEntries(rubric.criteria.map((c) => [c.id, 2]))
-      ).finalScoreOutOf100,
-      100
+    // Dual Result Calculation:
+    // 1. All Evet (%100 -> 2 points): Content = 70/70, Speaking = 100/100 => Book = 70 + 30 = 100, Speaking = 100
+    const allEvetCalc = calculateWeightedScore(
+      rubric,
+      Object.fromEntries(rubric.criteria.map((c) => [c.id, 2]))
     );
-    // All Kısmen (%50 -> 1 point: 10 + 10 + 10 + 5 + 5 + 5 + 5) = 50
-    assert.equal(
-      calculateWeightedScore(
-        rubric,
-        Object.fromEntries(rubric.criteria.map((c) => [c.id, 1]))
-      ).finalScoreOutOf100,
-      50
+    assert.equal(allEvetCalc.isComplete, true);
+    assert.equal(allEvetCalc.finalScoreOutOf100, 100);
+    assert.equal(allEvetCalc.dualResult?.contentScoreOutOf70, 70);
+    assert.equal(allEvetCalc.dualResult?.speakingScoreOutOf100, 100);
+    assert.equal(allEvetCalc.dualResult?.speakingContributionOutOf30, 30);
+    assert.equal(allEvetCalc.dualResult?.finalBookPresentationScoreOutOf100, 100);
+    assert.equal(allEvetCalc.dualResult?.finalSpeakingScoreOutOf100, 100);
+
+    // 2. All Kısmen (%50 -> 1 point): Content = 35/70, Speaking = 50/100 => Book = 35 + 15 = 50, Speaking = 50
+    const allKismenCalc = calculateWeightedScore(
+      rubric,
+      Object.fromEntries(rubric.criteria.map((c) => [c.id, 1]))
     );
-    // All Hayır (%0 -> 0 points) = 0 (complete!)
+    assert.equal(allKismenCalc.isComplete, true);
+    assert.equal(allKismenCalc.finalScoreOutOf100, 50);
+    assert.equal(allKismenCalc.dualResult?.contentScoreOutOf70, 35);
+    assert.equal(allKismenCalc.dualResult?.speakingScoreOutOf100, 50);
+    assert.equal(allKismenCalc.dualResult?.speakingContributionOutOf30, 15);
+    assert.equal(allKismenCalc.dualResult?.finalBookPresentationScoreOutOf100, 50);
+    assert.equal(allKismenCalc.dualResult?.finalSpeakingScoreOutOf100, 50);
+
+    // 3. All Hayır (%0 -> 0 points): Complete with 0 for both results!
     const allNoResult = calculateWeightedScore(
       rubric,
       Object.fromEntries(rubric.criteria.map((c) => [c.id, 0]))
     );
     assert.equal(allNoResult.isComplete, true);
-    assert.equal(allNoResult.completedCriteriaCount, 7);
+    assert.equal(allNoResult.completedCriteriaCount, 10);
     assert.equal(allNoResult.finalScoreOutOf100, 0);
+    assert.equal(allNoResult.dualResult?.finalBookPresentationScoreOutOf100, 0);
+    assert.equal(allNoResult.dualResult?.finalSpeakingScoreOutOf100, 0);
 
-    // Mixed Evet (100%), Kısmen (50%), Hayır (0%) calculation:
-    // c1 (20) = Evet (20), c2 (20) = Kısmen (10), c3 (20) = Evet (20),
-    // c4 (10) = Kısmen (5), c5 (10) = Evet (10), c6 (10) = Hayır (0), c7 (10) = Kısmen (5) => 70
-    const mixedScores = {
-      [rubric.criteria[0].id]: 2,
-      [rubric.criteria[1].id]: 1,
-      [rubric.criteria[2].id]: 2,
-      [rubric.criteria[3].id]: 1,
-      [rubric.criteria[4].id]: 2,
-      [rubric.criteria[5].id]: 0,
-      [rubric.criteria[6].id]: 1,
+    // 4. Distinct Content vs Speaking performance:
+    // Content: c1(20)=Evet(20), c2(20)=Kısmen(10), c3(20)=Evet(20), c4(10)=Hayır(0) => 50 / 70
+    // Speaking: s1(20)=Evet(20), s2(20)=Evet(20), s3(20)=Kısmen(10), s4(20)=Evet(20), s5(10)=Evet(10), s6(10)=Hayır(0) => 80 / 100
+    // Expected:
+    // - Konuşma Sınavı Notu = 80 / 100
+    // - Kitap Sunumu Notu = 50 + (80 * 0.30 = 24) = 74 / 100
+    const mixedScores: Record<string, number | null> = {
+      [rubric.criteria[0].id]: 2, // 20
+      [rubric.criteria[1].id]: 1, // 10
+      [rubric.criteria[2].id]: 2, // 20
+      [rubric.criteria[3].id]: 0, // 0  -> Content = 50/70
+      [rubric.criteria[4].id]: 2, // 20
+      [rubric.criteria[5].id]: 2, // 20
+      [rubric.criteria[6].id]: 1, // 10
+      [rubric.criteria[7].id]: 2, // 20
+      [rubric.criteria[8].id]: 2, // 10
+      [rubric.criteria[9].id]: 0, // 0  -> Speaking = 80/100
     };
     const mixedResult = calculateWeightedScore(rubric, mixedScores);
     assert.equal(mixedResult.isComplete, true);
-    assert.equal(mixedResult.finalScoreOutOf100, 70);
+    assert.equal(mixedResult.dualResult?.contentScoreOutOf70, 50);
+    assert.equal(mixedResult.dualResult?.speakingScoreOutOf100, 80);
+    assert.equal(mixedResult.dualResult?.speakingContributionOutOf30, 24);
+    assert.equal(mixedResult.dualResult?.finalSpeakingScoreOutOf100, 80);
+    assert.equal(mixedResult.dualResult?.finalBookPresentationScoreOutOf100, 74);
+    assert.equal(mixedResult.finalScoreOutOf100, 74);
 
-    // Strict separation between Hayır (0 points) and not-yet-evaluated (null / undefined):
-    const unscoredLast = {
+    // 5. Independent completion rules:
+    // (a) If all 6 speaking criteria are scored (80/100) but 1 content criterion is unscored (null):
+    //     -> Konuşma Sınavı Notu IS finalized (80/100), while Kitap Sunumu Notu is NOT finalized (null)!
+    const speakingCompleteContentIncomplete = {
       ...mixedScores,
-      [rubric.criteria[6].id]: null,
+      [rubric.criteria[3].id]: null,
     };
-    const partialResult = calculateWeightedScore(rubric, unscoredLast);
+    const partialContentResult = calculateDualBookSpeakingScore(
+      rubric,
+      speakingCompleteContentIncomplete
+    );
+    assert.equal(partialContentResult.isContentComplete, false);
+    assert.equal(partialContentResult.isSpeakingComplete, true);
+    assert.equal(partialContentResult.isBookPresentationComplete, false);
+    assert.equal(partialContentResult.finalSpeakingScoreOutOf100, 80);
+    assert.equal(partialContentResult.finalBookPresentationScoreOutOf100, null);
+
+    // (b) If all 4 content criteria are scored (50/70) but 1 speaking criterion is unscored (null):
+    //     -> Neither Konuşma Sınavı Notu nor Kitap Sunumu Notu is finalized (both depend on speaking)!
+    const contentCompleteSpeakingIncomplete = {
+      ...mixedScores,
+      [rubric.criteria[9].id]: null,
+    };
+    const partialSpeakingResult = calculateWeightedScore(
+      rubric,
+      contentCompleteSpeakingIncomplete
+    );
     assert.equal(isScoreAssigned(0), true);
     assert.equal(isScoreAssigned(null), false);
     assert.equal(isScoreAssigned(undefined), false);
-    assert.equal(partialResult.isComplete, false);
-    assert.equal(partialResult.completedCriteriaCount, 6);
-    assert.equal(partialResult.finalScoreOutOf100, null);
+    assert.equal(partialSpeakingResult.isComplete, false);
+    assert.equal(partialSpeakingResult.completedCriteriaCount, 9);
+    assert.equal(partialSpeakingResult.finalScoreOutOf100, null);
     assert.equal(
-      getNextUnscoredCriterion(rubric.criteria, unscoredLast)?.criterion.id,
-      rubric.criteria[6].id
+      partialSpeakingResult.dualResult?.isContentComplete,
+      true
+    );
+    assert.equal(
+      partialSpeakingResult.dualResult?.isSpeakingComplete,
+      false
+    );
+    assert.equal(
+      partialSpeakingResult.dualResult?.finalSpeakingScoreOutOf100,
+      null
+    );
+    assert.equal(
+      partialSpeakingResult.dualResult?.finalBookPresentationScoreOutOf100,
+      null
+    );
+    assert.equal(
+      getNextUnscoredCriterion(rubric.criteria, contentCompleteSpeakingIncomplete)?.criterion.id,
+      rubric.criteria[9].id
     );
     assert.equal(
       getNextUnscoredCriterion(rubric.criteria, mixedScores),
       null
     );
 
-    // Bulk fast evaluation ("Sadece Puanlanmamışlara Uygula") respects Hayır (0 points) as already scored:
+    // 6. Persisting both scores separately on StudentEvaluation via applyIndividualCriterionEdit:
+    let persistedEval = undefined;
+    for (const [critId, val] of Object.entries(mixedScores)) {
+      const editResult = applyIndividualCriterionEdit(
+        rubric,
+        persistedEval,
+        'stu-dual-1',
+        { type: 'level', criterionId: critId, points: val ?? 0 },
+        '2026-10-27T12:00:00Z'
+      );
+      persistedEval = editResult.updatedEvaluation;
+    }
+    assert.ok(persistedEval);
+    assert.equal(persistedEval.contentScoreOutOf70, 50);
+    assert.equal(persistedEval.speakingExamScore, 80);
+    assert.equal(persistedEval.bookPresentationScore, 74);
+
+    // 7. CSV export contains separate columns for Content (70), %30 Speaking (30), Book Presentation (100), and Speaking Exam (100)
+    const dualSession: EvaluationSession = {
+      id: 'ses-dual-csv',
+      title: 'Kitap ve Konuşma Değerlendirmesi',
+      classId: 'cls-10a',
+      rubricId: rubric.id,
+      date: '2026-10-27',
+      status: 'completed',
+      mode: 'individual',
+      groups: [],
+      generalSessionNote: '',
+      evaluations: {
+        'stu-dual-1': persistedEval,
+      },
+    };
+    const csvText = generateSessionCsv(
+      dualSession,
+      rubric,
+      [
+        {
+          id: 'stu-dual-1',
+          studentNumber: '109',
+          fullName: 'Deniz Arslan',
+          classId: 'cls-10a',
+        },
+      ],
+      'cls-10a'
+    );
+    assert.equal(csvText.includes('Kitap İçeriği Puanı (70)'), true);
+    assert.equal(csvText.includes('Konuşma %30 Katkısı (30)'), true);
+    assert.equal(csvText.includes('Kitap Sunumu Notu (100)'), true);
+    assert.equal(csvText.includes('Konuşma Sınavı Notu (100)'), true);
+    assert.equal(csvText.includes('50,24,74,80'), true);
+
+    // 8. Bulk fast evaluation ("Sadece Puanlanmamışlara Uygula") respects Hayır (0 points) as already scored:
     const bulkEvaluations = applyCriterionScoreToStudents(
       {
         'stu-hayir': {
@@ -478,20 +641,24 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics have 7 criteria, 100 poi
     );
   }
 
-  // Other 8 rubrics remain 5-level (0..4)
+  // Other 8 rubrics remain 5-level (0..4) and standard single-score
   const otherRubrics = INITIAL_RUBRICS.filter(
     (r) => !BOOK_PRESENTATION_RUBRIC_IDS.includes(r.id)
   );
   assert.equal(otherRubrics.length, 8);
   assert.ok(
     otherRubrics.every(
-      (r) => r.maxLevelPoints === 4 && r.criteria.every((c) => c.levels.length === 5)
+      (r) =>
+        !isDualBookSpeakingRubric(r) &&
+        r.maxLevelPoints === 4 &&
+        r.criteria.every((c) => c.levels.length === 5)
     )
   );
 });
 
 test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes produce valid %PDF-1.4 documents with Turkish Unicode text', async () => {
   const {
+    generatePaginatedSessionPdfBytes,
     generateStudentPortfolioPdfBytes,
     generateClassroomOverviewPdfBytes,
     decodePdfTextWithToUnicode,
@@ -531,10 +698,57 @@ test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes pro
   const rubricsMap: Record<string, Rubric> = {};
   for (const r of INITIAL_RUBRICS) rubricsMap[r.id] = r;
 
+  // Dual evaluation session (Content = 50/70, Speaking = 80/100 => Book = 74/100, Speaking = 80/100)
+  const dualScores: Record<string, number> = {
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[0].id]: 2,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[1].id]: 1,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[2].id]: 2,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[3].id]: 0,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[4].id]: 2,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[5].id]: 2,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[6].id]: 1,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[7].id]: 2,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[8].id]: 2,
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.criteria[9].id]: 0,
+  };
+  const dualSession: EvaluationSession = {
+    id: 'ses-dual-pdf-1',
+    title: 'Edebî Eser ve Konuşma Değerlendirmesi',
+    classId: 'cls-11a',
+    rubricId: LITERARY_BOOK_PRESENTATION_RUBRIC.id,
+    date: '2026-10-27',
+    status: 'completed',
+    mode: 'individual',
+    groups: [],
+    generalSessionNote: '',
+    evaluations: {
+      'stu-1': {
+        studentId: 'stu-1',
+        criterionScores: dualScores,
+        bookPresentationScore: 74,
+        speakingExamScore: 80,
+        contentScoreOutOf70: 50,
+        note: 'Eserden seçtiği örnekler ve diksiyonu çok başarılı.',
+        tags: [],
+        updatedAt: '2026-10-27',
+      },
+    },
+  };
+
+  const dualSessionPdfBytes = generatePaginatedSessionPdfBytes(
+    dualSession,
+    LITERARY_BOOK_PRESENTATION_RUBRIC,
+    cls,
+    [stu]
+  );
+  const dualSessionPdfText = decodePdfTextWithToUnicode(dualSessionPdfBytes);
+  assert.equal(dualSessionPdfText.includes('Kitap Sunumu Notu: 74/100'), true);
+  assert.equal(dualSessionPdfText.includes('Konuşma Sınavı Notu: 80/100'), true);
+
   const portfolioBytes = generateStudentPortfolioPdfBytes(
     stu,
     cls,
-    [],
+    [dualSession],
     rubricsMap
   );
   const portfolioHeader = new TextDecoder('ascii').decode(
@@ -547,6 +761,8 @@ test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes pro
     true
   );
   assert.equal(portfolioText.includes('Çağrı Şahin Öztürk'), true);
+  assert.equal(portfolioText.includes('Kitap Sunumu Notu: 74 / 100'), true);
+  assert.equal(portfolioText.includes('Konuşma Sınavı Notu: 80 / 100'), true);
   assert.equal(portfolioText.includes('Veli Adı Soyadı / İmza'), true);
 });
 
@@ -940,6 +1156,52 @@ test('3-level book presentation rubric helpers, low-score reminder, and historic
   );
   assert.equal(breakdownV2.effectiveCalc.isComplete, true);
   assert.equal(breakdownV2.effectiveCalc.finalScoreOutOf100, 56);
+
+  // 3. Historical V3 session (7-criterion single-score Literary or Informative book rubric) is NOT retroactively recalculated as a 10-criterion dual rubric
+  const historicalV3Session: EvaluationSession = {
+    id: 'ses-legacy-ees-v3',
+    title: 'Geçmiş Edebî Eser Sunumu (7 Ölçütlü V3)',
+    classId: 'cls-10a',
+    rubricId: LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
+    rubricSnapshot: LEGACY_V3_LITERARY_BOOK_RUBRIC,
+    date: '2026-10-26',
+    status: 'completed',
+    mode: 'individual',
+    groups: [],
+    generalSessionNote: '',
+    evaluations: {
+      'stu-1': {
+        studentId: 'stu-1',
+        criterionScores: {
+          'crit-ees-1': 2, // 20
+          'crit-ees-2': 1, // 10
+          'crit-ees-3': 2, // 20
+          'crit-ees-4': 1, // 5
+          'crit-ees-5': 2, // 10
+          'crit-ees-6': 0, // 0
+          'crit-ees-7': 1, // 5 -> 70/100 single score
+        },
+        note: '7 ölçütlü V3 oturumu',
+        tags: [],
+        updatedAt: '2026-10-26',
+      },
+    },
+  };
+  const effectiveV3Rubric = getEffectiveSessionRubric(
+    historicalV3Session,
+    rubricsById
+  );
+  assert.ok(effectiveV3Rubric);
+  assert.equal(isDualBookSpeakingRubric(effectiveV3Rubric), false);
+  assert.equal(effectiveV3Rubric.criteria.length, 7);
+  const breakdownV3 = getStudentEvaluationBreakdown(
+    effectiveV3Rubric,
+    historicalV3Session.evaluations['stu-1']
+  );
+  assert.equal(breakdownV3.effectiveCalc.isComplete, true);
+  assert.equal(breakdownV3.effectiveCalc.finalScoreOutOf100, 70);
+  assert.equal(breakdownV3.effectiveCalc.dualResult, undefined);
+  assert.equal(LEGACY_V3_INFORMATIVE_BOOK_RUBRIC.criteria.length, 7);
 });
 
 test('multi-class evaluation sessions isolate students and groups per classroom in both individual and group evaluation modes', async () => {
