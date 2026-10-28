@@ -25,8 +25,12 @@ import type {
   Student,
   Rubric,
   EvaluationSession,
+  InstitutionSettings,
 } from '../types.ts';
+import { loadInstitutionSettings } from '../utils/storageLayer.ts';
 import {
+  getCriterionEarnedPoints,
+  getCriterionSection,
   getEffectiveSessionRubric,
   getStudentEvaluationBreakdown,
   getStudentProgressHistory,
@@ -40,6 +44,7 @@ import {
   downloadSessionPdfFile,
   downloadStudentPortfolioPdfFile,
   downloadClassroomOverviewPdfFile,
+  type DualReportMode,
   type PdfColumnOptions,
 } from '../utils/pdfGenerator.ts';
 import {
@@ -72,6 +77,7 @@ interface ProgressAndReportsProps {
   onUpdateSession?: (session: EvaluationSession) => void;
   onDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  institutionSettings?: InstitutionSettings;
 }
 
 export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
@@ -84,7 +90,10 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
   onUpdateSession,
   onDeleteSession,
   onArchiveSession,
+  institutionSettings,
 }) => {
+  const effectiveInstitution =
+    institutionSettings || loadInstitutionSettings();
   const activeClassroom = useMemo(
     () => classrooms.find((c) => c.id === activeClassId) || classrooms[0],
     [classrooms, activeClassId]
@@ -160,6 +169,8 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
     'Güz' | 'Bahar'
   >('Güz');
   const [termManagerError, setTermManagerError] = useState<string | null>(null);
+  const [dualSessionReportMode, setDualSessionReportMode] =
+    useState<DualReportMode>('both');
 
   const academicTermOptions = useMemo(() => {
     const autoManaged = ensureAutoAcademicTerms(
@@ -354,7 +365,8 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
         activeReportSession,
         activeReportRubric,
         students,
-        activeClassroom?.id
+        activeClassroom?.id,
+        dualSessionReportMode
       );
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -364,7 +376,13 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
         activeReportSession.title,
         'oturum'
       );
-      const filename = `rapor_${safeName}.csv`;
+      const modePrefix =
+        dualSessionReportMode === 'book'
+          ? 'kitap_raporu'
+          : dualSessionReportMode === 'speaking'
+          ? 'konusma_raporu'
+          : 'rapor';
+      const filename = `${modePrefix}_${safeName}.csv`;
       link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
@@ -1237,8 +1255,16 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                 {/* Institutional PDF Banner Header */}
                 <div className="pdf-report-banner rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div className="space-y-1">
+                    {effectiveInstitution.schoolName && (
+                      <div
+                        data-testid="report-school-name-header"
+                        className="text-xs font-bold uppercase tracking-wider text-amber-200"
+                      >
+                        {effectiveInstitution.schoolName}
+                      </div>
+                    )}
                     <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
-                      Veli Bilgilendirme ve Öğrenci Gelişim Raporu
+                      Öğrenci Gelişim ve Performans Raporu
                     </div>
                     <h2 className="text-xl sm:text-2xl font-bold text-white">
                       {activeStudent.fullName}
@@ -1454,27 +1480,50 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                   </div>
                 )}
 
-                {/* Official Parent & Teacher Signature Footer */}
-                <div className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700">
+                {/* Official Teacher & Principal Signature Footer */}
+                <div
+                  data-testid="report-signature-grid"
+                  className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700"
+                >
                   <div className="pdf-signature-box">
                     <div className="font-bold text-slate-900">
                       Ders Öğretmeni
                     </div>
-                    <div className="text-slate-500 mt-0.5">Adı Soyadı ve İmza</div>
+                    {effectiveInstitution.teacherName ? (
+                      <>
+                        <div
+                          data-testid="report-signature-teacher-name"
+                          className="font-semibold text-slate-800 mt-0.5"
+                        >
+                          {effectiveInstitution.teacherName}
+                        </div>
+                        <div className="text-slate-500 mt-0.5">İmza</div>
+                      </>
+                    ) : (
+                      <div className="text-slate-500 mt-0.5">
+                        Adı Soyadı ve İmza
+                      </div>
+                    )}
                   </div>
                   <div className="pdf-signature-box">
-                    <div className="font-bold text-slate-900">
-                      Öğrenci Velisi
-                    </div>
-                    <div className="text-slate-500 mt-0.5">
-                      Bilgi Edindim · Adı Soyadı ve İmza
-                    </div>
-                  </div>
-                  <div className="pdf-signature-box">
-                    <div className="font-bold text-slate-900">
-                      Okul Müdürlüğü / İdare
-                    </div>
-                    <div className="text-slate-500 mt-0.5">Mühür ve Onay</div>
+                    <div className="font-bold text-slate-900">Okul Müdürü</div>
+                    {effectiveInstitution.principalName ? (
+                      <>
+                        <div
+                          data-testid="report-signature-principal-name"
+                          className="font-semibold text-slate-800 mt-0.5"
+                        >
+                          {effectiveInstitution.principalName}
+                        </div>
+                        <div className="text-slate-500 mt-0.5">
+                          İmza ve Mühür
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-slate-500 mt-0.5">
+                        Adı Soyadı, İmza ve Mühür
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1483,8 +1532,16 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
               <div className="pdf-report-sheet p-6 space-y-5">
                 <div className="pdf-report-banner rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div className="space-y-1">
+                    {effectiveInstitution.schoolName && (
+                      <div
+                        data-testid="report-school-name-header"
+                        className="text-xs font-bold uppercase tracking-wider text-amber-200"
+                      >
+                        {effectiveInstitution.schoolName}
+                      </div>
+                    )}
                     <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
-                      Resmi PDF Çıktı ve Veli Paylaşım Şablonu
+                      Resmi PDF Çıktı ve Değerlendirme Şablonu
                     </div>
                     <h2 className="text-xl font-bold text-white">
                       {activeClassroom
@@ -1559,26 +1616,49 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
                   </div>
                 </div>
 
-                <div className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700">
+                <div
+                  data-testid="report-signature-grid"
+                  className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700"
+                >
                   <div className="pdf-signature-box">
                     <div className="font-bold text-slate-900">
                       Ders Öğretmeni
                     </div>
-                    <div className="text-slate-500 mt-0.5">Adı Soyadı ve İmza</div>
+                    {effectiveInstitution.teacherName ? (
+                      <>
+                        <div
+                          data-testid="report-signature-teacher-name"
+                          className="font-semibold text-slate-800 mt-0.5"
+                        >
+                          {effectiveInstitution.teacherName}
+                        </div>
+                        <div className="text-slate-500 mt-0.5">İmza</div>
+                      </>
+                    ) : (
+                      <div className="text-slate-500 mt-0.5">
+                        Adı Soyadı ve İmza
+                      </div>
+                    )}
                   </div>
                   <div className="pdf-signature-box">
-                    <div className="font-bold text-slate-900">
-                      Öğrenci Velisi
-                    </div>
-                    <div className="text-slate-500 mt-0.5">
-                      Bilgi Edindim · Adı Soyadı ve İmza
-                    </div>
-                  </div>
-                  <div className="pdf-signature-box">
-                    <div className="font-bold text-slate-900">
-                      Okul Müdürlüğü / İdare
-                    </div>
-                    <div className="text-slate-500 mt-0.5">Mühür ve Onay</div>
+                    <div className="font-bold text-slate-900">Okul Müdürü</div>
+                    {effectiveInstitution.principalName ? (
+                      <>
+                        <div
+                          data-testid="report-signature-principal-name"
+                          className="font-semibold text-slate-800 mt-0.5"
+                        >
+                          {effectiveInstitution.principalName}
+                        </div>
+                        <div className="text-slate-500 mt-0.5">
+                          İmza ve Mühür
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-slate-500 mt-0.5">
+                        Adı Soyadı, İmza ve Mühür
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1775,224 +1855,477 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
               </div>
             </div>
 
-            <div className="pb-2">
-              <div className="text-xs font-semibold text-blue-900 uppercase tracking-wider">
-                Ölçüt Temelli Performans Değerlendirme Çizelgesi
+            {isDualBookSpeakingRubric(activeReportRubric) && (
+              <div
+                data-testid="session-dual-report-switcher"
+                className="no-print bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="text-xs font-bold text-slate-800">
+                  Tek Değerlendirme, İki Sonuç — Rapor Görünümü:
+                </div>
+                <div className="inline-flex rounded-lg bg-white border border-slate-200 p-0.5 gap-1">
+                  {(
+                    [
+                      {
+                        id: 'both',
+                        label: 'Her İki Rapor (Kitap + Konuşma)',
+                      },
+                      {
+                        id: 'book',
+                        label: '1. Kitap Sunumu Raporu (100P)',
+                      },
+                      {
+                        id: 'speaking',
+                        label: '2. Konuşma Sınavı Raporu (100P)',
+                      },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      data-testid={`session-dual-mode-${opt.id}`}
+                      onClick={() => setDualSessionReportMode(opt.id)}
+                      className={`px-2.5 py-1.5 rounded-md text-xs font-bold cursor-pointer transition-colors ${
+                        dualSessionReportMode === opt.id
+                          ? 'bg-blue-900 text-white'
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <h2 className="text-xl font-bold text-slate-900 mt-0.5 flex items-center gap-2">
-                <span>
-                  {activeClassroom?.name} — {activeReportSession.title}
-                </span>
-                {activeReportSession.archived && (
-                  <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1">
-                    <Archive className="w-3 h-3 text-amber-800" />
-                    Arşivde
-                  </span>
-                )}
-              </h2>
-              <p className="text-xs text-slate-600 mt-0.5">
-                Rubrik: <strong>{activeReportRubric.title}</strong> · Tarih:{' '}
-                <span className="font-mono-num">
-                  {activeReportSession.date}
-                </span>
-              </p>
-            </div>
+            )}
 
-            <div className="border border-slate-200 rounded-xl overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[860px]">
-                <thead>
-                  <tr className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-700">
-                    <th className="py-3 px-3 w-16">No</th>
-                    <th className="py-3 px-3 w-44">Öğrenci Adı Soyadı</th>
-                    {activeReportRubric.criteria.map((c) => (
-                      <th key={c.id} className="py-3 px-2.5 text-center">
-                        <div>{c.title}</div>
-                        <div className="font-mono-num text-[10px] font-normal text-slate-500">
-                          ({c.maxPoints ?? c.weight}P / %{c.weight})
-                        </div>
-                      </th>
-                    ))}
-                    {isDualBookSpeakingRubric(activeReportRubric) ? (
-                      <>
-                        <th className="py-3 px-2.5 text-center w-24">
-                          Kitap İçeriği (70)
-                        </th>
-                        <th className="py-3 px-2.5 text-center w-28">
-                          Kitap Sunumu Notu (100)
-                        </th>
-                        <th className="py-3 px-2.5 text-center w-28">
-                          Konuşma Sınavı Notu (100)
-                        </th>
-                      </>
-                    ) : (
-                      <>
-                        <th className="py-3 px-2.5 text-center w-24">
-                          Bireysel (100)
-                        </th>
-                        <th className="py-3 px-2.5 text-center w-24">Grup (100)</th>
-                        <th className="py-3 px-2.5 text-center w-28">
-                          Kesin Not (100)
-                        </th>
-                      </>
+            {(!isDualBookSpeakingRubric(activeReportRubric) ||
+              dualSessionReportMode === 'both' ||
+              dualSessionReportMode === 'book') && (
+              <div
+                data-testid="session-book-report-section"
+                className="space-y-3"
+              >
+                <div className="pb-1">
+                  {effectiveInstitution.schoolName && (
+                    <div
+                      data-testid="session-report-school-name"
+                      className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-0.5"
+                    >
+                      {effectiveInstitution.schoolName}
+                    </div>
+                  )}
+                  <div className="text-xs font-semibold text-blue-900 uppercase tracking-wider">
+                    {isDualBookSpeakingRubric(activeReportRubric)
+                      ? '1. Kitap Sunumu Performans Değerlendirme Çizelgesi (100 Puan)'
+                      : 'Ölçüt Temelli Performans Değerlendirme Çizelgesi'}
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900 mt-0.5 flex items-center gap-2">
+                    <span>
+                      {activeClassroom?.name} — {activeReportSession.title}
+                    </span>
+                    {activeReportSession.archived && (
+                      <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 inline-flex items-center gap-1">
+                        <Archive className="w-3 h-3 text-amber-800" />
+                        Arşivde
+                      </span>
                     )}
-                    <th className="py-3 px-3 w-32">Düzey</th>
-                    <th className="py-3 px-3">Gözlem Notları</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 text-xs">
-                  {classStudents.map((stu) => {
-                    const ev = activeReportSession.evaluations[stu.id];
-                    const {
-                      individualCalc,
-                      groupCalc,
-                      effectiveCalc,
-                      activeSource,
-                    } = getStudentEvaluationBreakdown(activeReportRubric, ev);
-                    const isDual = isDualBookSpeakingRubric(activeReportRubric);
-                    const dual = effectiveCalc.dualResult;
+                  </h2>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Rubrik: <strong>{activeReportRubric.title}</strong> · Tarih:{' '}
+                    <span className="font-mono-num">
+                      {activeReportSession.date}
+                    </span>
+                    {isDualBookSpeakingRubric(activeReportRubric) && (
+                      <span className="ml-2 text-blue-900 font-medium">
+                        (Kitap İçeriği: 70 Puan + Ortak Konuşma %30: 30 Puan =
+                        100 Puan)
+                      </span>
+                    )}
+                  </p>
+                </div>
 
-                    const activeScores =
-                      activeSource === 'group'
-                        ? ev?.groupCriterionScores || {}
-                        : ev?.criterionScores || {};
-                    const activeDirect =
-                      activeSource === 'group'
-                        ? ev?.groupDirectScores || {}
-                        : ev?.directCriterionScores || {};
-
-                    return (
-                      <tr key={stu.id} className="hover:bg-slate-50/80">
-                        <td className="py-2.5 px-3 font-mono-num font-bold text-slate-600">
-                          {stu.studentNumber}
-                        </td>
-                        <td className="py-2.5 px-3 font-semibold text-slate-900">
-                          {stu.fullName}
-                        </td>
-                        {activeReportRubric.criteria.map((c) => {
-                          const directVal = activeDirect[c.id];
-                          const pts = activeScores[c.id];
-                          return (
-                            <td
-                              key={c.id}
-                              className="py-2.5 px-2.5 text-center font-mono-num font-semibold text-slate-800"
-                            >
-                              {isScoreAssigned(directVal)
-                                ? `${directVal}P`
-                                : isScoreAssigned(pts)
-                                ? pts
-                                : '—'}
-                            </td>
-                          );
-                        })}
-                        {isDual && dual ? (
+                <div className="border border-slate-200 rounded-xl overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[860px]">
+                    <thead>
+                      <tr className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-700">
+                        <th className="py-3 px-3 w-16">No</th>
+                        <th className="py-3 px-3 w-44">Öğrenci Adı Soyadı</th>
+                        {activeReportRubric.criteria.map((c) => (
+                          <th key={c.id} className="py-3 px-2.5 text-center">
+                            <div>{c.title}</div>
+                            <div className="font-mono-num text-[10px] font-normal text-slate-500">
+                              ({c.maxPoints ?? c.weight}P / %{c.weight})
+                            </div>
+                          </th>
+                        ))}
+                        {isDualBookSpeakingRubric(activeReportRubric) ? (
                           <>
-                            <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
-                              {dual.completedContentCount > 0
-                                ? `${dual.contentScoreOutOf70}/70`
-                                : '—'}
-                            </td>
-                            <td
-                              data-testid={`session-table-book-score-${stu.id}`}
-                              className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900"
-                            >
-                              {dual.isBookPresentationComplete &&
-                              dual.finalBookPresentationScoreOutOf100 !== null ? (
-                                <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
-                                  {dual.finalBookPresentationScoreOutOf100}
-                                </span>
-                              ) : effectiveCalc.completedCriteriaCount > 0 ? (
-                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
-                                  Eksik ({effectiveCalc.completedCriteriaCount}/
-                                  {effectiveCalc.totalCriteriaCount})
-                                </span>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
-                            <td
-                              data-testid={`session-table-speaking-score-${stu.id}`}
-                              className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900"
-                            >
-                              {dual.isSpeakingComplete &&
-                              dual.finalSpeakingScoreOutOf100 !== null ? (
-                                <span className="px-2 py-0.5 rounded bg-emerald-800 text-white">
-                                  {dual.finalSpeakingScoreOutOf100}
-                                </span>
-                              ) : dual.completedSpeakingCount > 0 ? (
-                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
-                                  Eksik ({dual.completedSpeakingCount}/
-                                  {dual.totalSpeakingCount})
-                                </span>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
+                            <th className="py-3 px-2.5 text-center w-24">
+                              Kitap İçeriği (70)
+                            </th>
+                            <th className="py-3 px-2.5 text-center w-24">
+                              Sunum (%30 · 30)
+                            </th>
+                            <th className="py-3 px-2.5 text-center w-28">
+                              Kitap Sunumu Notu (100)
+                            </th>
                           </>
                         ) : (
                           <>
-                            <td className="py-2.5 px-2.5 text-center font-mono-num">
-                              {individualCalc.finalScoreOutOf100 !== null
-                                ? individualCalc.finalScoreOutOf100
-                                : individualCalc.completedCriteriaCount > 0
-                                ? `Eksik (${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount})`
-                                : '—'}
-                            </td>
-                            <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
-                              {groupCalc.finalScoreOutOf100 !== null
-                                ? groupCalc.finalScoreOutOf100
-                                : groupCalc.completedCriteriaCount > 0
-                                ? `Eksik (${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount})`
-                                : '—'}
-                            </td>
-                            <td className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900">
-                              {effectiveCalc.isComplete &&
-                              effectiveCalc.finalScoreOutOf100 !== null ? (
-                                <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
-                                  {effectiveCalc.finalScoreOutOf100}
-                                </span>
-                              ) : effectiveCalc.completedCriteriaCount > 0 ? (
-                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
-                                  Eksik ({effectiveCalc.completedCriteriaCount}/
-                                  {effectiveCalc.totalCriteriaCount})
-                                </span>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
+                            <th className="py-3 px-2.5 text-center w-24">
+                              Bireysel (100)
+                            </th>
+                            <th className="py-3 px-2.5 text-center w-24">
+                              Grup (100)
+                            </th>
+                            <th className="py-3 px-2.5 text-center w-28">
+                              Kesin Not (100)
+                            </th>
                           </>
                         )}
-                        <td className="py-2.5 px-3 font-medium text-slate-700">
-                          {effectiveCalc.performanceLabel}
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate">
-                          {[
-                            ev?.note,
-                            ev?.groupNote ? `[Grup]: ${ev.groupNote}` : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' | ') || '—'}
-                        </td>
+                        <th className="py-3 px-3 w-32">Düzey</th>
+                        <th className="py-3 px-3">Gözlem Notları</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 text-xs">
+                      {classStudents.map((stu) => {
+                        const ev = activeReportSession.evaluations[stu.id];
+                        const {
+                          individualCalc,
+                          groupCalc,
+                          effectiveCalc,
+                          activeSource,
+                        } = getStudentEvaluationBreakdown(
+                          activeReportRubric,
+                          ev
+                        );
+                        const isDual =
+                          isDualBookSpeakingRubric(activeReportRubric);
+                        const dual = effectiveCalc.dualResult;
 
-            <div className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700">
+                        const activeScores =
+                          activeSource === 'group'
+                            ? ev?.groupCriterionScores || {}
+                            : ev?.criterionScores || {};
+                        const activeDirect =
+                          activeSource === 'group'
+                            ? ev?.groupDirectScores || {}
+                            : ev?.directCriterionScores || {};
+
+                        return (
+                          <tr key={stu.id} className="hover:bg-slate-50/80">
+                            <td className="py-2.5 px-3 font-mono-num font-bold text-slate-600">
+                              {stu.studentNumber}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-900">
+                              {stu.fullName}
+                            </td>
+                            {activeReportRubric.criteria.map((c) => {
+                              const directVal = activeDirect[c.id];
+                              const pts = activeScores[c.id];
+                              const earnedPts = getCriterionEarnedPoints(
+                                c,
+                                pts,
+                                directVal
+                              );
+                              return (
+                                <td
+                                  key={c.id}
+                                  className="py-2.5 px-2.5 text-center font-mono-num font-semibold text-slate-800"
+                                >
+                                  {earnedPts !== null ? earnedPts : '—'}
+                                </td>
+                              );
+                            })}
+                            {isDual && dual ? (
+                              <>
+                                <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
+                                  {dual.completedContentCount > 0
+                                    ? `${dual.contentScoreOutOf70}/70`
+                                    : '—'}
+                                </td>
+                                <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
+                                  {dual.completedSpeakingCount > 0
+                                    ? `${dual.speakingContributionOutOf30}/30`
+                                    : '—'}
+                                </td>
+                                <td
+                                  data-testid={`session-table-book-score-${stu.id}`}
+                                  className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900"
+                                >
+                                  {dual.isBookPresentationComplete &&
+                                  dual.finalBookPresentationScoreOutOf100 !==
+                                    null ? (
+                                    <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
+                                      {dual.finalBookPresentationScoreOutOf100}
+                                    </span>
+                                  ) : effectiveCalc.completedCriteriaCount >
+                                    0 ? (
+                                    <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                                      Eksik (
+                                      {effectiveCalc.completedCriteriaCount}/
+                                      {effectiveCalc.totalCriteriaCount})
+                                    </span>
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="py-2.5 px-2.5 text-center font-mono-num">
+                                  {individualCalc.finalScoreOutOf100 !== null
+                                    ? individualCalc.finalScoreOutOf100
+                                    : individualCalc.completedCriteriaCount > 0
+                                    ? `Eksik (${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount})`
+                                    : '—'}
+                                </td>
+                                <td className="py-2.5 px-2.5 text-center font-mono-num text-slate-800">
+                                  {groupCalc.finalScoreOutOf100 !== null
+                                    ? groupCalc.finalScoreOutOf100
+                                    : groupCalc.completedCriteriaCount > 0
+                                    ? `Eksik (${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount})`
+                                    : '—'}
+                                </td>
+                                <td className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900">
+                                  {effectiveCalc.isComplete &&
+                                  effectiveCalc.finalScoreOutOf100 !== null ? (
+                                    <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
+                                      {effectiveCalc.finalScoreOutOf100}
+                                    </span>
+                                  ) : effectiveCalc.completedCriteriaCount >
+                                    0 ? (
+                                    <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                                      Eksik (
+                                      {effectiveCalc.completedCriteriaCount}/
+                                      {effectiveCalc.totalCriteriaCount})
+                                    </span>
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                              </>
+                            )}
+                            <td className="py-2.5 px-3 font-medium text-slate-700">
+                              {effectiveCalc.performanceLabel}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate">
+                              {[
+                                ev?.note,
+                                ev?.groupNote ? `[Grup]: ${ev.groupNote}` : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' | ') || '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* DEDICATED SPEAKING EXAM REPORT TABLE (100 PUAN) */}
+            {isDualBookSpeakingRubric(activeReportRubric) &&
+              (dualSessionReportMode === 'both' ||
+                dualSessionReportMode === 'speaking') && (
+                <div
+                  data-testid="session-speaking-report-section"
+                  className="space-y-3 pt-4 border-t border-slate-200"
+                >
+                  <div className="pb-1">
+                    {effectiveInstitution.schoolName && (
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-0.5">
+                        {effectiveInstitution.schoolName}
+                      </div>
+                    )}
+                    <div className="text-xs font-semibold text-emerald-900 uppercase tracking-wider">
+                      2. Konuşma Sınavı Performans Değerlendirme Çizelgesi (100
+                      Puan)
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-900 mt-0.5">
+                      {activeClassroom?.name} — {activeReportSession.title}{' '}
+                      (Konuşma Sınavı Raporu)
+                    </h3>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Ortak Konuşma Değerlendirmesi (6 Ölçüt · 100 Puan) ·
+                      Tarih:{' '}
+                      <span className="font-mono-num">
+                        {activeReportSession.date}
+                      </span>
+                    </p>
+                  </div>
+
+                  <div className="border border-emerald-200 rounded-xl overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[780px]">
+                      <thead>
+                        <tr className="bg-emerald-50 border-b border-emerald-200 text-xs font-bold text-emerald-950">
+                          <th className="py-3 px-3 w-16">No</th>
+                          <th className="py-3 px-3 w-44">
+                            Öğrenci Adı Soyadı
+                          </th>
+                          {activeReportRubric.criteria
+                            .filter(
+                              (c, idx) =>
+                                getCriterionSection(
+                                  c,
+                                  idx,
+                                  activeReportRubric
+                                ) === 'speaking'
+                            )
+                            .map((c) => (
+                              <th
+                                key={c.id}
+                                className="py-3 px-2.5 text-center"
+                              >
+                                <div>{c.title}</div>
+                                <div className="font-mono-num text-[10px] font-normal text-emerald-800">
+                                  ({c.maxPoints ?? c.weight}P)
+                                </div>
+                              </th>
+                            ))}
+                          <th className="py-3 px-2.5 text-center w-28">
+                            Konuşma Sınavı Notu (100)
+                          </th>
+                          <th className="py-3 px-3 w-32">Konuşma Düzeyi</th>
+                          <th className="py-3 px-3">Gözlem Notları</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 text-xs">
+                        {classStudents.map((stu) => {
+                          const ev = activeReportSession.evaluations[stu.id];
+                          const { effectiveCalc, activeSource } =
+                            getStudentEvaluationBreakdown(
+                              activeReportRubric,
+                              ev
+                            );
+                          const dual = effectiveCalc.dualResult;
+                          const activeScores =
+                            activeSource === 'group'
+                              ? ev?.groupCriterionScores || {}
+                              : ev?.criterionScores || {};
+                          const activeDirect =
+                            activeSource === 'group'
+                              ? ev?.groupDirectScores || {}
+                              : ev?.directCriterionScores || {};
+                          const speakingCriteria =
+                            activeReportRubric.criteria.filter(
+                              (c, idx) =>
+                                getCriterionSection(
+                                  c,
+                                  idx,
+                                  activeReportRubric
+                                ) === 'speaking'
+                            );
+
+                          return (
+                            <tr key={stu.id} className="hover:bg-slate-50/80">
+                              <td className="py-2.5 px-3 font-mono-num font-bold text-slate-600">
+                                {stu.studentNumber}
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-900">
+                                {stu.fullName}
+                              </td>
+                              {speakingCriteria.map((c) => {
+                                const earnedPts = getCriterionEarnedPoints(
+                                  c,
+                                  activeScores[c.id],
+                                  activeDirect[c.id]
+                                );
+                                return (
+                                  <td
+                                    key={c.id}
+                                    className="py-2.5 px-2.5 text-center font-mono-num font-semibold text-slate-800"
+                                  >
+                                    {earnedPts !== null ? earnedPts : '—'}
+                                  </td>
+                                );
+                              })}
+                              <td
+                                data-testid={`session-table-speaking-score-${stu.id}`}
+                                className="py-2.5 px-2.5 text-center font-mono-num font-bold text-slate-900"
+                              >
+                                {dual &&
+                                dual.isSpeakingComplete &&
+                                dual.finalSpeakingScoreOutOf100 !== null ? (
+                                  <span className="px-2 py-0.5 rounded bg-emerald-800 text-white">
+                                    {dual.finalSpeakingScoreOutOf100}
+                                  </span>
+                                ) : dual && dual.completedSpeakingCount > 0 ? (
+                                  <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded">
+                                    Eksik ({dual.completedSpeakingCount}/
+                                    {dual.totalSpeakingCount})
+                                  </span>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 font-medium text-slate-700">
+                                {dual
+                                  ? dual.speakingPerformanceLabel
+                                  : effectiveCalc.performanceLabel}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600 max-w-xs truncate">
+                                {[
+                                  ev?.note,
+                                  ev?.groupNote
+                                    ? `[Grup]: ${ev.groupNote}`
+                                    : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' | ') || '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+            <div
+              data-testid="session-signature-grid"
+              className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700"
+            >
               <div className="pdf-signature-box">
                 <div className="font-bold text-slate-900">Ders Öğretmeni</div>
-                <div className="text-slate-500 mt-0.5">Adı Soyadı ve İmza</div>
+                {effectiveInstitution.teacherName ? (
+                  <>
+                    <div
+                      data-testid="session-signature-teacher-name"
+                      className="font-semibold text-slate-800 mt-0.5"
+                    >
+                      {effectiveInstitution.teacherName}
+                    </div>
+                    <div className="text-slate-500 mt-0.5">İmza</div>
+                  </>
+                ) : (
+                  <div className="text-slate-500 mt-0.5">
+                    Adı Soyadı ve İmza
+                  </div>
+                )}
               </div>
               <div className="pdf-signature-box">
-                <div className="font-bold text-slate-900">Zümre Başkanı</div>
-                <div className="text-slate-500 mt-0.5">Adı Soyadı ve İmza</div>
-              </div>
-              <div className="pdf-signature-box">
-                <div className="font-bold text-slate-900">
-                  Okul Müdürlüğü Onay
-                </div>
-                <div className="text-slate-500 mt-0.5">Mühür ve İmza</div>
+                <div className="font-bold text-slate-900">Okul Müdürü</div>
+                {effectiveInstitution.principalName ? (
+                  <>
+                    <div
+                      data-testid="session-signature-principal-name"
+                      className="font-semibold text-slate-800 mt-0.5"
+                    >
+                      {effectiveInstitution.principalName}
+                    </div>
+                    <div className="text-slate-500 mt-0.5">
+                      İmza ve Mühür
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-slate-500 mt-0.5">
+                    Adı Soyadı, İmza ve Mühür
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2126,6 +2459,9 @@ export const ProgressAndReports: React.FC<ProgressAndReportsProps> = ({
         rubrics={rubrics}
         reportDateFormatted={reportDateFormatted}
         selectedAcademicTermLabel={termComparison.selectedTermLabel}
+        institutionSettings={effectiveInstitution}
+        initialDualReportMode={dualSessionReportMode}
+        onChangeDualReportMode={setDualSessionReportMode}
       />
     </div>
   );

@@ -182,3 +182,10 @@ export interface VerifiedBackupBundle {
     sessions: EvaluationSession[];
   };
 }
+
+export interface InstitutionSettings {
+  schoolName: string;
+  teacherName: string;
+  principalName: string;
+}
+

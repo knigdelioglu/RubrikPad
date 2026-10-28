@@ -9,7 +9,6 @@ import {
   LayoutGrid,
   List,
   RotateCcw,
-  Sparkles,
 } from 'lucide-react';
 import type { RubricCriterion } from '../../types.ts';
 import {
@@ -31,7 +30,7 @@ export const RubricViewModeToggle: React.FC<RubricViewModeToggleProps> = ({
 }) => {
   return (
     <div
-      className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-300 shrink-0"
+      className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-200 shrink-0"
       role="group"
       aria-label="Rubrik Kartı Görünüm Modu"
     >
@@ -39,15 +38,15 @@ export const RubricViewModeToggle: React.FC<RubricViewModeToggleProps> = ({
         type="button"
         onClick={() => onChangeViewMode('detailed')}
         aria-pressed={viewMode === 'detailed'}
-        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer min-h-[36px] ${
+        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer min-h-[34px] ${
           viewMode === 'detailed'
-            ? 'bg-blue-900 text-white shadow-xs'
-            : 'text-slate-700 hover:text-slate-950 hover:bg-white/70'
+            ? 'bg-slate-900 text-white shadow-xs'
+            : 'text-slate-600 hover:text-slate-950 hover:bg-white/70'
         }`}
       >
         <LayoutGrid
           className={`w-3.5 h-3.5 ${
-            viewMode === 'detailed' ? 'text-white' : 'text-slate-600'
+            viewMode === 'detailed' ? 'text-white' : 'text-slate-500'
           }`}
         />
         Açıklamalı Görünüm
@@ -56,15 +55,15 @@ export const RubricViewModeToggle: React.FC<RubricViewModeToggleProps> = ({
         type="button"
         onClick={() => onChangeViewMode('compact')}
         aria-pressed={viewMode === 'compact'}
-        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer min-h-[36px] ${
+        className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer min-h-[34px] ${
           viewMode === 'compact'
-            ? 'bg-blue-900 text-white shadow-xs'
-            : 'text-slate-700 hover:text-slate-950 hover:bg-white/70'
+            ? 'bg-slate-900 text-white shadow-xs'
+            : 'text-slate-600 hover:text-slate-950 hover:bg-white/70'
         }`}
       >
         <List
           className={`w-3.5 h-3.5 ${
-            viewMode === 'compact' ? 'text-white' : 'text-slate-600'
+            viewMode === 'compact' ? 'text-white' : 'text-slate-500'
           }`}
         />
         Hızlı Görünüm
@@ -98,21 +97,19 @@ export const CriterionFocusToolbar: React.FC<CriterionFocusToolbarProps> = ({
         aria-pressed={focusModeEnabled}
         data-testid="toggle-criterion-focus-mode"
         title="Odak Modu: Tek seferde yalnızca tek bir ölçüte odaklanmanızı sağlar; diğer ölçütleri gizler veya karartır"
-        className={`px-3 py-1.5 rounded-xl text-xs font-bold border cursor-pointer min-h-[36px] flex items-center gap-1.5 ${
+        className={`px-3 py-1.5 rounded-xl text-xs font-bold border cursor-pointer min-h-[34px] flex items-center gap-1.5 ${
           focusModeEnabled
-            ? 'bg-blue-900 text-white border-blue-950 shadow-xs'
-            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+            ? 'bg-slate-900 text-white border-slate-950 shadow-xs'
+            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
         }`}
       >
         <Focus className="w-3.5 h-3.5" />
-        <span>
-          Odak Modu: {focusModeEnabled ? 'Açık' : 'Kapalı'}
-        </span>
+        <span>Odak Modu: {focusModeEnabled ? 'Açık' : 'Kapalı'}</span>
       </button>
 
       {focusModeEnabled && (
         <div
-          className="inline-flex items-center rounded-xl bg-slate-100 p-0.5 border border-slate-300"
+          className="inline-flex items-center rounded-xl bg-slate-100 p-0.5 border border-slate-200"
           role="group"
           aria-label="Odak Modu Diğer Ölçüt Görünümü"
         >
@@ -124,7 +121,7 @@ export const CriterionFocusToolbar: React.FC<CriterionFocusToolbarProps> = ({
             title="Diğer ölçütleri tamamen gizle, ekranda yalnızca seçili ölçütü geniş alanda göster"
             className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer min-h-[30px] ${
               focusDisplayMode === 'hide_others'
-                ? 'bg-blue-900 text-white shadow-2xs'
+                ? 'bg-slate-900 text-white shadow-2xs'
                 : 'bg-transparent text-slate-700 hover:text-slate-950 hover:bg-white/70'
             }`}
           >
@@ -139,7 +136,7 @@ export const CriterionFocusToolbar: React.FC<CriterionFocusToolbarProps> = ({
             title="Seçili ölçütü geniş alanda gösterirken diğer ölçütleri görsel olarak karart"
             className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer min-h-[30px] ${
               focusDisplayMode === 'dim_others'
-                ? 'bg-blue-900 text-white shadow-2xs'
+                ? 'bg-slate-900 text-white shadow-2xs'
                 : 'bg-transparent text-slate-700 hover:text-slate-950 hover:bg-white/70'
             }`}
           >
@@ -195,11 +192,11 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
   return (
     <div
       data-testid="focus-mode-stepper-bar"
-      className="bg-slate-100/90 border border-slate-300 rounded-2xl p-2.5 sm:p-3 space-y-2 shadow-2xs"
+      className="bg-slate-50 border border-slate-200 rounded-2xl p-2.5 sm:p-3 space-y-2 shadow-2xs"
     >
       <div className="flex items-center justify-between gap-2 min-h-[28px]">
         <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-900 text-white text-[11px] font-bold shrink-0">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-900 text-white text-[11px] font-bold shrink-0">
             <Focus className="w-3 h-3" />
             ODAK MODU
           </span>
@@ -217,27 +214,26 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <span className="font-mono-num text-[11px] font-bold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-300">
+          <span className="font-mono-num text-[11px] font-bold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-200">
             Tamamlanan: {completedCount}/{totalCount}
           </span>
           <button
             type="button"
             onClick={onExitFocusMode}
-            className="px-2.5 py-0.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-[11px] font-semibold text-slate-700 cursor-pointer"
+            className="px-2.5 py-0.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-[11px] font-semibold text-slate-700 cursor-pointer"
           >
             Tüm Ölçütleri Göster
           </button>
         </div>
       </div>
 
-      {/* Single-Row Stepper Navigation: Prev Button + Criterion Step Pills + Next Button */}
       <div className="flex items-center justify-between gap-2 min-h-[38px]">
         <button
           type="button"
           disabled={!canGoPrev}
           onClick={onPrevStep}
           data-testid="focus-prev-criterion-btn"
-          className="h-[36px] px-3 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+          className="h-[36px] px-3 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-800 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
         >
           <ChevronLeft className="w-3.5 h-3.5" />
           Önceki Ölçüt
@@ -260,22 +256,24 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
               title={step.title}
               className={`h-[34px] w-[132px] xl:w-[144px] px-2.5 rounded-xl text-xs font-bold border cursor-pointer flex items-center justify-between gap-1.5 shrink-0 ${
                 step.isActive
-                  ? 'bg-blue-900 text-white border-blue-950 shadow-2xs'
+                  ? 'bg-slate-900 text-white border-slate-950 shadow-2xs'
                   : step.isScored
-                  ? 'bg-white text-slate-800 border-slate-300 hover:border-blue-900'
-                  : 'bg-slate-50 text-slate-600 border-slate-300 hover:bg-white hover:text-slate-900'
+                  ? 'bg-white text-slate-800 border-slate-200 hover:border-slate-900'
+                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-white hover:text-slate-900'
               }`}
             >
               <span className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
-                <span className="font-mono-num shrink-0">{step.numberLabel}.</span>
+                <span className="font-mono-num shrink-0">
+                  {step.numberLabel}.
+                </span>
                 <span className="truncate">{step.title}</span>
               </span>
               {step.isScored && step.scoreLabel ? (
                 <span
                   className={`font-mono-num text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ${
                     step.isActive
-                      ? 'bg-blue-950 text-blue-100'
-                      : 'bg-slate-200 text-slate-900'
+                      ? 'bg-slate-800 text-slate-100'
+                      : 'bg-slate-100 text-slate-900'
                   }`}
                 >
                   <Check className="w-2.5 h-2.5 stroke-[2.5]" />
@@ -295,7 +293,7 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
           disabled={!canGoNext}
           onClick={onNextStep}
           data-testid="focus-next-criterion-btn"
-          className="h-[36px] px-3 rounded-xl bg-blue-900 border border-blue-950 text-xs font-bold text-white hover:bg-blue-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
+          className="h-[36px] px-3 rounded-xl bg-slate-900 border border-slate-950 text-xs font-bold text-white hover:bg-slate-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow-2xs"
         >
           Sonraki Ölçüt
           <ChevronRight className="w-3.5 h-3.5" />
@@ -305,14 +303,6 @@ export const FocusModeStepperBar: React.FC<FocusModeStepperBarProps> = ({
   );
 };
 
-
-/**
- * DEHB Odaklı Düşük Uyaranlı & Yüksek Kontrastlı Puan Seviyesi Teması:
- * - Seçilmemiş tüm butonlar göz yormayan yumuşak gri/beyaz (slate-50 / slate-200) tonlarındadır;
- *   böylece ekranda aynı anda 20+ renkli kutu parlamaz.
- * - Yalnızca seçilen puan düzeyi yüksek kontrastlı Lacivert (blue-900) veya Koyu Slate (slate-800)
- *   ile net biçimde belirginleşir.
- */
 export function getScoreLevelVisualTheme(
   points: number,
   maxLevelPoints: number
@@ -327,11 +317,11 @@ export function getScoreLevelVisualTheme(
   summaryPill: string;
 } {
   const calmUnselectedCard =
-    'bg-slate-50/90 border-slate-200 hover:border-blue-900/60 hover:bg-white text-slate-800';
+    'bg-slate-50/90 border-slate-200 hover:border-slate-900/60 hover:bg-white text-slate-800';
   const calmUnselectedBadge =
     'bg-white text-slate-800 border border-slate-300';
   const calmCompactUnselected =
-    'bg-slate-50 border-slate-200 hover:border-blue-900/60 hover:bg-white text-slate-700';
+    'bg-transparent text-slate-500 hover:text-slate-900 hover:bg-white/70 font-medium';
 
   if (points <= 0) {
     return {
@@ -342,8 +332,7 @@ export function getScoreLevelVisualTheme(
         'bg-slate-100 border-2 border-slate-800 text-slate-950 shadow-xs ring-2 ring-slate-800/15',
       selectedBadge: 'bg-slate-800 text-white',
       compactUnselected: calmCompactUnselected,
-      compactSelected:
-        'bg-slate-800 border-slate-900 text-white font-bold shadow-xs',
+      compactSelected: 'bg-slate-900 text-white font-bold shadow-xs',
       summaryPill: 'bg-slate-200 text-slate-900 border-slate-400',
     };
   }
@@ -356,12 +345,11 @@ export function getScoreLevelVisualTheme(
       unselectedCard: calmUnselectedCard,
       unselectedBadge: calmUnselectedBadge,
       selectedCard:
-        'bg-blue-50 border-2 border-blue-950 text-slate-950 shadow-xs ring-2 ring-blue-950/20',
-      selectedBadge: 'bg-blue-950 text-white',
+        'bg-slate-50 border-2 border-slate-900 text-slate-950 shadow-xs ring-2 ring-slate-900/15',
+      selectedBadge: 'bg-slate-900 text-white',
       compactUnselected: calmCompactUnselected,
-      compactSelected:
-        'bg-blue-950 border-slate-950 text-white font-bold shadow-xs',
-      summaryPill: 'bg-blue-900 text-white border-blue-950',
+      compactSelected: 'bg-slate-900 text-white font-bold shadow-xs',
+      summaryPill: 'bg-slate-900 text-white border-slate-950',
     };
   }
 
@@ -374,8 +362,7 @@ export function getScoreLevelVisualTheme(
         'bg-slate-100 border-2 border-slate-700 text-slate-950 shadow-xs ring-2 ring-slate-700/15',
       selectedBadge: 'bg-slate-700 text-white',
       compactUnselected: calmCompactUnselected,
-      compactSelected:
-        'bg-slate-700 border-slate-800 text-white font-bold shadow-xs',
+      compactSelected: 'bg-slate-900 text-white font-bold shadow-xs',
       summaryPill: 'bg-slate-100 text-slate-900 border-slate-300',
     };
   }
@@ -386,12 +373,11 @@ export function getScoreLevelVisualTheme(
       unselectedCard: calmUnselectedCard,
       unselectedBadge: calmUnselectedBadge,
       selectedCard:
-        'bg-blue-50/70 border-2 border-blue-800 text-slate-950 shadow-xs ring-2 ring-blue-800/15',
-      selectedBadge: 'bg-blue-800 text-white',
+        'bg-slate-50 border-2 border-slate-800 text-slate-950 shadow-xs ring-2 ring-slate-800/15',
+      selectedBadge: 'bg-slate-800 text-white',
       compactUnselected: calmCompactUnselected,
-      compactSelected:
-        'bg-blue-800 border-blue-900 text-white font-bold shadow-xs',
-      summaryPill: 'bg-blue-50 text-blue-950 border-blue-300',
+      compactSelected: 'bg-slate-900 text-white font-bold shadow-xs',
+      summaryPill: 'bg-slate-100 text-slate-900 border-slate-300',
     };
   }
 
@@ -400,12 +386,11 @@ export function getScoreLevelVisualTheme(
     unselectedCard: calmUnselectedCard,
     unselectedBadge: calmUnselectedBadge,
     selectedCard:
-      'bg-blue-50/90 border-2 border-blue-900 text-slate-950 shadow-xs ring-2 ring-blue-900/15',
-    selectedBadge: 'bg-blue-900 text-white',
+      'bg-slate-50 border-2 border-slate-900 text-slate-950 shadow-xs ring-2 ring-slate-900/15',
+    selectedBadge: 'bg-slate-900 text-white',
     compactUnselected: calmCompactUnselected,
-    compactSelected:
-      'bg-blue-900 border-blue-950 text-white font-bold shadow-xs',
-    summaryPill: 'bg-blue-100/80 text-blue-950 border-blue-300',
+    compactSelected: 'bg-slate-900 text-white font-bold shadow-xs',
+    summaryPill: 'bg-slate-100 text-slate-900 border-slate-300',
   };
 }
 
@@ -443,8 +428,6 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
   reflectedGroupPoints,
   viewMode,
   precisionScoringMode = false,
-  isNextUnscored = false,
-  adhdFocusMode = false,
   isFocusedStage = false,
   isDimmedByFocus = false,
   onFocusSelect,
@@ -469,174 +452,171 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
     ? criterion.levels.find((l) => l.points === selectedPoints)
     : undefined;
 
-  const selectedTheme = selectedLevelObj
-    ? getScoreLevelVisualTheme(selectedLevelObj.points, maxLevelPoints)
+  const earnedPoints = hasDirect
+    ? Number(directPoints)
+    : selectedLevelObj
+    ? formatLevelEarnedPts(selectedLevelObj.points)
     : null;
 
-  // Dimmed non-selected criterion strip when Odak Modu is set to "Diğerlerini Karart" (dim_others)
+  const topLevelObj = React.useMemo(() => {
+    if (criterion.levels.length === 0) return undefined;
+    return criterion.levels.reduce((best, cur) =>
+      cur.points > best.points ? cur : best
+    );
+  }, [criterion.levels]);
+
+  const criterionSubtitle = topLevelObj?.description || '';
+
   if (isDimmedByFocus) {
     return (
       <div
         data-testid={`dimmed-criterion-card-${criterionIndex}`}
         data-criterion-id={criterion.id}
         onClick={() => onFocusSelect?.()}
-        className="rounded-xl border border-slate-300/80 bg-slate-100/75 px-4 py-3 opacity-40 hover:opacity-85 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 select-none"
+        className="px-5 sm:px-6 py-4 bg-slate-50/70 opacity-45 hover:opacity-90 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 select-none"
       >
         <div className="flex items-center gap-2.5 min-w-0">
-          <span
-            className={`font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg shrink-0 flex items-center gap-1 ${
-              isAnswered
-                ? 'bg-slate-700 text-white'
-                : 'bg-slate-200 text-slate-700 border border-slate-300'
-            }`}
-          >
-            {isAnswered && <Check className="w-3 h-3 stroke-[2.5]" />}
-            Ölçüt {String(criterionIndex + 1).padStart(2, '0')}
+          <span className="font-mono-num text-sm font-semibold text-slate-400 shrink-0">
+            {String(criterionIndex + 1).padStart(2, '0')}
           </span>
-          <span className="text-sm font-semibold text-slate-800 truncate">
+          <span className="text-sm font-bold text-slate-800 truncate">
             {criterion.title}
           </span>
-          <span className="font-mono-num text-xs font-medium text-slate-500 shrink-0">
-            (Ağırlık: {critMaxPts}P)
+          <span className="font-mono-num text-xs font-semibold text-slate-400 shrink-0">
+            (%{critMaxPts})
           </span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {hasDirect ? (
-            <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-200 text-slate-900 border border-slate-300">
-              Puanlandı: {directPoints}/{critMaxPts}
-            </span>
-          ) : selectedLevelObj ? (
-            <span className="font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-200 text-slate-900 border border-slate-300 flex items-center gap-1">
-              <Check className="w-3 h-3 stroke-[2.5]" />
-              {selectedLevelObj.points}P ({selectedLevelObj.label})
-            </span>
-          ) : (
-            <span className="text-xs font-medium text-slate-500 bg-white/80 px-2.5 py-1 rounded-lg border border-slate-200">
-              Henüz Puanlanmadı
-            </span>
-          )}
-
+        <div className="flex items-center gap-3 shrink-0">
+          <span className="font-mono-num text-sm font-bold text-slate-900">
+            {earnedPoints !== null ? `${earnedPoints} P` : '— P'}
+          </span>
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onFocusSelect?.();
             }}
-            className="px-3 py-1 rounded-lg bg-white border border-slate-300 hover:border-blue-900 text-xs font-bold text-blue-900 cursor-pointer"
+            className="px-3 py-1 rounded-lg bg-white border border-slate-200 hover:border-slate-900 text-xs font-bold text-slate-800 cursor-pointer"
           >
-            Bu Ölçüte Odaklan
+            Odaklan
           </button>
         </div>
       </div>
     );
   }
 
-  // Compact / Fast View: single row on tablet/desktop with fixed height & locked button columns
-  if (viewMode === 'compact' && !isFocusedStage) {
-    return (
-      <div
-        data-testid={`criterion-card-${criterionIndex}`}
-        data-criterion-id={criterion.id}
-        className={`rounded-xl border transition-all px-3.5 py-2 md:h-[66px] flex flex-col md:flex-row md:items-center justify-between gap-2.5 ${
-          isNextUnscored
-            ? 'bg-white border-2 border-blue-900 ring-2 ring-blue-900/10 shadow-xs'
-            : isAnswered
-            ? `bg-slate-50/80 border-slate-200 ${
-                adhdFocusMode ? 'opacity-80 hover:opacity-100' : ''
-              }`
-            : 'bg-white border-slate-200 hover:border-slate-300'
-        }`}
-      >
-        {/* Left: Criterion Index, Title & Max Points (single non-wrapping row on md+) */}
-        <div className="flex items-center gap-2 md:w-5/12 min-w-0 overflow-hidden">
-          <span
-            className={`font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg shrink-0 flex items-center gap-1 ${
-              isNextUnscored
-                ? 'bg-blue-900 text-white shadow-2xs'
-                : isAnswered
-                ? 'bg-slate-700 text-white'
-                : 'bg-slate-100 text-slate-700 border border-slate-300'
-            }`}
-          >
-            {isAnswered && <Check className="w-3 h-3 stroke-[2.5]" />}
-            {String(criterionIndex + 1).padStart(2, '0')}
-          </span>
-          <span
-            className="text-sm font-bold text-slate-900 truncate min-w-0 flex-1"
-            title={criterion.title}
-          >
-            {criterion.title}
-          </span>
-          {isNextUnscored && (
-            <span className="hidden xl:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-900 text-white shrink-0">
-              <Sparkles className="w-2.5 h-2.5" />
-              SIRADAKİ ÖLÇÜT
+  return (
+    <div
+      data-testid={
+        isFocusedStage
+          ? 'active-focused-criterion-stage'
+          : `criterion-card-${criterionIndex}`
+      }
+      data-criterion-id={criterion.id}
+      className={`px-5 sm:px-6 py-5 transition-colors ${
+        isFocusedStage
+          ? 'bg-slate-50/60 ring-2 ring-slate-900/10'
+          : 'bg-white hover:bg-slate-50/35'
+      }`}
+    >
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 lg:gap-6">
+        {/* Left Column: DEĞERLENDİRME KRİTERİ */}
+        <div className="flex-1 min-w-[260px] space-y-1 pr-2">
+          <div className="text-sm sm:text-base leading-snug">
+            <span className="font-mono-num text-sm font-semibold text-slate-400 mr-2">
+              {String(criterionIndex + 1).padStart(2, '0')}
             </span>
-          )}
-          {criterion.category && !isNextUnscored && (
-            <span className="hidden xl:inline-block text-[11px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded truncate max-w-[140px] shrink-0">
-              {criterion.category}
+            <span className="font-bold text-slate-900">
+              {criterion.title}
             </span>
-          )}
-          <span className="font-mono-num text-xs font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md shrink-0">
-            {critMaxPts}P
-          </span>
-          {isScoreAssigned(reflectedGroupPoints) && (
-            <span
-              className="font-mono-num text-[11px] font-semibold text-slate-800 bg-slate-200/80 border border-slate-300 px-2 py-0.5 rounded-md shrink-0"
-              title="Bu ölçüt için kaydedilen ayrı Grup Puanı"
-            >
-              Grup: {reflectedGroupPoints}P
+            <span className="font-mono-num text-xs font-semibold text-slate-400 ml-2">
+              (%{critMaxPts})
             </span>
+            {isScoreAssigned(reflectedGroupPoints) && (
+              <span
+                className="font-mono-num text-[11px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md ml-2"
+                title="Bu ölçüt için kaydedilen ayrı Grup Puanı"
+              >
+                Grup: {reflectedGroupPoints}P
+              </span>
+            )}
+          </div>
+
+          {criterionSubtitle && (
+            <p className="text-xs sm:text-[13px] text-slate-500 leading-relaxed">
+              {criterionSubtitle}
+            </p>
           )}
         </div>
 
-        {/* Right: Compact Touch Level Selector Boxes with fixed clear button slot */}
-        <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 md:w-7/12">
-          <div
-            className="grid flex-1 gap-1.5 w-full"
-            style={{
-              gridTemplateColumns: `repeat(${criterion.levels.length}, minmax(0, 1fr))`,
-            }}
-          >
+        {/* Right Columns: SEVİYE SEÇİMİ (Segmented Pill) + PUAN */}
+        <div className="flex flex-wrap sm:flex-nowrap items-center justify-between lg:justify-end gap-3 sm:gap-5 shrink-0">
+          {/* Segmented Level Pill Container */}
+          <div className="inline-flex flex-wrap sm:flex-nowrap items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80 gap-0.5">
             {criterion.levels.map((lvl) => {
               const isSelected = !hasDirect && selectedPoints === lvl.points;
-              const lvlTheme = getScoreLevelVisualTheme(
-                lvl.points,
-                maxLevelPoints
-              );
               const pct = formatLevelPercentage(lvl.points);
-              const earnedPts = formatLevelEarnedPts(lvl.points);
+              const cleanLabel = lvl.label.replace(/\s*\(0\)/, '');
+              const isManyLevels = criterion.levels.length > 3;
+
               return (
                 <button
                   key={lvl.level}
                   type="button"
-                  onClick={() => onSelectLevel(criterion.id, lvl.points)}
+                  onClick={() => {
+                    if (isSelected && onClearScore) {
+                      onClearScore(criterion.id);
+                    } else {
+                      onSelectLevel(criterion.id, lvl.points);
+                    }
+                  }}
                   aria-pressed={isSelected}
-                  className={`h-[46px] px-2 py-1 rounded-xl border text-center transition-all active:scale-[0.98] cursor-pointer flex flex-col sm:flex-row items-center justify-center gap-1 ${
+                  title={
+                    lvl.description
+                      ? `${cleanLabel}: ${lvl.description}`
+                      : cleanLabel
+                  }
+                  className={`${
+                    isManyLevels
+                      ? 'px-2.5 py-1.5 text-[11px] min-h-[32px] gap-1'
+                      : 'px-3.5 py-2 text-xs min-h-[36px] gap-1.5'
+                  } rounded-lg transition-all cursor-pointer flex items-center justify-center whitespace-nowrap ${
                     isSelected
-                      ? lvlTheme.compactSelected
-                      : lvlTheme.compactUnselected
+                      ? 'bg-slate-900 text-white font-bold shadow-xs'
+                      : 'bg-transparent text-slate-500 hover:text-slate-900 hover:bg-white/70 font-medium'
                   }`}
                 >
-                  <span className="font-mono-num text-sm font-bold shrink-0">
-                    {isThreeLevelScale ? `%${pct} (${earnedPts}P)` : `${lvl.points}P`}
-                  </span>
-                  <span
-                    className={`text-[11px] font-semibold truncate max-w-full ${
-                      isSelected ? 'text-white' : 'opacity-85'
-                    }`}
-                  >
-                    {lvl.label.replace(/\s*\(0\)/, '')}
-                  </span>
+                  {isThreeLevelScale ? (
+                    <>
+                      <span>{cleanLabel}</span>
+                      <span
+                        className={`font-mono-num text-[11px] ${
+                          isSelected ? 'text-slate-300' : 'text-slate-400'
+                        }`}
+                      >
+                        (%{pct})
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span
+                        className={`font-mono-num font-bold ${
+                          isSelected ? 'text-white' : 'text-slate-700'
+                        }`}
+                      >
+                        {lvl.points}
+                      </span>
+                      <span>{cleanLabel}</span>
+                    </>
+                  )}
                 </button>
               );
             })}
           </div>
 
           {precisionScoringMode && onSetDirectScore && (
-            <div className="flex items-center gap-1 shrink-0 bg-white border border-slate-300 rounded-xl px-2 py-1.5 h-[46px]">
+            <div className="flex items-center gap-1 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 h-[38px]">
               <input
                 type="number"
                 min={0}
@@ -657,7 +637,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
                   );
                   onSetDirectScore(criterion.id, num);
                 }}
-                className="w-12 text-xs font-mono-num font-bold text-slate-900 text-right focus:outline-none"
+                className="w-12 text-xs font-mono-num font-bold text-slate-900 bg-white border border-slate-200 rounded px-1 py-0.5 text-right focus:outline-none"
               />
               <span className="text-[11px] font-mono-num text-slate-500">
                 /{critMaxPts}
@@ -665,273 +645,38 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             </div>
           )}
 
-          {onClearScore && (
-            <button
-              type="button"
-              disabled={!isAnswered}
-              onClick={() => onClearScore(criterion.id)}
-              aria-label={`${criterion.title} puanını temizle`}
-              title="Bu ölçüt puanını temizle"
-              className="h-[46px] w-[42px] rounded-xl border border-slate-300 bg-white text-xs font-bold text-slate-600 hover:text-red-700 hover:border-red-300 hover:bg-red-50 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer shrink-0 flex items-center justify-center"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Detailed Tablet Card View & Spacious Focus Stage View: Fixed-height card & fixed-position buttons
-  const gridColsClass =
-    criterion.levels.length >= 5
-      ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-5'
-      : criterion.levels.length === 4
-      ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-4'
-      : 'grid-cols-1 sm:grid-cols-3';
-
-  return (
-    <div
-      data-testid={
-        isFocusedStage
-          ? 'active-focused-criterion-stage'
-          : `criterion-card-${criterionIndex}`
-      }
-      data-criterion-id={criterion.id}
-      className={`rounded-2xl border transition-all ${
-        isFocusedStage
-          ? 'bg-white border-2 border-blue-900 ring-4 ring-blue-900/10 p-5 sm:p-6 space-y-4 shadow-md'
-          : isNextUnscored
-          ? 'bg-white border-2 border-blue-900 ring-2 ring-blue-900/10 p-4 space-y-3 shadow-sm'
-          : isAnswered
-          ? `bg-slate-50/70 border-slate-200 p-4 space-y-3 shadow-2xs ${
-              adhdFocusMode ? 'opacity-85 hover:opacity-100' : ''
-            }`
-          : 'bg-white border-slate-200 p-4 space-y-3 shadow-2xs'
-      }`}
-    >
-      {/* Fixed-Height 2-Row Card Header: Never wraps or shifts button coordinates */}
-      <div className="space-y-2">
-        {/* Header Row 1: Criterion Badge + Single-Line Title + Category & Weight Badges */}
-        <div className="flex items-center justify-between gap-3 h-[36px]">
-          <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
+          {/* PUAN Column */}
+          <div className="flex items-center justify-end gap-1.5 min-w-[64px] text-right">
             <span
-              className={`font-mono-num font-bold rounded-xl shrink-0 flex items-center gap-1.5 h-[32px] ${
-                isFocusedStage
-                  ? 'bg-blue-900 text-white text-sm px-3.5 shadow-xs'
-                  : isNextUnscored
-                  ? 'bg-blue-900 text-white text-xs px-2.5 shadow-2xs'
-                  : isAnswered
-                  ? 'bg-slate-700 text-white text-xs px-2.5'
-                  : 'bg-slate-100 text-slate-700 border border-slate-300 text-xs px-2.5'
+              className={`font-mono-num text-sm sm:text-base font-extrabold ${
+                earnedPoints !== null ? 'text-slate-900' : 'text-slate-300'
               }`}
             >
-              {isAnswered && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
-              Ölçüt {String(criterionIndex + 1).padStart(2, '0')}
+              {earnedPoints !== null ? `${earnedPoints} P` : '— P'}
             </span>
-
-            <h3
-              title={criterion.title}
-              className={`font-bold text-slate-950 truncate min-w-0 flex-1 ${
-                isFocusedStage ? 'text-base sm:text-xl' : 'text-sm sm:text-base'
-              }`}
-            >
-              {criterion.title}
-            </h3>
-
-            {!isFocusedStage && isNextUnscored && (
-              <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 h-[28px] rounded-lg bg-blue-900 text-white shadow-2xs shrink-0">
-                <Sparkles className="w-3 h-3" />
-                Sıradaki
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {criterion.category && (
-              <span
-                title={criterion.category}
-                className="hidden md:inline-flex items-center h-[30px] text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 rounded-lg border border-slate-200 max-w-[220px] truncate"
-              >
-                {criterion.category}
-              </span>
-            )}
-
-            <span className="inline-flex items-center h-[30px] font-mono-num text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-3 rounded-lg shrink-0">
-              Ağırlık: {critMaxPts} Puan
-            </span>
-          </div>
-        </div>
-
-        {/* Header Row 2: Persistent Status Slot & Locked Clear Button */}
-        <div className="flex items-center justify-between gap-2 h-[32px]">
-          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-            {hasDirect ? (
-              <span className="inline-flex items-center h-[28px] font-mono-num text-xs font-bold text-blue-950 bg-blue-50 border border-blue-300 px-2.5 rounded-lg shrink-0">
-                Doğrudan Puan: {directPoints} / {critMaxPts}
-              </span>
-            ) : selectedLevelObj && selectedTheme ? (
-              <span
-                className={`inline-flex items-center gap-1 h-[28px] font-mono-num text-xs font-bold border px-3 rounded-lg shrink-0 ${selectedTheme.summaryPill}`}
-              >
-                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-                {isThreeLevelScale
-                  ? `Seçilen: ${selectedLevelObj.label} (%${formatLevelPercentage(
-                      selectedLevelObj.points
-                    )} · ${formatLevelEarnedPts(selectedLevelObj.points)}P)`
-                  : `Seçilen: ${selectedLevelObj.points}P (${selectedLevelObj.label})`}
-              </span>
-            ) : (
-              <span className="inline-flex items-center h-[28px] text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 px-2.5 rounded-lg truncate">
-                Seviye seçilmedi
-              </span>
-            )}
-
-            {isScoreAssigned(reflectedGroupPoints) && (
-              <span
-                className="hidden sm:inline-flex items-center h-[28px] font-mono-num text-xs font-semibold text-slate-800 bg-slate-200/80 border border-slate-300 px-2.5 rounded-lg shrink-0"
-                title="Bu ölçüt için kaydedilen ayrı Grup Puanı"
-              >
-                Ayrı Grup Puanı: {reflectedGroupPoints}P
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {precisionScoringMode && onSetDirectScore && (
-              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-lg px-2.5 h-[28px]">
-                <span className="text-[11px] font-semibold text-slate-800">
-                  Tam Sayı:
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  max={critMaxPts}
-                  step={1}
-                  aria-label={`${criterion.title} doğrudan puan (0-${critMaxPts})`}
-                  placeholder={`0-${critMaxPts}`}
-                  value={hasDirect ? directPoints : ''}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === '') {
-                      onSetDirectScore(criterion.id, null);
-                      return;
-                    }
-                    const num = Math.max(
-                      0,
-                      Math.min(critMaxPts, Math.round(Number(raw)))
-                    );
-                    onSetDirectScore(criterion.id, num);
-                  }}
-                  className="w-14 text-xs font-mono-num font-bold text-slate-900 bg-white border border-slate-300 rounded px-1.5 py-0.5 text-right focus:outline-none focus:ring-2 focus:ring-blue-900"
-                />
-                <span className="text-xs font-mono-num text-slate-500">
-                  /{critMaxPts}
-                </span>
-              </div>
-            )}
-
-            {onClearScore && (
+            {onClearScore && isAnswered && (
               <button
                 type="button"
-                disabled={!isAnswered}
                 onClick={() => onClearScore(criterion.id)}
                 aria-label={`${criterion.title} puanını temizle`}
-                className="h-[28px] px-2.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-600 hover:text-red-700 hover:border-red-300 hover:bg-red-50 disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                title="Bu ölçüt puanını temizle"
+                className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                Temizle
               </button>
             )}
           </div>
         </div>
       </div>
 
-      {/* Fixed-Height Level Boxes — Top-aligned content so button coordinates & text start never shift across criteria */}
-      <div
-        className={`grid ${gridColsClass} ${
-          isFocusedStage ? 'gap-3.5' : 'gap-2.5'
-        } items-stretch`}
-      >
-        {criterion.levels.map((lvl) => {
-          const isSelected = !hasDirect && selectedPoints === lvl.points;
-          const lvlTheme = getScoreLevelVisualTheme(lvl.points, maxLevelPoints);
-
-          return (
-            <button
-              key={lvl.level}
-              type="button"
-              onClick={() => onSelectLevel(criterion.id, lvl.points)}
-              aria-pressed={isSelected}
-              className={`${
-                isFocusedStage
-                  ? 'h-[156px] sm:h-[176px] p-4 rounded-2xl'
-                  : 'h-[136px] sm:h-[148px] p-3 rounded-xl'
-              } border text-left transition-all active:scale-[0.99] cursor-pointer flex flex-col justify-start gap-2.5 overflow-hidden ${
-                isSelected ? lvlTheme.selectedCard : lvlTheme.unselectedCard
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2 w-full shrink-0 pb-2 border-b border-slate-200/80">
-                <span
-                  className={`${
-                    isFocusedStage ? 'text-sm sm:text-base' : 'text-xs sm:text-sm'
-                  } font-bold leading-tight text-slate-900 truncate`}
-                >
-                  {lvl.label.replace(/\s*\(0\)/, '')}
-                </span>
-                <span
-                  className={`font-mono-num ${
-                    isFocusedStage
-                      ? 'text-xs sm:text-sm px-2.5 h-[28px]'
-                      : 'text-xs px-2 h-[24px]'
-                  } font-bold rounded-lg shrink-0 flex items-center gap-1 ${
-                    isSelected
-                      ? lvlTheme.selectedBadge
-                      : lvlTheme.unselectedBadge
-                  }`}
-                >
-                  {isSelected && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
-                  {isThreeLevelScale
-                    ? `%${formatLevelPercentage(lvl.points)} · ${formatLevelEarnedPts(
-                        lvl.points
-                      )}P`
-                    : `${lvl.points}P`}
-                </span>
-              </div>
-
-              {lvl.description ? (
-                <p
-                  title={lvl.description}
-                  className={`${
-                    isFocusedStage && criterion.levels.length <= 3
-                      ? 'text-xs sm:text-sm'
-                      : 'text-xs'
-                  } leading-relaxed break-words line-clamp-4 w-full ${
-                    isSelected
-                      ? 'text-slate-950 font-semibold'
-                      : 'text-slate-600'
-                  }`}
-                >
-                  {lvl.description}
-                </p>
-              ) : (
-                <p className="text-[11px] italic text-slate-400">
-                  Seviye açıklaması belirtilmemiş
-                </p>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Footer Step Controls when inside Focus Stage — Locked Y-position */}
+      {/* Footer Step Controls when inside Focus Stage */}
       {isFocusedStage && focusStageNav && (
-        <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-3 text-xs h-[48px]">
+        <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between gap-3 text-xs">
           <button
             type="button"
             disabled={!focusStageNav.canGoPrev}
             onClick={focusStageNav.onPrev}
-            className="h-[36px] px-3.5 rounded-xl bg-slate-100 border border-slate-300 font-bold text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer shrink-0"
+            className="h-[34px] px-3.5 rounded-xl bg-slate-100 border border-slate-200 font-bold text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             <ChevronLeft className="w-4 h-4" />
             Önceki Ölçüt
@@ -945,7 +690,7 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
             type="button"
             disabled={!focusStageNav.canGoNext}
             onClick={focusStageNav.onNext}
-            className="h-[36px] px-3.5 rounded-xl bg-blue-900 border border-blue-950 font-bold text-white hover:bg-blue-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer shrink-0"
+            className="h-[34px] px-3.5 rounded-xl bg-slate-900 border border-slate-950 font-bold text-white hover:bg-slate-950 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             Sonraki Ölçüt
             <ChevronRight className="w-4 h-4" />
@@ -955,5 +700,3 @@ export const RubricCriterionCard: React.FC<RubricCriterionCardProps> = ({
     </div>
   );
 };
-
-

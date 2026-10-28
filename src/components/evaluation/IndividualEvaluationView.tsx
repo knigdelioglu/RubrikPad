@@ -40,7 +40,6 @@ import {
   CriterionFocusToolbar,
   FocusModeStepperBar,
   RubricCriterionCard,
-  RubricViewModeToggle,
   type RubricCardViewMode,
 } from './RubricCriterionCard.tsx';
 
@@ -110,7 +109,6 @@ export const IndividualEvaluationView: React.FC<
   onChangeStudentFilter,
   filteredStudents,
   cardViewMode,
-  onChangeCardViewMode,
   autoAdvanceStudent,
   onToggleAutoAdvance,
   onSelectCriterionLevel,
@@ -136,9 +134,7 @@ export const IndividualEvaluationView: React.FC<
   const [searchQuery, setSearchQuery] = useState('');
   const [showPortraitRosterDrawer, setShowPortraitRosterDrawer] =
     useState(false);
-  const [focusModeEnabled, setFocusModeEnabled] = useState(
-    () => !isDualBookSpeakingRubric(activeRubric)
-  );
+  const [focusModeEnabled, setFocusModeEnabled] = useState(false);
   const [focusDisplayMode, setFocusDisplayMode] =
     useState<CriterionFocusDisplayMode>('hide_others');
   const [focusedCriterionIndex, setFocusedCriterionIndex] = useState(0);
@@ -724,7 +720,7 @@ export const IndividualEvaluationView: React.FC<
         </aside>
 
         {/* Right Active Student Rubric Deck (8/9 cols) */}
-        <div className="lg:col-span-8 xl:col-span-9 space-y-3">
+        <div className="lg:col-span-8 xl:col-span-9 space-y-4">
           {/* Smart Auto-Advance & Easy Return Banner */}
           {justCompletedBanner && (
             <div
@@ -810,16 +806,94 @@ export const IndividualEvaluationView: React.FC<
           )}
 
           {selectedStudent ? (
-            <div className="bg-white border border-slate-300 rounded-2xl p-3.5 sm:p-4 space-y-3 shadow-xs">
-              {/* Sticky Evaluation Controls Toolbar & Student HUD */}
-              <div className="flex flex-col gap-2.5 pb-3 border-b border-slate-200">
-                {/* Fixed Top Controls Bar: Focus Mode, View Mode, Quick Observation & Actions */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-7 space-y-6 shadow-xs">
+              {/* Top Header & Progress Bar (Matches Reference Design) */}
+              <div className="space-y-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  {/* Left: Student Name • No: XXX + Session Badge */}
+                  <div className="flex flex-wrap items-center gap-3 min-w-0">
+                    <h2
+                      className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight truncate max-w-[260px] sm:max-w-[380px] md:max-w-[480px]"
+                      title={selectedStudent.fullName}
+                    >
+                      {selectedStudent.fullName}
+                    </h2>
+                    <span className="font-mono-num text-sm font-medium text-slate-500 shrink-0">
+                      • No: {selectedStudent.studentNumber}
+                    </span>
+                    <span className="px-3 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200/80 truncate max-w-[260px]">
+                      {activeSession.title || activeRubric.title}
+                    </span>
+
+                    {activeLowScoreReminder?.shouldRemind && (
+                      <button
+                        type="button"
+                        onClick={focusObservationNoteInput}
+                        data-testid="low-score-observation-reminder"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 transition-colors cursor-pointer shrink-0"
+                        title={`${activeLowScoreReminder.message}. Gözlem notu alanına gitmek için tıklayın.`}
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-800 shrink-0" />
+                        <span>
+                          Üst üste {activeLowScoreReminder.consecutiveCount}{' '}
+                          düşük puan ·{' '}
+                          <span className="underline">Gözlem notu ekle</span>
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Right: Toplam Puan: XX / 100 */}
+                  <div className="flex items-baseline gap-2 shrink-0 ml-auto">
+                    <span className="text-xs sm:text-sm font-medium text-slate-500">
+                      Toplam Puan:
+                    </span>
+                    <span className="font-mono-num text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                      {effectiveCalc.finalScoreOutOf100 ??
+                        effectiveCalc.provisionalScoreOutOf100 ??
+                        0}
+                    </span>
+                    <span className="font-mono-num text-sm font-medium text-slate-400">
+                      / 100
+                    </span>
+                  </div>
+                </div>
+
+                {/* Full-Width Slim Dark Progress Bar */}
+                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-slate-900 rounded-full transition-all duration-300"
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          (effectiveCalc.finalScoreOutOf100 ??
+                            effectiveCalc.provisionalScoreOutOf100 ??
+                            0) > 0
+                            ? effectiveCalc.finalScoreOutOf100 ??
+                                effectiveCalc.provisionalScoreOutOf100 ??
+                                0
+                            : Math.round(
+                                (effectiveCalc.completedCriteriaCount /
+                                  Math.max(
+                                    1,
+                                    effectiveCalc.totalCriteriaCount
+                                  )) *
+                                  100
+                              )
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+
+                {/* Compact Secondary Controls Bar */}
                 <div
                   data-testid="evaluation-controls-toolbar"
-                  className="bg-slate-50 border border-slate-200 rounded-xl p-2 sm:p-2.5 flex flex-wrap items-center justify-between gap-2"
+                  className="flex flex-wrap items-center justify-between gap-2 pt-0.5"
                 >
-                  {/* Left: Focus Mode & View Mode Controls (Guaranteed Stable Anchor) */}
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <CriterionFocusToolbar
                       focusModeEnabled={focusModeEnabled}
                       onToggleFocusMode={() => {
@@ -841,15 +915,45 @@ export const IndividualEvaluationView: React.FC<
                       onChangeFocusDisplayMode={setFocusDisplayMode}
                     />
 
-                    {!focusModeEnabled && (
-                      <RubricViewModeToggle
-                        viewMode={cardViewMode}
-                        onChangeViewMode={onChangeCardViewMode}
-                      />
+                    {hasGroupData && (
+                      <div className="inline-flex items-center gap-1.5 bg-slate-100 border border-slate-200 rounded-xl px-2.5 py-1 text-xs">
+                        <Users className="w-3.5 h-3.5 text-slate-700" />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onSwitchActiveScoreSource(
+                              selectedStudent.id,
+                              'individual'
+                            )
+                          }
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-bold cursor-pointer ${
+                            activeSource === 'individual'
+                              ? 'bg-slate-900 text-white'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Bireysel Puanı Yansıt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onSwitchActiveScoreSource(
+                              selectedStudent.id,
+                              'group'
+                            )
+                          }
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-bold cursor-pointer ${
+                            activeSource === 'group'
+                              ? 'bg-slate-900 text-white'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Grup Puanını Yansıt
+                        </button>
+                      </div>
                     )}
                   </div>
 
-                  {/* Right: Quick Secondary Actions */}
                   <div className="flex flex-wrap items-center gap-1.5 ml-auto">
                     {onOpenQuickNoteModal && (
                       <button
@@ -857,11 +961,10 @@ export const IndividualEvaluationView: React.FC<
                         onClick={() => onOpenQuickNoteModal(selectedStudent.id)}
                         data-testid="active-student-quick-note-btn"
                         aria-label={`${selectedStudent.fullName} için Hızlı Gözlem Notu`}
-                        title={`${selectedStudent.fullName} için bu oturuma özel hızlı gözlem notu penceresini aç`}
                         className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[34px] ${
                           hasStudentObservationData(currentStudentEval)
-                            ? 'bg-slate-800 text-white border-slate-900 hover:bg-slate-900 shadow-2xs'
-                            : 'bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200/80'
+                            ? 'bg-slate-900 text-white border-slate-950 hover:bg-slate-950'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                         }`}
                       >
                         <MessageSquare className="w-3.5 h-3.5" />
@@ -877,11 +980,10 @@ export const IndividualEvaluationView: React.FC<
                       type="button"
                       onClick={onToggleAutoAdvance}
                       aria-pressed={autoAdvanceStudent}
-                      title="Yalnızca son eksik ölçüt tamamlandığında sıradaki bekleyen öğrenciye otomatik geçer; mevcut puanı düzeltirken tetiklenmez"
                       className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border cursor-pointer min-h-[34px] flex items-center gap-1.5 ${
                         autoAdvanceStudent
-                          ? 'bg-slate-800 text-white border-slate-900'
-                          : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                          ? 'bg-slate-900 text-white border-slate-950'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
                       Otomatik Geçiş: {autoAdvanceStudent ? 'Açık' : 'Kapalı'}
@@ -893,8 +995,8 @@ export const IndividualEvaluationView: React.FC<
                       aria-pressed={precisionScoringMode}
                       className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[34px] ${
                         precisionScoringMode
-                          ? 'bg-blue-900 text-white border-blue-950'
-                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                          ? 'bg-slate-900 text-white border-slate-950'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
                       <Sliders className="w-3.5 h-3.5" />
@@ -913,128 +1015,20 @@ export const IndividualEvaluationView: React.FC<
                   </div>
                 </div>
 
-                {/* Second Row: Student Identity & Evaluation Status Strip */}
-                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-0.5">
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <div className="w-9 h-9 rounded-xl bg-blue-900 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
-                      {getInitials(selectedStudent.fullName)}
-                    </div>
-                    <span className="font-mono-num text-xs font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-900 border border-slate-300 shrink-0">
-                      #{selectedStudent.studentNumber}
-                    </span>
-                    <h2
-                      className="text-base sm:text-lg font-bold text-slate-900 truncate max-w-[220px] sm:max-w-[340px] md:max-w-[460px] lg:max-w-[560px]"
-                      title={selectedStudent.fullName}
-                    >
-                      {selectedStudent.fullName}
-                    </h2>
-
-                    {/* Definitive Score vs Incomplete Draft Badge */}
-                    {effectiveCalc.isComplete &&
-                    effectiveCalc.finalScoreOutOf100 !== null ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num shrink-0">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
-                        Kesin Not: {effectiveCalc.finalScoreOutOf100} / 100 ·{' '}
-                        {effectiveCalc.performanceLabel}
-                      </span>
-                    ) : effectiveCalc.completedCriteriaCount > 0 ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300 font-mono-num shrink-0">
-                        Taslak ({effectiveCalc.completedCriteriaCount}/
-                        {effectiveCalc.totalCriteriaCount})
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
-                        Puanlanmadı (0/{effectiveCalc.totalCriteriaCount})
-                      </span>
-                    )}
-
-                    {activeLowScoreReminder?.shouldRemind && (
-                      <button
-                        type="button"
-                        onClick={focusObservationNoteInput}
-                        data-testid="low-score-observation-reminder"
-                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl text-xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 transition-colors cursor-pointer shadow-2xs shrink-0"
-                        title={`${activeLowScoreReminder.message}. Gözlem notu alanına gitmek için tıklayın.`}
-                      >
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-800 shrink-0" />
-                        <span>
-                          Üst üste {activeLowScoreReminder.consecutiveCount}{' '}
-                          düşük puan (1-2) ·{' '}
-                          <span className="underline">Gözlem notu ekle</span>
-                        </span>
-                      </button>
-                    )}
-                  </div>
-
-                  {hasGroupData && (
-                    <div className="flex flex-wrap items-center gap-2 bg-slate-100 border border-slate-300 rounded-xl px-2.5 py-1 text-xs shrink-0">
-                      <span className="font-semibold text-slate-800 flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5 text-blue-900" />
-                        Bireysel:{' '}
-                        <strong className="font-mono-num">
-                          {individualCalc.finalScoreOutOf100 !== null
-                            ? `${individualCalc.finalScoreOutOf100}`
-                            : `${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount}`}
-                        </strong>{' '}
-                        · Grup ({currentStudentEval?.evaluatedViaGroup || 'Grup'}):{' '}
-                        <strong className="font-mono-num">
-                          {groupCalc.finalScoreOutOf100 !== null
-                            ? `${groupCalc.finalScoreOutOf100}`
-                            : `${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount}`}
-                        </strong>
-                      </span>
-                      <div className="inline-flex items-center gap-1 bg-white p-0.5 rounded-lg border border-slate-300">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onSwitchActiveScoreSource(
-                              selectedStudent.id,
-                              'individual'
-                            )
-                          }
-                          className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                            activeSource === 'individual'
-                              ? 'bg-blue-900 text-white'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          Bireysel Puanı Yansıt
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onSwitchActiveScoreSource(
-                              selectedStudent.id,
-                              'group'
-                            )
-                          }
-                          className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${
-                            activeSource === 'group'
-                              ? 'bg-slate-800 text-white'
-                              : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                        >
-                          Grup Puanını Yansıt
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 {/* Tek Değerlendirme, İki Sonuç — Anlık Çift Sonuç Paneli (Kitap Sunumu Notu & Konuşma Sınavı Notu) */}
                 {effectiveCalc.dualResult && (
                   <div
                     data-testid="dual-evaluation-results-strip"
-                    className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1"
+                    className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1"
                   >
                     <div
                       data-testid="dual-book-presentation-score"
-                      className={`p-3 rounded-xl border flex flex-col justify-between gap-1.5 ${
+                      className={`p-3.5 rounded-xl border flex flex-col justify-between gap-1.5 ${
                         effectiveCalc.dualResult.isBookPresentationComplete &&
                         effectiveCalc.dualResult
                           .finalBookPresentationScoreOutOf100 !== null
-                          ? 'bg-blue-50/90 border-blue-900 text-slate-900'
-                          : 'bg-slate-50 border-slate-300 text-slate-800'
+                          ? 'bg-slate-50 border-slate-900 text-slate-900'
+                          : 'bg-slate-50/70 border-slate-200 text-slate-800'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -1044,7 +1038,7 @@ export const IndividualEvaluationView: React.FC<
                         {effectiveCalc.dualResult.isBookPresentationComplete &&
                         effectiveCalc.dualResult
                           .finalBookPresentationScoreOutOf100 !== null ? (
-                          <span className="font-mono-num text-xs font-bold px-2.5 py-0.5 rounded-lg bg-blue-900 text-white flex items-center gap-1">
+                          <span className="font-mono-num text-xs font-bold px-2.5 py-0.5 rounded-lg bg-slate-900 text-white flex items-center gap-1">
                             <Check className="w-3 h-3 stroke-[2.5]" />
                             Kesin:{' '}
                             {
@@ -1054,7 +1048,7 @@ export const IndividualEvaluationView: React.FC<
                             / 100
                           </span>
                         ) : (
-                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200 text-slate-800">
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200/80 text-slate-800">
                             Anlık Taslak:{' '}
                             {
                               effectiveCalc.dualResult
@@ -1065,7 +1059,7 @@ export const IndividualEvaluationView: React.FC<
                           </span>
                         )}
                       </div>
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 font-mono-num">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 font-mono-num">
                         <span>
                           İçerik: {effectiveCalc.dualResult.contentScoreOutOf70}
                           /70 ({effectiveCalc.dualResult.completedContentCount}/
@@ -1085,12 +1079,12 @@ export const IndividualEvaluationView: React.FC<
 
                     <div
                       data-testid="dual-speaking-exam-score"
-                      className={`p-3 rounded-xl border flex flex-col justify-between gap-1.5 ${
+                      className={`p-3.5 rounded-xl border flex flex-col justify-between gap-1.5 ${
                         effectiveCalc.dualResult.isSpeakingComplete &&
                         effectiveCalc.dualResult.finalSpeakingScoreOutOf100 !==
                           null
                           ? 'bg-slate-900 border-slate-950 text-white'
-                          : 'bg-slate-50 border-slate-300 text-slate-800'
+                          : 'bg-slate-50/70 border-slate-200 text-slate-800'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -1116,7 +1110,7 @@ export const IndividualEvaluationView: React.FC<
                             / 100
                           </span>
                         ) : (
-                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200 text-slate-800">
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200/80 text-slate-800">
                             Anlık Taslak:{' '}
                             {
                               effectiveCalc.dualResult
@@ -1132,7 +1126,7 @@ export const IndividualEvaluationView: React.FC<
                         className={`flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-num ${
                           effectiveCalc.dualResult.isSpeakingComplete
                             ? 'text-slate-300'
-                            : 'text-slate-600'
+                            : 'text-slate-500'
                         }`}
                       >
                         <span>
@@ -1143,7 +1137,7 @@ export const IndividualEvaluationView: React.FC<
                         <span
                           className={`font-sans font-semibold ${
                             effectiveCalc.dualResult.isSpeakingComplete
-                              ? 'text-blue-200'
+                              ? 'text-slate-200'
                               : 'text-slate-700'
                           }`}
                         >
@@ -1183,92 +1177,95 @@ export const IndividualEvaluationView: React.FC<
                 />
               )}
 
-              {/* Shared Rubric Criterion Cards List / Single-Criterion Focus Stage */}
-              <div
-                className={
-                  !focusModeEnabled && cardViewMode === 'compact'
-                    ? 'space-y-2'
-                    : 'space-y-3.5'
-                }
-              >
-                {activeRubric.criteria.map((criterion, cIdx) => {
-                  const isFocused = cIdx === focusStepSummary.activeIndex;
+              {/* Unified Criteria Evaluation Table Card (Matches Reference Design) */}
+              <div className="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-2xs">
+                {/* Table Header Row */}
+                <div className="bg-slate-50/70 border-b border-slate-200/90 px-5 sm:px-6 py-3.5 flex items-center justify-between gap-4">
+                  <span className="text-[11px] font-bold tracking-wider uppercase text-slate-500">
+                    DEĞERLENDİRME KRİTERİ
+                  </span>
+                  <div className="hidden sm:flex items-center gap-6 shrink-0">
+                    <span className="text-[11px] font-bold tracking-wider uppercase text-slate-500 text-center min-w-[260px]">
+                      SEVİYE SEÇİMİ
+                    </span>
+                    <span className="text-[11px] font-bold tracking-wider uppercase text-slate-500 text-right min-w-[64px]">
+                      PUAN
+                    </span>
+                  </div>
+                </div>
 
-                  // In Focus Mode + "Diğerlerini Gizle", completely hide all non-selected criteria
-                  if (
-                    focusModeEnabled &&
-                    focusDisplayMode === 'hide_others' &&
-                    !isFocused
-                  ) {
-                    return null;
-                  }
+                {/* Criteria Rows */}
+                <div className="divide-y divide-slate-200/80">
+                  {activeRubric.criteria.map((criterion, cIdx) => {
+                    const isFocused = cIdx === focusStepSummary.activeIndex;
 
-                  const selectedPts = activeScoresMap?.[criterion.id];
-                  const directPts = activeDirectScoresMap?.[criterion.id];
-                  const groupPts =
-                    currentStudentEval?.groupCriterionScores?.[criterion.id];
-                  const isDual = Boolean(effectiveCalc.dualResult);
-                  const currentSection = getCriterionSection(
-                    criterion,
-                    cIdx,
-                    activeRubric
-                  );
-                  const prevSection =
-                    cIdx > 0
-                      ? getCriterionSection(
-                          activeRubric.criteria[cIdx - 1],
-                          cIdx - 1,
-                          activeRubric
-                        )
-                      : null;
-                  const showContentHeader =
-                    isDual &&
-                    currentSection === 'content' &&
-                    (cIdx === 0 ||
-                      (focusModeEnabled &&
-                        focusDisplayMode === 'hide_others' &&
-                        isFocused));
-                  const showSpeakingHeader =
-                    isDual &&
-                    currentSection === 'speaking' &&
-                    (prevSection !== 'speaking' ||
-                      (focusModeEnabled &&
-                        focusDisplayMode === 'hide_others' &&
-                        isFocused));
+                    if (
+                      focusModeEnabled &&
+                      focusDisplayMode === 'hide_others' &&
+                      !isFocused
+                    ) {
+                      return null;
+                    }
 
-                  return (
-                    <React.Fragment key={criterion.id}>
-                      {showContentHeader && effectiveCalc.dualResult && (
-                        <div
-                          data-testid="section-header-content"
-                          className="bg-slate-100 border border-slate-300 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-md bg-blue-900 text-white text-xs font-bold font-mono-num">
-                              BÖLÜM 1
-                            </span>
-                            <h3 className="text-xs sm:text-sm font-bold text-slate-900">
-                              1. Kitap İçeriği — 70 Puan (Kitap Türüne Özgü 4
-                              Ölçüt)
-                            </h3>
-                          </div>
-                          <span className="font-mono-num text-xs font-bold text-slate-800 bg-white px-2.5 py-1 rounded-lg border border-slate-300">
-                            İçerik Puanı:{' '}
-                            {effectiveCalc.dualResult.contentScoreOutOf70} / 70
-                            ({effectiveCalc.dualResult.completedContentCount}/
-                            {effectiveCalc.dualResult.totalContentCount} ölçüt)
-                          </span>
-                        </div>
-                      )}
+                    const selectedPts = activeScoresMap?.[criterion.id];
+                    const directPts = activeDirectScoresMap?.[criterion.id];
+                    const groupPts =
+                      currentStudentEval?.groupCriterionScores?.[criterion.id];
+                    const isDual = Boolean(effectiveCalc.dualResult);
+                    const currentSection = getCriterionSection(
+                      criterion,
+                      cIdx,
+                      activeRubric
+                    );
+                    const prevSection =
+                      cIdx > 0
+                        ? getCriterionSection(
+                            activeRubric.criteria[cIdx - 1],
+                            cIdx - 1,
+                            activeRubric
+                          )
+                        : null;
+                    const showContentHeader =
+                      isDual &&
+                      currentSection === 'content' &&
+                      (cIdx === 0 ||
+                        (focusModeEnabled &&
+                          focusDisplayMode === 'hide_others' &&
+                          isFocused));
+                    const showSpeakingHeader =
+                      isDual &&
+                      currentSection === 'speaking' &&
+                      (prevSection !== 'speaking' ||
+                        (focusModeEnabled &&
+                          focusDisplayMode === 'hide_others' &&
+                          isFocused));
 
-                      {showSpeakingHeader && effectiveCalc.dualResult && (
-                        <div
-                          data-testid="section-header-speaking"
-                          className="bg-slate-100 border border-slate-300 rounded-xl px-3.5 py-2.5 space-y-1"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
+                    return (
+                      <React.Fragment key={criterion.id}>
+                        {showContentHeader && effectiveCalc.dualResult && (
+                          <div
+                            data-testid="section-header-content"
+                            className="bg-slate-50 px-5 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2"
+                          >
                             <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-white text-xs font-bold font-mono-num">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[11px] font-bold font-mono-num">
+                                BÖLÜM 1
+                              </span>
+                              <h3 className="text-xs sm:text-sm font-bold text-slate-900">
+                                1. Kitap İçeriği — 70 Puan (Kitap Türüne Özgü 4
+                                Ölçüt)
+                              </h3>
+                            </div>
+                          </div>
+                        )}
+
+                        {showSpeakingHeader && effectiveCalc.dualResult && (
+                          <div
+                            data-testid="section-header-speaking"
+                            className="bg-slate-50 px-5 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-white text-[11px] font-bold font-mono-num">
                                 BÖLÜM 2
                               </span>
                               <h3 className="text-xs sm:text-sm font-bold text-slate-900">
@@ -1276,197 +1273,201 @@ export const IndividualEvaluationView: React.FC<
                                 (Ortak 6 Ölçüt)
                               </h3>
                             </div>
-                            <div className="flex flex-wrap items-center gap-1.5 font-mono-num text-xs">
-                              <span className="font-bold text-slate-900 bg-white px-2.5 py-1 rounded-lg border border-slate-300">
-                                Konuşma Sınavı:{' '}
-                                {effectiveCalc.dualResult.speakingScoreOutOf100}{' '}
-                                / 100 (
-                                {
-                                  effectiveCalc.dualResult
-                                    .completedSpeakingCount
-                                }
-                                /{effectiveCalc.dualResult.totalSpeakingCount}{' '}
-                                ölçüt)
-                              </span>
-                              <span className="font-bold text-blue-950 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
-                                Kitap Sunumuna %30 Katkı: +
-                                {
-                                  effectiveCalc.dualResult
-                                    .speakingContributionOutOf30
-                                }{' '}
-                                / 30 Puan
-                              </span>
-                            </div>
                           </div>
-                          <p className="text-[11px] text-slate-600">
-                            Not: Öğretmen isterse sunum sonunda soru
-                            yöneltebilir; soruya verilen cevap ayrı bir zorunlu
-                            konuşma ölçütü değildir (gözlem notuna
-                            eklenebilir).
-                          </p>
-                        </div>
-                      )}
+                        )}
 
-                      <RubricCriterionCard
-                        criterion={criterion}
-                        criterionIndex={cIdx}
-                        selectedPoints={selectedPts}
-                        directPoints={directPts}
-                        reflectedGroupPoints={groupPts}
-                        viewMode={cardViewMode}
-                        precisionScoringMode={precisionScoringMode}
-                        isNextUnscored={
-                          !focusModeEnabled &&
-                          criterion.id === firstUnscoredCriterionId
-                        }
-                      adhdFocusMode={!focusModeEnabled}
-                      isFocusedStage={focusModeEnabled && isFocused}
-                      isDimmedByFocus={
-                        focusModeEnabled &&
-                        focusDisplayMode === 'dim_others' &&
-                        !isFocused
-                      }
-                      onFocusSelect={() => setFocusedCriterionIndex(cIdx)}
-                      focusStageNav={
-                        focusModeEnabled && isFocused
-                          ? {
-                              currentStep: focusStepSummary.activeIndex + 1,
-                              totalSteps: focusStepSummary.totalCount,
-                              canGoPrev: focusStepSummary.canGoPrev,
-                              canGoNext: focusStepSummary.canGoNext,
-                              onPrev: () =>
-                                setFocusedCriterionIndex(
-                                  Math.max(0, focusStepSummary.activeIndex - 1)
-                                ),
-                              onNext: () =>
-                                setFocusedCriterionIndex(
-                                  Math.min(
-                                    focusStepSummary.totalCount - 1,
-                                    focusStepSummary.activeIndex + 1
-                                  )
-                                ),
+                        <RubricCriterionCard
+                          criterion={criterion}
+                          criterionIndex={cIdx}
+                          selectedPoints={selectedPts}
+                          directPoints={directPts}
+                          reflectedGroupPoints={groupPts}
+                          viewMode={cardViewMode}
+                          precisionScoringMode={precisionScoringMode}
+                          isNextUnscored={
+                            !focusModeEnabled &&
+                            criterion.id === firstUnscoredCriterionId
+                          }
+                          adhdFocusMode={!focusModeEnabled}
+                          isFocusedStage={focusModeEnabled && isFocused}
+                          isDimmedByFocus={
+                            focusModeEnabled &&
+                            focusDisplayMode === 'dim_others' &&
+                            !isFocused
+                          }
+                          onFocusSelect={() => setFocusedCriterionIndex(cIdx)}
+                          focusStageNav={
+                            focusModeEnabled && isFocused
+                              ? {
+                                  currentStep: focusStepSummary.activeIndex + 1,
+                                  totalSteps: focusStepSummary.totalCount,
+                                  canGoPrev: focusStepSummary.canGoPrev,
+                                  canGoNext: focusStepSummary.canGoNext,
+                                  onPrev: () =>
+                                    setFocusedCriterionIndex(
+                                      Math.max(
+                                        0,
+                                        focusStepSummary.activeIndex - 1
+                                      )
+                                    ),
+                                  onNext: () =>
+                                    setFocusedCriterionIndex(
+                                      Math.min(
+                                        focusStepSummary.totalCount - 1,
+                                        focusStepSummary.activeIndex + 1
+                                      )
+                                    ),
+                                }
+                              : undefined
+                          }
+                          onSelectLevel={(critId, pts) => {
+                            onSelectCriterionLevel(critId, pts, {
+                              advanceStudentOnComplete: autoAdvanceStudent,
+                            });
+                            if (focusModeEnabled) {
+                              const nextScores = {
+                                ...(activeScoresMap || {}),
+                                [critId]: pts,
+                              };
+                              const nextDirect = {
+                                ...(activeDirectScoresMap || {}),
+                              };
+                              delete nextDirect[critId];
+                              const nextFocus =
+                                getNextFocusedCriterionIndexAfterScore(
+                                  activeRubric.criteria,
+                                  cIdx,
+                                  nextScores,
+                                  nextDirect
+                                );
+                              if (!nextFocus.allCompleted) {
+                                setFocusedCriterionIndex(nextFocus.nextIndex);
+                              }
                             }
-                          : undefined
-                      }
-                      onSelectLevel={(critId, pts) => {
-                        onSelectCriterionLevel(critId, pts, {
-                          advanceStudentOnComplete: autoAdvanceStudent,
-                        });
-                        if (focusModeEnabled) {
-                          const nextScores = {
-                            ...(activeScoresMap || {}),
-                            [critId]: pts,
-                          };
-                          const nextDirect = {
-                            ...(activeDirectScoresMap || {}),
-                          };
-                          delete nextDirect[critId];
-                          const nextFocus =
-                            getNextFocusedCriterionIndexAfterScore(
-                              activeRubric.criteria,
-                              cIdx,
-                              nextScores,
-                              nextDirect
-                            );
-                          if (!nextFocus.allCompleted) {
-                            setFocusedCriterionIndex(nextFocus.nextIndex);
-                          }
-                        }
-                      }}
-                      onSetDirectScore={(critId, dPts) => {
-                        onSetDirectCriterionScore(critId, dPts, {
-                          advanceStudentOnComplete: autoAdvanceStudent,
-                        });
-                        if (focusModeEnabled && dPts !== null) {
-                          const nextDirect = {
-                            ...(activeDirectScoresMap || {}),
-                            [critId]: dPts,
-                          };
-                          const nextFocus =
-                            getNextFocusedCriterionIndexAfterScore(
-                              activeRubric.criteria,
-                              cIdx,
-                              activeScoresMap || {},
-                              nextDirect
-                            );
-                          if (!nextFocus.allCompleted) {
-                            setFocusedCriterionIndex(nextFocus.nextIndex);
-                          }
-                        }
-                      }}
-                      onClearScore={onClearCriterionScore}
-                      />
-                    </React.Fragment>
-                  );
-                })}
+                          }}
+                          onSetDirectScore={(critId, dPts) => {
+                            onSetDirectCriterionScore(critId, dPts, {
+                              advanceStudentOnComplete: autoAdvanceStudent,
+                            });
+                            if (focusModeEnabled && dPts !== null) {
+                              const nextDirect = {
+                                ...(activeDirectScoresMap || {}),
+                                [critId]: dPts,
+                              };
+                              const nextFocus =
+                                getNextFocusedCriterionIndexAfterScore(
+                                  activeRubric.criteria,
+                                  cIdx,
+                                  activeScoresMap || {},
+                                  nextDirect
+                                );
+                              if (!nextFocus.allCompleted) {
+                                setFocusedCriterionIndex(nextFocus.nextIndex);
+                              }
+                            }
+                          }}
+                          onClearScore={onClearCriterionScore}
+                        />
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
               </div>
 
-              {/* Observation Note & Quick Tags — Calm Slate & Navy Identity */}
-              <div className="pt-3 border-t border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5 text-slate-700" />
-                    Hızlı Gözlem Etiketleri
+              {/* Inline Observation Note Input Bar (Matches Reference Design) */}
+              <div className="space-y-2.5">
+                <div className="bg-white border border-slate-200/90 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-2xs">
+                  <label htmlFor="student-obs-note" className="sr-only">
+                    Gözlem Notu
                   </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {QUICK_OBSERVATION_TAGS.map((tag) => {
-                      const active = (currentStudentEval?.tags || []).includes(
-                        tag
-                      );
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => onToggleStudentTag(tag)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer min-h-[36px] ${
-                            active
-                              ? 'bg-blue-900 text-white border-blue-950 shadow-2xs'
-                              : 'bg-slate-50 text-slate-700 border-slate-300 hover:border-blue-900 hover:bg-white'
-                          }`}
-                        >
-                          {active ? '✓ ' : '+ '}
-                          {tag}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                    <label
-                      htmlFor="student-obs-note"
-                      className="text-xs font-bold text-slate-700 flex items-center gap-1.5"
-                    >
-                      <MessageSquare className="w-3.5 h-3.5 text-slate-700" />
-                      Gözlem Notu
-                    </label>
-                    {activeLowScoreReminder?.shouldRemind && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300">
-                        <AlertTriangle className="w-3 h-3 text-amber-800" />
-                        Gözlem notu ekle (Üst üste{' '}
-                        {activeLowScoreReminder.consecutiveCount} düşük puan)
-                      </span>
-                    )}
-                  </div>
-                  <textarea
+                  <MessageSquare className="w-4 h-4 text-slate-400 shrink-0" />
+                  <input
                     id="student-obs-note"
-                    rows={2}
+                    type="text"
                     value={currentStudentEval?.note || ''}
                     onChange={(e) => onUpdateStudentNote(e.target.value)}
                     placeholder={
                       activeLowScoreReminder?.shouldRemind
-                        ? 'Öğrenci üst üste 3 değerlendirmede düşük puan (1 veya 2) aldı. Destekleyici gözlem notu ekleyin...'
-                        : 'Öğrencinin bireysel süreç becerisi ve gelişim notu...'
+                        ? 'Öğrenci üst üste düşük puan aldı. Destekleyici gözlem notu ekleyin...'
+                        : 'Gözlem notu ekleyin...'
                     }
-                    className={`w-full p-3 text-xs rounded-xl focus:bg-white focus:outline-none focus:ring-2 ${
+                    className={`flex-1 px-3.5 py-2 text-xs sm:text-sm text-slate-800 bg-white rounded-lg focus:outline-none focus:ring-2 ${
                       activeLowScoreReminder?.shouldRemind &&
                       !activeLowScoreReminder.hasObservationNote
-                        ? 'bg-amber-50/70 border-2 border-amber-400 focus:ring-amber-600'
-                        : 'bg-slate-50 border border-slate-300 focus:ring-blue-900'
+                        ? 'border-2 border-amber-400 focus:ring-amber-600'
+                        : 'border border-slate-300 focus:ring-slate-900'
                     }`}
                   />
+                  <span className="text-xs font-medium text-slate-400 shrink-0">
+                    Kaydedildi
+                  </span>
                 </div>
+
+                {/* Quick Observation Tags Strip */}
+                <div className="flex flex-wrap items-center gap-1.5 px-1">
+                  <span className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 mr-1">
+                    <Tag className="w-3 h-3" />
+                    Etiketler:
+                  </span>
+                  {QUICK_OBSERVATION_TAGS.map((tag) => {
+                    const active = (currentStudentEval?.tags || []).includes(
+                      tag
+                    );
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => onToggleStudentTag(tag)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-slate-900 text-white border-slate-950'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-slate-400 hover:bg-white'
+                        }`}
+                      >
+                        {active ? '✓ ' : '+ '}
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bottom Navigation Footer Bar (Matches Reference Design: < Önceki Öğrenci | • Otomatik Kaydedildi | Sonraki Öğrenci ->) */}
+              <div className="pt-4 border-t border-slate-200/80 flex items-center justify-between gap-4">
+                <button
+                  type="button"
+                  disabled={!prevStudent}
+                  onClick={() => {
+                    if (prevStudent) {
+                      onSelectStudent(prevStudent.id);
+                      onDismissBanner();
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer py-2 px-1 transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>Önceki Öğrenci</span>
+                </button>
+
+                <div className="inline-flex items-center gap-2 text-xs font-medium text-slate-500">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>Otomatik Kaydedildi</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!nextStudent}
+                  onClick={() => {
+                    if (nextStudent) {
+                      onSelectStudent(nextStudent.id);
+                      onDismissBanner();
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-950 text-white text-xs sm:text-sm font-bold shadow-xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                >
+                  <span>Sonraki Öğrenci</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
             </div>
           ) : null}
@@ -1475,4 +1476,5 @@ export const IndividualEvaluationView: React.FC<
     </div>
   );
 };
+
 

@@ -3247,24 +3247,10 @@ export function getStudentProgressHistory(
 
     const criterionBreakdown = rubric.criteria.map((c: RubricCriterion, idx: number) => {
       const section = getCriterionSection(c, idx, rubric);
-      const directVal = activeDirect[c.id];
-      if (isScoreAssigned(directVal)) {
-        const maxDirect = c.maxPoints ?? c.weight;
-        const scorePercent = maxDirect > 0 ? Math.round((directVal / maxDirect) * 100) : 0;
-        return {
-          criterionTitle: c.title,
-          scorePercent,
-          selectedPoints: directVal,
-          maxPoints: maxDirect,
-          section,
-        };
-      }
-
-      const maxPoints = Math.max(...c.levels.map((l) => l.points), 1);
-      const selectedPoints = isScoreAssigned(activeScores[c.id])
-        ? (activeScores[c.id] as number)
-        : 0;
-      const scorePercent = Math.round((selectedPoints / maxPoints) * 100);
+      const maxPoints = c.maxPoints ?? c.weight;
+      const earnedPts = getCriterionEarnedPoints(c, activeScores[c.id], activeDirect[c.id]);
+      const selectedPoints = earnedPts !== null ? earnedPts : 0;
+      const scorePercent = maxPoints > 0 ? Math.round((selectedPoints / maxPoints) * 100) : 0;
       return {
         criterionTitle: c.title,
         scorePercent,
@@ -3484,7 +3470,7 @@ export function getStudentConsecutiveLowScoreReminder(
 
   if (maxCriteriaStreak >= 3) {
     return {
-      shouldRemind: true,
+      shouldRemind: !hasObservationNote,
       consecutiveCount: maxCriteriaStreak,
       triggerType: 'consecutive_criteria',
       reminderLabel: 'Gözlem notu ekle',
@@ -3495,7 +3481,7 @@ export function getStudentConsecutiveLowScoreReminder(
 
   if (maxSessionStreak >= 3) {
     return {
-      shouldRemind: true,
+      shouldRemind: !hasObservationNote,
       consecutiveCount: maxSessionStreak,
       triggerType: 'consecutive_sessions',
       reminderLabel: 'Gözlem notu ekle',
@@ -3540,7 +3526,8 @@ export function generateSessionCsv(
   session: EvaluationSession,
   rubric: Rubric | null | undefined,
   students: Student[],
-  targetClassId?: string
+  targetClassId?: string,
+  dualReportMode: 'both' | 'book' | 'speaking' = 'both'
 ): string {
   const effectiveRubric =
     session.rubricSnapshot && session.rubricSnapshot.id === session.rubricId
@@ -3580,22 +3567,37 @@ export function generateSessionCsv(
   };
 
   const isDual = isDualBookSpeakingRubric(effectiveRubric);
+  const includedCriteria =
+    isDual && dualReportMode === 'speaking'
+      ? effectiveRubric.criteria.filter(
+          (c, idx) =>
+            getCriterionSection(c, idx, effectiveRubric) === 'speaking'
+        )
+      : effectiveRubric.criteria;
 
   const headers = [
     'Öğrenci No',
     'Ad',
     'Soyad',
     'Ad Soyad',
-    ...effectiveRubric.criteria.map(
+    ...includedCriteria.map(
       (c) => `${c.title} (${c.maxPoints ?? c.weight}P / %${c.weight})`
     ),
     ...(isDual
-      ? [
-          'Kitap İçeriği Puanı (70)',
-          'Konuşma %30 Katkısı (30)',
-          'Kitap Sunumu Notu (100)',
-          'Konuşma Sınavı Notu (100)',
-        ]
+      ? dualReportMode === 'book'
+        ? [
+            'Kitap İçeriği Puanı (70)',
+            'Sunum %30 Katkısı (30)',
+            'Kitap Sunumu Notu (100)',
+          ]
+        : dualReportMode === 'speaking'
+        ? ['Konuşma Sınavı Notu (100)']
+        : [
+            'Kitap İçeriği Puanı (70)',
+            'Konuşma %30 Katkısı (30)',
+            'Kitap Sunumu Notu (100)',
+            'Konuşma Sınavı Notu (100)',
+          ]
       : []),
     'Bireysel Puan (100)',
     'Grup Puanı (100)',
@@ -3621,11 +3623,13 @@ export function generateSessionCsv(
         ? evaluation?.groupDirectScores || {}
         : evaluation?.directCriterionScores || {};
 
-    const criterionCells = effectiveRubric.criteria.map((c) => {
-      const directVal = activeDirect[c.id];
-      if (isScoreAssigned(directVal)) return directVal;
-      const pts = activeScores[c.id];
-      return isScoreAssigned(pts) ? pts : '-';
+    const criterionCells = includedCriteria.map((c) => {
+      const earned = getCriterionEarnedPoints(
+        c,
+        activeScores[c.id],
+        activeDirect[c.id]
+      );
+      return earned !== null ? earned : '-';
     });
 
     const splitName = splitTurkishFullName(student.fullName);
@@ -3663,34 +3667,47 @@ export function generateSessionCsv(
         : '-';
 
     const dual = effectiveCalc.dualResult;
+    const contentCell =
+      dual?.finalContentScoreOutOf70 !== null &&
+      dual?.finalContentScoreOutOf70 !== undefined
+        ? dual.finalContentScoreOutOf70
+        : dual && dual.contentCompletedCount > 0
+        ? `Eksik (${dual.contentCompletedCount}/${dual.contentTotalCount})`
+        : '-';
+    const contribCell =
+      dual && dual.speakingCompletedCount > 0
+        ? dual.speakingContributionOutOf30
+        : '-';
+    const bookFinalCell =
+      dual?.finalBookPresentationScoreOutOf100 !== null &&
+      dual?.finalBookPresentationScoreOutOf100 !== undefined
+        ? dual.finalBookPresentationScoreOutOf100
+        : dual &&
+          dual.contentCompletedCount + dual.speakingCompletedCount > 0
+        ? `Eksik (${
+            dual.contentCompletedCount + dual.speakingCompletedCount
+          }/${dual.contentTotalCount + dual.speakingTotalCount})`
+        : '-';
+    const speakingFinalCell =
+      dual?.finalSpeakingScoreOutOf100 !== null &&
+      dual?.finalSpeakingScoreOutOf100 !== undefined
+        ? dual.finalSpeakingScoreOutOf100
+        : dual && dual.speakingCompletedCount > 0
+        ? `Eksik (${dual.speakingCompletedCount}/${dual.speakingTotalCount})`
+        : '-';
+
     const dualCells = isDual
-      ? [
-          dual?.finalContentScoreOutOf70 !== null &&
-          dual?.finalContentScoreOutOf70 !== undefined
-            ? dual.finalContentScoreOutOf70
-            : dual && dual.contentCompletedCount > 0
-            ? `Eksik (${dual.contentCompletedCount}/${dual.contentTotalCount})`
-            : '-',
-          dual && dual.speakingCompletedCount > 0
-            ? dual.speakingContributionOutOf30
-            : '-',
-          dual?.finalBookPresentationScoreOutOf100 !== null &&
-          dual?.finalBookPresentationScoreOutOf100 !== undefined
-            ? dual.finalBookPresentationScoreOutOf100
-            : dual &&
-              dual.contentCompletedCount + dual.speakingCompletedCount > 0
-            ? `Eksik (${
-                dual.contentCompletedCount + dual.speakingCompletedCount
-              }/${dual.contentTotalCount + dual.speakingTotalCount})`
-            : '-',
-          dual?.finalSpeakingScoreOutOf100 !== null &&
-          dual?.finalSpeakingScoreOutOf100 !== undefined
-            ? dual.finalSpeakingScoreOutOf100
-            : dual && dual.speakingCompletedCount > 0
-            ? `Eksik (${dual.speakingCompletedCount}/${dual.speakingTotalCount})`
-            : '-',
-        ]
+      ? dualReportMode === 'book'
+        ? [contentCell, contribCell, bookFinalCell]
+        : dualReportMode === 'speaking'
+        ? [speakingFinalCell]
+        : [contentCell, contribCell, bookFinalCell, speakingFinalCell]
       : [];
+
+    const effectiveLevel =
+      isDual && dualReportMode === 'speaking' && dual
+        ? dual.speakingPerformanceLabel
+        : effectiveCalc.performanceLabel;
 
     return [
       student.studentNumber,
@@ -3702,7 +3719,7 @@ export function generateSessionCsv(
       indScoreCell,
       grpScoreCell,
       finalScoreCell,
-      effectiveCalc.performanceLabel,
+      effectiveLevel,
       method,
       (evaluation?.note || '').replace(/\r?\n/g, ' | '),
       (evaluation?.groupNote || '').replace(/\r?\n/g, ' | '),

@@ -757,13 +757,15 @@ test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes pro
   assert.equal(portfolioHeader, '%PDF-1.4');
   const portfolioText = decodePdfTextWithToUnicode(portfolioBytes);
   assert.equal(
-    portfolioText.includes('VELİ BİLGİLENDİRME VE ÖĞRENCİ GELİŞİM RAPORU'),
+    portfolioText.includes('ÖĞRENCİ GELİŞİM VE PERFORMANS RAPORU'),
     true
   );
   assert.equal(portfolioText.includes('Çağrı Şahin Öztürk'), true);
   assert.equal(portfolioText.includes('Kitap Sunumu Notu: 74 / 100'), true);
   assert.equal(portfolioText.includes('Konuşma Sınavı Notu: 80 / 100'), true);
-  assert.equal(portfolioText.includes('Veli Adı Soyadı / İmza'), true);
+  assert.equal(portfolioText.includes('Ders Öğretmeni'), true);
+  assert.equal(portfolioText.includes('Okul Müdürü'), true);
+  assert.equal(portfolioText.includes('Veli Adı Soyadı'), false);
 });
 
 test('resolvePdfColumnOptions and PDF generators respect Sadece İsimler, Puanlar ile, and Gözlem Notları ile presets', async () => {

@@ -26,6 +26,7 @@ import type {
   StudentGroup,
 } from '../../types.ts';
 import {
+  calculateWeightedScore,
   canApplyGroupScoresToMembers,
   findDuplicateGroupMemberships,
   getCriterionSection,
@@ -48,7 +49,6 @@ import {
   CriterionFocusToolbar,
   FocusModeStepperBar,
   RubricCriterionCard,
-  RubricViewModeToggle,
   type RubricCardViewMode,
 } from './RubricCriterionCard.tsx';
 
@@ -114,7 +114,6 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   selectedGroupId,
   onSelectGroup,
   cardViewMode,
-  onChangeCardViewMode,
   precisionScoringMode,
   onTogglePrecisionScoring,
   onAddGroup,
@@ -161,9 +160,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
     () => isDualBookSpeakingRubric(activeRubric),
     [activeRubric]
   );
-  const [focusModeEnabled, setFocusModeEnabled] = useState(
-    () => !isDualBookSpeakingRubric(activeRubric)
-  );
+  const [focusModeEnabled, setFocusModeEnabled] = useState(false);
   const [focusDisplayMode, setFocusDisplayMode] =
     useState<CriterionFocusDisplayMode>('hide_others');
   const [focusedCriterionIndex, setFocusedCriterionIndex] = useState(0);
@@ -182,7 +179,9 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
   );
 
   useEffect(() => {
-    setFocusModeEnabled(!isDualBookSpeakingRubric(activeRubric));
+    if (isDualBookSpeakingRubric(activeRubric)) {
+      setFocusModeEnabled(false);
+    }
   }, [activeRubric.id]);
 
   useEffect(() => {
@@ -713,11 +712,11 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Left: Visual Team Cards Deck (4 cols on lg) */}
+        {/* Left: Visual Team Cards Deck (4/3 cols on lg/xl) */}
         <aside
           className={`${
             showPortraitGroupDrawer ? 'block' : 'hidden'
-          } lg:block lg:col-span-4 bg-white border border-slate-300 rounded-2xl p-4 space-y-4 shadow-xs lg:sticky lg:top-4`}
+          } lg:block lg:col-span-4 xl:col-span-3 bg-white border border-slate-300 rounded-2xl p-4 space-y-4 shadow-xs lg:sticky lg:top-4`}
         >
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
@@ -969,8 +968,8 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
           </div>
         </aside>
 
-        {/* Right: Active Group Rubric Deck & 3-Stage Lifecycle Controls (8 cols) */}
-        <div className="lg:col-span-8 space-y-4">
+        {/* Right: Active Group Rubric Deck & 3-Stage Lifecycle Controls (8/9 cols) */}
+        <div className="lg:col-span-8 xl:col-span-9 space-y-4">
           {/* Easy Return Banner after Applying & Advancing to Next Group */}
           {lastAppliedGroupBanner && (
             <div
@@ -1027,15 +1026,88 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
           )}
 
           {selectedGroup && activeGroupLifecycle ? (
-            <div className="bg-white border border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
-              {/* Group Header & Shared View Mode Controls */}
-              <div className="flex flex-col gap-2.5 pb-3.5 border-b border-slate-200">
-                {/* Fixed Top Controls Bar: Focus Mode, View Mode, Precision & Reset */}
+            <div className="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-7 space-y-5 shadow-xs">
+              {/* Top Header & Progress Bar (Matches Reference Design & IndividualEvaluationView) */}
+              <div className="space-y-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  {/* Left: Group Name • X Öğrenci + Session Badge */}
+                  <div className="flex flex-wrap items-center gap-3 min-w-0">
+                    <h2
+                      className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight truncate max-w-[260px] sm:max-w-[380px] md:max-w-[480px]"
+                      title={selectedGroup.name}
+                    >
+                      {selectedGroup.name}
+                    </h2>
+                    <span className="font-mono-num text-sm font-medium text-slate-500 shrink-0">
+                      • {selectedGroup.studentIds.length} Öğrenci
+                    </span>
+                    <span className="px-3 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200/80 truncate max-w-[260px]">
+                      {activeSession.title || activeRubric.title}
+                    </span>
+                  </div>
+
+                  {/* Right: Toplam Puan: XX / 100 */}
+                  <div className="flex items-baseline gap-2 shrink-0 ml-auto">
+                    <span className="text-xs sm:text-sm font-medium text-slate-500">
+                      Toplam Puan:
+                    </span>
+                    <span className="font-mono-num text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                      {activeGroupLifecycle.finalScoreOutOf100 ??
+                        calculateWeightedScore(
+                          activeRubric,
+                          selectedGroup.criterionScores,
+                          selectedGroup.directCriterionScores
+                        ).provisionalScoreOutOf100 ??
+                        0}
+                    </span>
+                    <span className="font-mono-num text-sm font-medium text-slate-400">
+                      / 100
+                    </span>
+                  </div>
+                </div>
+
+                {/* Full-Width Slim Dark Progress Bar */}
+                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-slate-900 rounded-full transition-all duration-300"
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          (activeGroupLifecycle.finalScoreOutOf100 ??
+                            calculateWeightedScore(
+                              activeRubric,
+                              selectedGroup.criterionScores,
+                              selectedGroup.directCriterionScores
+                            ).provisionalScoreOutOf100 ??
+                            0) > 0
+                            ? activeGroupLifecycle.finalScoreOutOf100 ??
+                                calculateWeightedScore(
+                                  activeRubric,
+                                  selectedGroup.criterionScores,
+                                  selectedGroup.directCriterionScores
+                                ).provisionalScoreOutOf100 ??
+                                0
+                            : Math.round(
+                                (activeGroupLifecycle.completedCriteriaCount /
+                                  Math.max(
+                                    1,
+                                    activeGroupLifecycle.totalCriteriaCount
+                                  )) *
+                                  100
+                              )
+                        )
+                      )}%`,
+                    }}
+                  />
+                </div>
+
+                {/* Compact Secondary Controls Bar */}
                 <div
                   data-testid="group-evaluation-controls-toolbar"
-                  className="bg-slate-50 border border-slate-200 rounded-xl p-2 sm:p-2.5 flex flex-wrap items-center justify-between gap-2"
+                  className="flex flex-wrap items-center justify-between gap-2 pt-0.5"
                 >
-                  {/* Left: Focus Mode & View Mode Controls (Guaranteed Stable Anchor) */}
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <CriterionFocusToolbar
                       focusModeEnabled={focusModeEnabled}
@@ -1057,25 +1129,51 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       focusDisplayMode={focusDisplayMode}
                       onChangeFocusDisplayMode={setFocusDisplayMode}
                     />
-
-                    {!focusModeEnabled && (
-                      <RubricViewModeToggle
-                        viewMode={cardViewMode}
-                        onChangeViewMode={onChangeCardViewMode}
-                      />
-                    )}
                   </div>
 
-                  {/* Right: Precision & Reset Controls */}
                   <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowMemberPicker(!showMemberPicker)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[34px] ${
+                        showMemberPicker
+                          ? 'bg-slate-900 text-white border-slate-950'
+                          : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      {showMemberPicker
+                        ? 'Üye Seçiciyi Kapat'
+                        : `Üye Ekle / Düzenle (${selectedGroup.studentIds.length})`}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={
+                        selectedGroup.studentIds.length === 0 ||
+                        !activeGroupLifecycle.isComplete
+                      }
+                      onClick={() =>
+                        onApplyGroupScoresToMembers(selectedGroup, {
+                          advanceToNextGroup: false,
+                        })
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[34px] disabled:opacity-40 disabled:cursor-not-allowed shadow-2xs"
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      {activeGroupLifecycle.state === 'applied'
+                        ? `Tekrar Aktar (${selectedGroup.studentIds.length})`
+                        : `Üyelere Aktar (${selectedGroup.studentIds.length})`}
+                    </button>
+
                     <button
                       type="button"
                       onClick={onTogglePrecisionScoring}
                       aria-pressed={precisionScoringMode}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[36px] ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[34px] ${
                         precisionScoringMode
-                          ? 'bg-blue-900 text-white border-blue-950'
-                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                          ? 'bg-slate-900 text-white border-slate-950'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
                       <Sliders className="w-3.5 h-3.5" />
@@ -1086,7 +1184,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       type="button"
                       onClick={() => onResetGroupScores(selectedGroup.id)}
                       title="Grup Puanlarını Sıfırla"
-                      className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:text-rose-700 hover:bg-rose-50 flex items-center gap-1 cursor-pointer min-h-[36px]"
+                      className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:text-rose-700 hover:bg-rose-50 flex items-center gap-1 cursor-pointer min-h-[34px]"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       Sıfırla
@@ -1094,335 +1192,191 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                   </div>
                 </div>
 
-                {/* Second Row: Group Identity Strip */}
-                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-0.5">
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <span className="text-xs font-bold text-slate-800 bg-slate-100 border border-slate-300 px-2.5 py-0.5 rounded-lg shrink-0">
-                      Takım Değerlendirmesi
-                    </span>
-                    <h2
-                      className="text-lg sm:text-xl font-bold text-slate-900 truncate max-w-[240px] sm:max-w-[360px] md:max-w-[480px]"
-                      title={selectedGroup.name}
+                {/* Dual Results Strip when Book + Speaking Rubric is active */}
+                {activeGroupLifecycle.dualResult && (
+                  <div
+                    data-testid="dual-evaluation-results-strip"
+                    className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1"
+                  >
+                    <div
+                      data-testid="dual-book-presentation-score"
+                      className={`p-3.5 rounded-xl border flex flex-col justify-between gap-1.5 ${
+                        activeGroupLifecycle.dualResult
+                          .isBookPresentationComplete &&
+                        activeGroupLifecycle.dualResult
+                          .finalBookPresentationScoreOutOf100 !== null
+                          ? 'bg-slate-50 border-slate-900 text-slate-900'
+                          : 'bg-slate-50/70 border-slate-200 text-slate-800'
+                      }`}
                     >
-                      {selectedGroup.name}
-                    </h2>
-
-                    {/* Definitive Group Score vs Draft Status */}
-                    {activeGroupLifecycle.isComplete &&
-                    activeGroupLifecycle.dualResult ? (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border font-mono-num shrink-0 ${
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-slate-900">
+                          1. Kitap Sunumu Notu (100 Üzerinden)
+                        </span>
+                        {activeGroupLifecycle.dualResult
+                          .isBookPresentationComplete &&
+                        activeGroupLifecycle.dualResult
+                          .finalBookPresentationScoreOutOf100 !== null ? (
+                          <span className="font-mono-num text-xs font-bold px-2.5 py-0.5 rounded-lg bg-slate-900 text-white flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[2.5]" />
+                            Kesin:{' '}
+                            {
+                              activeGroupLifecycle.dualResult
+                                .finalBookPresentationScoreOutOf100
+                            }{' '}
+                            / 100
+                          </span>
+                        ) : (
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200/80 text-slate-800">
+                            Anlık Taslak:{' '}
+                            {
+                              activeGroupLifecycle.dualResult
+                                .provisionalBookPresentationScoreOutOf100
+                            }{' '}
+                            / 100 (
+                            {activeGroupLifecycle.completedCriteriaCount}/
+                            {activeGroupLifecycle.totalCriteriaCount} ölçüt)
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 font-mono-num">
+                        <span>
+                          İçerik:{' '}
+                          {activeGroupLifecycle.dualResult.contentScoreOutOf70}
+                          /70 + %30 Konuşma:{' '}
+                          {
                             activeGroupLifecycle.dualResult
-                              .isBookPresentationComplete
-                              ? 'bg-blue-900 text-white border-blue-950'
-                              : 'bg-slate-100 text-slate-800 border-slate-300'
+                              .speakingContributionOutOf30
+                          }
+                          /30
+                        </span>
+                        <span className="font-sans font-semibold text-slate-700">
+                          {
+                            activeGroupLifecycle.dualResult
+                              .bookPresentationPerformanceLabel
+                          }
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      data-testid="dual-speaking-exam-score"
+                      className={`p-3.5 rounded-xl border flex flex-col justify-between gap-1.5 ${
+                        activeGroupLifecycle.dualResult.isSpeakingComplete &&
+                        activeGroupLifecycle.dualResult
+                          .finalSpeakingScoreOutOf100 !== null
+                          ? 'bg-slate-900 border-slate-950 text-white'
+                          : 'bg-slate-50/70 border-slate-200 text-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`text-xs font-bold ${
+                            activeGroupLifecycle.dualResult.isSpeakingComplete
+                              ? 'text-white'
+                              : 'text-slate-900'
                           }`}
                         >
-                          Kitap Sunumu:{' '}
-                          {activeGroupLifecycle.dualResult
-                            .finalBookPresentationScoreOutOf100 !== null
-                            ? `${activeGroupLifecycle.dualResult.finalBookPresentationScoreOutOf100} / 100`
-                            : `Eksik (${activeGroupLifecycle.completedCriteriaCount}/${activeGroupLifecycle.totalCriteriaCount})`}
+                          2. Konuşma Sınavı Notu (100 Üzerinden)
+                        </span>
+                        {activeGroupLifecycle.dualResult.isSpeakingComplete &&
+                        activeGroupLifecycle.dualResult
+                          .finalSpeakingScoreOutOf100 !== null ? (
+                          <span className="font-mono-num text-xs font-bold px-2.5 py-0.5 rounded-lg bg-white text-slate-950 flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[2.5]" />
+                            Kesin:{' '}
+                            {
+                              activeGroupLifecycle.dualResult
+                                .finalSpeakingScoreOutOf100
+                            }{' '}
+                            / 100
+                          </span>
+                        ) : (
+                          <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded-lg bg-slate-200/80 text-slate-800">
+                            Anlık Taslak:{' '}
+                            {
+                              activeGroupLifecycle.dualResult
+                                .provisionalSpeakingScoreOutOf100
+                            }{' '}
+                            / 100 (
+                            {
+                              activeGroupLifecycle.dualResult
+                                .completedSpeakingCount
+                            }
+                            /
+                            {activeGroupLifecycle.dualResult.totalSpeakingCount}{' '}
+                            ölçüt)
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        className={`flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono-num ${
+                          activeGroupLifecycle.dualResult.isSpeakingComplete
+                            ? 'text-slate-300'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        <span>
+                          6 Ortak Konuşma Ölçütü Toplamı (
+                          {
+                            activeGroupLifecycle.dualResult
+                              .completedSpeakingCount
+                          }
+                          /{activeGroupLifecycle.dualResult.totalSpeakingCount})
                         </span>
                         <span
-                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold border font-mono-num shrink-0 ${
+                          className={`font-sans font-semibold ${
                             activeGroupLifecycle.dualResult.isSpeakingComplete
-                              ? 'bg-teal-900 text-white border-teal-950'
-                              : 'bg-slate-100 text-slate-800 border-slate-300'
+                              ? 'text-slate-200'
+                              : 'text-slate-700'
                           }`}
                         >
-                          Konuşma Sınavı:{' '}
-                          {activeGroupLifecycle.dualResult
-                            .finalSpeakingScoreOutOf100 !== null
-                            ? `${activeGroupLifecycle.dualResult.finalSpeakingScoreOutOf100} / 100`
-                            : `Eksik (${activeGroupLifecycle.dualResult.speakingCompletedCount}/${activeGroupLifecycle.dualResult.speakingTotalCount})`}
+                          {
+                            activeGroupLifecycle.dualResult
+                              .speakingPerformanceLabel
+                          }
                         </span>
                       </div>
-                    ) : activeGroupLifecycle.finalScoreOutOf100 !== null ? (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-blue-900 text-white border border-blue-950 font-mono-num shrink-0">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-200" />
-                        Kesin Grup Notu:{' '}
-                        {activeGroupLifecycle.finalScoreOutOf100} / 100 ·{' '}
-                        {activeGroupLifecycle.performanceLabel}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-slate-100 text-slate-800 border border-slate-300 font-mono-num shrink-0">
-                        Puanlanıyor (
-                        {activeGroupLifecycle.completedCriteriaCount}/
-                        {activeGroupLifecycle.totalCriteriaCount})
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Explicit 3-Stage Lifecycle Stepper & Action Bar (Puanlanıyor -> Tamamlandı -> Üyelere Uygulandı) */}
-              <div
-                className={`rounded-2xl border p-3.5 space-y-3 ${
-                  activeGroupLifecycle.state === 'applied'
-                    ? 'bg-slate-50 border-slate-300'
-                    : activeGroupLifecycle.state === 'completed_unapplied'
-                    ? 'bg-blue-50/70 border-2 border-blue-900 shadow-xs'
-                    : 'bg-slate-50 border-slate-200'
-                }`}
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {/* Step 1: Puanlanıyor */}
-                  <div
-                    className={`px-3 py-2 rounded-xl border flex items-center gap-2 text-xs font-bold ${
-                      activeGroupLifecycle.state === 'in_progress'
-                        ? 'bg-blue-900 border-blue-950 text-white'
-                        : 'bg-white border-slate-300 text-slate-800'
-                    }`}
-                  >
-                    <span
-                      className={`w-5 h-5 rounded-full text-[11px] flex items-center justify-center shrink-0 ${
-                        activeGroupLifecycle.state === 'in_progress'
-                          ? 'bg-white text-blue-950'
-                          : 'bg-slate-700 text-white'
-                      }`}
-                    >
-                      {activeGroupLifecycle.isComplete ? (
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      ) : (
-                        '1'
-                      )}
-                    </span>
-                    <div>
-                      <div>1. Puanlanıyor</div>
-                      <div className="text-[10px] font-mono-num font-normal opacity-85">
-                        {activeGroupLifecycle.completedCriteriaCount}/
-                        {activeGroupLifecycle.totalCriteriaCount} ölçüt
-                      </div>
                     </div>
-                  </div>
-
-                  {/* Step 2: Tamamlandı */}
-                  <div
-                    className={`px-3 py-2 rounded-xl border flex items-center gap-2 text-xs font-bold ${
-                      activeGroupLifecycle.state === 'completed_unapplied'
-                        ? 'bg-blue-900 border-blue-950 text-white shadow-xs'
-                        : activeGroupLifecycle.state === 'applied'
-                        ? 'bg-white border-slate-300 text-slate-800'
-                        : 'bg-white/60 border-slate-200 text-slate-400'
-                    }`}
-                  >
-                    <span
-                      className={`w-5 h-5 rounded-full text-[11px] flex items-center justify-center shrink-0 ${
-                        activeGroupLifecycle.state === 'completed_unapplied'
-                          ? 'bg-white text-blue-950'
-                          : activeGroupLifecycle.state === 'applied'
-                          ? 'bg-slate-700 text-white'
-                          : 'bg-slate-200 text-slate-500'
-                      }`}
-                    >
-                      {activeGroupLifecycle.state === 'applied' ? (
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      ) : (
-                        '2'
-                      )}
-                    </span>
-                    <div>
-                      <div>2. Tamamlandı</div>
-                      <div className="text-[10px] font-mono-num font-normal opacity-90">
-                        {activeGroupLifecycle.isComplete &&
-                        activeGroupLifecycle.finalScoreOutOf100 !== null
-                          ? `Kesin Not: ${activeGroupLifecycle.finalScoreOutOf100}/100`
-                          : 'Tüm ölçütleri puanlayın'}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Step 3: Üyelere Uygulandı */}
-                  <div
-                    className={`px-3 py-2 rounded-xl border flex items-center gap-2 text-xs font-bold ${
-                      activeGroupLifecycle.state === 'applied'
-                        ? 'bg-slate-800 border-slate-900 text-white shadow-xs'
-                        : 'bg-white/60 border-slate-200 text-slate-500'
-                    }`}
-                  >
-                    <span
-                      className={`w-5 h-5 rounded-full text-[11px] flex items-center justify-center shrink-0 ${
-                        activeGroupLifecycle.state === 'applied'
-                          ? 'bg-white text-slate-900'
-                          : 'bg-slate-200 text-slate-600'
-                      }`}
-                    >
-                      {activeGroupLifecycle.state === 'applied' ? (
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      ) : (
-                        '3'
-                      )}
-                    </span>
-                    <div>
-                      <div>3. Öğrencilere Aktarıldı</div>
-                      <div className="text-[10px] font-mono-num font-normal opacity-90">
-                        {activeGroupLifecycle.state === 'applied'
-                          ? `${activeGroupLifecycle.appliedMemberCount} öğrenciye aktarıldı`
-                          : 'Gruptaki öğrencilere aktarım'}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Action Row for Applying Scores to Group Members (Never Skipped!) */}
-                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 pt-1">
-                  <div className="text-xs font-medium text-slate-700">
-                    {activeGroupLifecycle.state === 'in_progress' && (
-                      <span>
-                        Grup değerlendirmesini gruptaki öğrencilere aktarmak
-                        için kalan{' '}
-                        <strong>
-                          {activeGroupLifecycle.totalCriteriaCount -
-                            activeGroupLifecycle.completedCriteriaCount}{' '}
-                          ölçütü
-                        </strong>{' '}
-                        daha puanlayın.
-                      </span>
-                    )}
-                    {activeGroupLifecycle.state === 'completed_unapplied' && (
-                      <span className="text-slate-900 font-bold">
-                        {activeGroupLifecycle.hasStaleMemberScores
-                          ? 'Grup değerlendirmesi güncellendi. Güncel grup değerlendirmesini gruptaki öğrencilere aktarın:'
-                          : 'Grup değerlendirmesi tamamlandı! Bu değerlendirmeyi gruptaki öğrencilere aktarın:'}
-                      </span>
-                    )}
-                    {activeGroupLifecycle.state === 'applied' && (
-                      <span className="text-slate-800 font-semibold">
-                        Bu grubun değerlendirmesi (
-                        {activeGroupLifecycle.finalScoreOutOf100}
-                        /100) gruptaki tüm öğrencilere (
-                        {selectedGroup.studentIds.length} öğrenci) başarıyla
-                        aktarılmıştır.
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={
-                        selectedGroup.studentIds.length === 0 ||
-                        !activeGroupLifecycle.isComplete
-                      }
-                      title={
-                        !activeGroupLifecycle.isComplete
-                          ? `Grup değerlendirmesini öğrencilere aktarmak için tüm ölçütleri tamamlayın (${activeGroupLifecycle.completedCriteriaCount}/${activeGroupLifecycle.totalCriteriaCount})`
-                          : undefined
-                      }
-                      onClick={() =>
-                        onApplyGroupScoresToMembers(selectedGroup, {
-                          advanceToNextGroup: false,
-                        })
-                      }
-                      className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all min-h-[42px] disabled:opacity-40 disabled:cursor-not-allowed ${
-                        activeGroupLifecycle.state === 'completed_unapplied'
-                          ? 'bg-blue-900 hover:bg-blue-950 text-white shadow-sm'
-                          : activeGroupLifecycle.state === 'applied'
-                          ? 'bg-white border border-slate-300 text-slate-800 hover:bg-slate-100'
-                          : 'bg-slate-800 hover:bg-slate-900 text-white'
-                      }`}
-                    >
-                      <Users className="w-4 h-4" />
-                      {activeGroupLifecycle.state === 'applied'
-                        ? `Değerlendirmeyi Öğrencilere Tekrar Aktar (${selectedGroup.studentIds.length} Öğrenci)`
-                        : `Grup Değerlendirmesini ${selectedGroup.studentIds.length} Öğrenciye Aktar`}
-                    </button>
-
-                    {activeGroupLifecycle.isComplete &&
-                      selectedGroup.studentIds.length > 0 &&
-                      nextPendingGroup && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onApplyGroupScoresToMembers(selectedGroup, {
-                              advanceToNextGroup: true,
-                            })
-                          }
-                          className="px-4 py-2.5 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm min-h-[42px]"
-                        >
-                          <Send className="w-3.5 h-3.5 shrink-0" />
-                          <span>Öğrencilere Aktar ve Sıradaki Gruba Geç</span>
-                          <ChevronRight className="w-4 h-4 shrink-0" />
-                        </button>
-                      )}
-                  </div>
-                </div>
-              </div>
-
-              {groupAppliedFeedback && (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="p-3 rounded-xl bg-slate-100 border border-slate-300 text-slate-900 text-xs font-semibold flex items-center gap-2"
-                >
-                  <Check className="w-4 h-4 text-blue-900 shrink-0" />
-                  {groupAppliedFeedback}
-                </div>
-              )}
-
-              {/* Touch-Friendly Visual Member Strip & Collapsible Member Selector */}
-              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-800">
-                      Takım Üyeleri ({selectedGroup.studentIds.length} Öğrenci)
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowMemberPicker(!showMemberPicker)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer min-h-[36px] ${
-                      showMemberPicker
-                        ? 'bg-blue-900 text-white border-blue-950'
-                        : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100'
-                    }`}
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    {showMemberPicker
-                      ? 'Üye Seçiciyi Daralt'
-                      : 'Üye Ekle / Düzenle'}
-                  </button>
-                </div>
-
-                {/* Current Members Touch Chips */}
-                {selectedGroup.studentIds.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {selectedGroup.studentIds.map((stuId) => {
-                      const stu = studentsById[stuId];
-                      if (!stu) return null;
-                      return (
-                        <button
-                          key={stu.id}
-                          type="button"
-                          onClick={() =>
-                            onToggleGroupMember(selectedGroup.id, stu.id)
-                          }
-                          title="Gruptan çıkarmak için dokunun"
-                          className="px-3 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold flex items-center gap-2 hover:bg-slate-900 cursor-pointer min-h-[38px]"
-                        >
-                          <span className="w-5 h-5 rounded-full bg-blue-900 text-white text-[10px] font-bold flex items-center justify-center">
-                            {getInitials(stu.fullName)}
-                          </span>
-                          <span>
-                            #{stu.studentNumber} {stu.fullName}
-                          </span>
-                          <X className="w-3.5 h-3.5 text-slate-300 hover:text-white" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-2.5">
-                    Bu grupta henüz öğrenci bulunmuyor. Aşağıdan öğrenci seçerek
-                    takıma ekleyin.
                   </div>
                 )}
+              </div>
 
-                {/* Collapsible Full Class Touch Member Selector */}
-                {(showMemberPicker ||
-                  selectedGroup.studentIds.length === 0) && (
+              {/* Compact Group Members Chips / Collapsible Picker */}
+              {(selectedGroup.studentIds.length > 0 || showMemberPicker) && (
+                <div className="rounded-xl border border-slate-200/90 bg-slate-50/70 p-3 space-y-2.5">
+                  {selectedGroup.studentIds.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-slate-500 mr-1">
+                        Üyeler:
+                      </span>
+                      {selectedGroup.studentIds.map((stuId) => {
+                        const stu = studentsById[stuId];
+                        if (!stu) return null;
+                        return (
+                          <button
+                            key={stu.id}
+                            type="button"
+                            onClick={() =>
+                              onToggleGroupMember(selectedGroup.id, stu.id)
+                            }
+                            title="Gruptan çıkarmak için dokunun"
+                            className="px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-slate-800 text-xs font-semibold flex items-center gap-1.5 hover:border-slate-400 cursor-pointer"
+                          >
+                            <span className="w-4 h-4 rounded-full bg-slate-900 text-white text-[9px] font-bold flex items-center justify-center">
+                              {getInitials(stu.fullName)}
+                            </span>
+                            <span>
+                              #{stu.studentNumber} {stu.fullName}
+                            </span>
+                            <X className="w-3 h-3 text-slate-400 hover:text-slate-700" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {showMemberPicker && (
                   <div className="pt-2 border-t border-slate-200 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[11px] font-bold text-slate-600">
@@ -1434,7 +1388,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                         placeholder="Öğrenci ara..."
                         value={memberSearchQuery}
                         onChange={(e) => setMemberSearchQuery(e.target.value)}
-                        className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900 w-44"
+                        className="px-2.5 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 w-44"
                       />
                     </div>
                     <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto p-1">
@@ -1460,12 +1414,12 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                                 ? `Zaten ${assignedGroupByStudentId[stu.id].groupName} üyesi`
                                 : undefined
                             }
-                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors min-h-[38px] flex items-center gap-1.5 ${
+                            className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors min-h-[36px] flex items-center gap-1.5 ${
                               isMember
-                                ? 'bg-blue-900 text-white border-blue-950 cursor-pointer'
+                                ? 'bg-slate-900 text-white border-slate-950 cursor-pointer'
                                 : assignedOther
                                 ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                                : 'bg-white text-slate-700 border-slate-200 hover:border-blue-900 hover:bg-slate-50 cursor-pointer'
+                                : 'bg-white text-slate-700 border-slate-200 hover:border-slate-900 hover:bg-slate-50 cursor-pointer'
                             }`}
                           >
                             <span>
@@ -1483,7 +1437,19 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                     </div>
                   </div>
                 )}
-              </div>
+                </div>
+              )}
+
+              {groupAppliedFeedback && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="p-3 rounded-xl bg-slate-100 border border-slate-300 text-slate-900 text-xs font-semibold flex items-center gap-2"
+                >
+                  <Check className="w-4 h-4 text-slate-900 shrink-0" />
+                  {groupAppliedFeedback}
+                </div>
+              )}
 
               {/* Single-Criterion Focus Mode Stepper Bar */}
               {focusModeEnabled && (
@@ -1513,227 +1479,227 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                 />
               )}
 
-              {/* Shared Rubric Criterion Cards List / Single-Criterion Focus Stage */}
-              <div
-                className={
-                  !focusModeEnabled && cardViewMode === 'compact'
-                    ? 'space-y-2'
-                    : 'space-y-3.5'
-                }
-              >
-                {(() => {
-                  const firstUnscoredCrit = activeRubric.criteria.find(
-                    (crit) =>
-                      !isScoreAssigned(
-                        selectedGroup.directCriterionScores?.[crit.id]
-                      ) &&
-                      !isScoreAssigned(selectedGroup.criterionScores[crit.id])
-                  );
-                  return activeRubric.criteria.map((criterion, cIdx) => {
-                    const isFocused = cIdx === focusStepSummary.activeIndex;
+              {/* Unified Criteria Evaluation Table Card (Matches Reference Design & IndividualEvaluationView) */}
+              <div className="bg-white border border-slate-200/90 rounded-2xl overflow-hidden shadow-2xs">
+                {/* Table Header Row */}
+                <div className="bg-slate-50/70 border-b border-slate-200/90 px-5 sm:px-6 py-3.5 flex items-center justify-between gap-4">
+                  <span className="text-[11px] font-bold tracking-wider uppercase text-slate-500">
+                    DEĞERLENDİRME KRİTERİ
+                  </span>
+                  <div className="hidden sm:flex items-center gap-6 shrink-0">
+                    <span className="text-[11px] font-bold tracking-wider uppercase text-slate-500 text-center min-w-[260px]">
+                      SEVİYE SEÇİMİ
+                    </span>
+                    <span className="text-[11px] font-bold tracking-wider uppercase text-slate-500 text-right min-w-[64px]">
+                      PUAN
+                    </span>
+                  </div>
+                </div>
 
-                    if (
-                      focusModeEnabled &&
-                      focusDisplayMode === 'hide_others' &&
-                      !isFocused
-                    ) {
-                      return null;
-                    }
-
-                    const selectedPts =
-                      selectedGroup.criterionScores[criterion.id];
-                    const directPts =
-                      selectedGroup.directCriterionScores?.[criterion.id];
-
-                    const currentSection = getCriterionSection(
-                      criterion,
-                      cIdx,
-                      activeRubric
+                {/* Criteria Rows */}
+                <div className="divide-y divide-slate-200/80">
+                  {(() => {
+                    const firstUnscoredCrit = activeRubric.criteria.find(
+                      (crit) =>
+                        !isScoreAssigned(
+                          selectedGroup.directCriterionScores?.[crit.id]
+                        ) &&
+                        !isScoreAssigned(selectedGroup.criterionScores[crit.id])
                     );
-                    const prevSection =
-                      cIdx > 0
-                        ? getCriterionSection(
-                            activeRubric.criteria[cIdx - 1],
-                            cIdx - 1,
-                            activeRubric
-                          )
-                        : null;
-                    const showSectionBanner =
-                      isDualRubric &&
-                      !focusModeEnabled &&
-                      currentSection !== null &&
-                      currentSection !== prevSection;
+                    return activeRubric.criteria.map((criterion, cIdx) => {
+                      const isFocused = cIdx === focusStepSummary.activeIndex;
 
-                    return (
-                      <React.Fragment key={criterion.id}>
-                        {showSectionBanner && (
-                          <div
-                            className={`rounded-xl border px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 ${
-                              currentSection === 'content'
-                                ? 'bg-blue-50/80 border-blue-200 text-blue-950'
-                                : 'bg-teal-50/80 border-teal-200 text-teal-950'
-                            }`}
-                          >
-                            <div>
-                              <div className="text-xs font-bold">
-                                {currentSection === 'content'
-                                  ? '1. Kitap İçeriği — 70 Puan'
-                                  : '2. Ortak Konuşma Değerlendirmesi — 100 Puan'}
-                              </div>
-                              <div className="text-[11px] opacity-80">
-                                {currentSection === 'content'
-                                  ? 'Kitap türüne özgü 4 içerik ölçütü (70 puan)'
-                                  : 'Sözlü anlatım ve iletişim becerilerine yönelik 6 ortak ölçüt (100 puan)'}
+                      if (
+                        focusModeEnabled &&
+                        focusDisplayMode === 'hide_others' &&
+                        !isFocused
+                      ) {
+                        return null;
+                      }
+
+                      const selectedPts =
+                        selectedGroup.criterionScores[criterion.id];
+                      const directPts =
+                        selectedGroup.directCriterionScores?.[criterion.id];
+
+                      const currentSection = getCriterionSection(
+                        criterion,
+                        cIdx,
+                        activeRubric
+                      );
+                      const prevSection =
+                        cIdx > 0
+                          ? getCriterionSection(
+                              activeRubric.criteria[cIdx - 1],
+                              cIdx - 1,
+                              activeRubric
+                            )
+                          : null;
+                      const showSectionBanner =
+                        isDualRubric &&
+                        !focusModeEnabled &&
+                        currentSection !== null &&
+                        currentSection !== prevSection;
+
+                      return (
+                        <React.Fragment key={criterion.id}>
+                          {showSectionBanner && (
+                            <div className="bg-slate-50 px-5 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[11px] font-bold font-mono-num">
+                                  {currentSection === 'content'
+                                    ? 'BÖLÜM 1'
+                                    : 'BÖLÜM 2'}
+                                </span>
+                                <span className="text-xs sm:text-sm font-bold text-slate-900">
+                                  {currentSection === 'content'
+                                    ? '1. Kitap İçeriği — 70 Puan (Kitap Türüne Özgü 4 Ölçüt)'
+                                    : '2. Ortak Konuşma Değerlendirmesi — 100 Puan (Ortak 6 Ölçüt)'}
+                                </span>
                               </div>
                             </div>
-                          </div>
-                        )}
-                        <RubricCriterionCard
-                          criterion={criterion}
-                          criterionIndex={cIdx}
-                          selectedPoints={selectedPts}
-                          directPoints={directPts}
-                          viewMode={cardViewMode}
-                          precisionScoringMode={precisionScoringMode}
-                          isNextUnscored={
-                            !focusModeEnabled &&
-                            firstUnscoredCrit?.id === criterion.id
-                          }
-                          adhdFocusMode={!focusModeEnabled}
-                          isFocusedStage={focusModeEnabled && isFocused}
-                          isDimmedByFocus={
-                            focusModeEnabled &&
-                            focusDisplayMode === 'dim_others' &&
-                            !isFocused
-                          }
-                          onFocusSelect={() => setFocusedCriterionIndex(cIdx)}
-                          focusStageNav={
-                            focusModeEnabled && isFocused
-                              ? {
-                                  currentStep: focusStepSummary.activeIndex + 1,
-                                  totalSteps: focusStepSummary.totalCount,
-                                  canGoPrev: focusStepSummary.canGoPrev,
-                                  canGoNext: focusStepSummary.canGoNext,
-                                  onPrev: () =>
-                                    setFocusedCriterionIndex(
-                                      Math.max(
-                                        0,
-                                        focusStepSummary.activeIndex - 1
-                                      )
-                                    ),
-                                  onNext: () =>
-                                    setFocusedCriterionIndex(
-                                      Math.min(
-                                        focusStepSummary.totalCount - 1,
-                                        focusStepSummary.activeIndex + 1
-                                      )
-                                    ),
+                          )}
+                          <RubricCriterionCard
+                            criterion={criterion}
+                            criterionIndex={cIdx}
+                            selectedPoints={selectedPts}
+                            directPoints={directPts}
+                            viewMode={cardViewMode}
+                            precisionScoringMode={precisionScoringMode}
+                            isNextUnscored={
+                              !focusModeEnabled &&
+                              firstUnscoredCrit?.id === criterion.id
+                            }
+                            adhdFocusMode={!focusModeEnabled}
+                            isFocusedStage={focusModeEnabled && isFocused}
+                            isDimmedByFocus={
+                              focusModeEnabled &&
+                              focusDisplayMode === 'dim_others' &&
+                              !isFocused
+                            }
+                            onFocusSelect={() => setFocusedCriterionIndex(cIdx)}
+                            focusStageNav={
+                              focusModeEnabled && isFocused
+                                ? {
+                                    currentStep:
+                                      focusStepSummary.activeIndex + 1,
+                                    totalSteps: focusStepSummary.totalCount,
+                                    canGoPrev: focusStepSummary.canGoPrev,
+                                    canGoNext: focusStepSummary.canGoNext,
+                                    onPrev: () =>
+                                      setFocusedCriterionIndex(
+                                        Math.max(
+                                          0,
+                                          focusStepSummary.activeIndex - 1
+                                        )
+                                      ),
+                                    onNext: () =>
+                                      setFocusedCriterionIndex(
+                                        Math.min(
+                                          focusStepSummary.totalCount - 1,
+                                          focusStepSummary.activeIndex + 1
+                                        )
+                                      ),
+                                  }
+                                : undefined
+                            }
+                            onSelectLevel={(critId, pts) => {
+                              onSelectGroupCriterionLevel(critId, pts);
+                              if (focusModeEnabled) {
+                                const nextScores = {
+                                  ...(selectedGroup.criterionScores || {}),
+                                  [critId]: pts,
+                                };
+                                const nextDirect = {
+                                  ...(selectedGroup.directCriterionScores || {}),
+                                };
+                                delete nextDirect[critId];
+                                const nextFocus =
+                                  getNextFocusedCriterionIndexAfterScore(
+                                    activeRubric.criteria,
+                                    cIdx,
+                                    nextScores,
+                                    nextDirect
+                                  );
+                                if (!nextFocus.allCompleted) {
+                                  setFocusedCriterionIndex(nextFocus.nextIndex);
                                 }
-                              : undefined
-                          }
-                          onSelectLevel={(critId, pts) => {
-                            onSelectGroupCriterionLevel(critId, pts);
-                            if (focusModeEnabled) {
-                              const nextScores = {
-                                ...(selectedGroup.criterionScores || {}),
-                                [critId]: pts,
-                              };
-                              const nextDirect = {
-                                ...(selectedGroup.directCriterionScores || {}),
-                              };
-                              delete nextDirect[critId];
-                              const nextFocus =
-                                getNextFocusedCriterionIndexAfterScore(
-                                  activeRubric.criteria,
-                                  cIdx,
-                                  nextScores,
-                                  nextDirect
-                                );
-                              if (!nextFocus.allCompleted) {
-                                setFocusedCriterionIndex(nextFocus.nextIndex);
                               }
-                            }
-                          }}
-                          onSetDirectScore={(critId, dPts) => {
-                            onSetGroupDirectCriterionScore(critId, dPts);
-                            if (focusModeEnabled && dPts !== null) {
-                              const nextDirect = {
-                                ...(selectedGroup.directCriterionScores || {}),
-                                [critId]: dPts,
-                              };
-                              const nextFocus =
-                                getNextFocusedCriterionIndexAfterScore(
-                                  activeRubric.criteria,
-                                  cIdx,
-                                  selectedGroup.criterionScores || {},
-                                  nextDirect
-                                );
-                              if (!nextFocus.allCompleted) {
-                                setFocusedCriterionIndex(nextFocus.nextIndex);
+                            }}
+                            onSetDirectScore={(critId, dPts) => {
+                              onSetGroupDirectCriterionScore(critId, dPts);
+                              if (focusModeEnabled && dPts !== null) {
+                                const nextDirect = {
+                                  ...(selectedGroup.directCriterionScores || {}),
+                                  [critId]: dPts,
+                                };
+                                const nextFocus =
+                                  getNextFocusedCriterionIndexAfterScore(
+                                    activeRubric.criteria,
+                                    cIdx,
+                                    selectedGroup.criterionScores || {},
+                                    nextDirect
+                                  );
+                                if (!nextFocus.allCompleted) {
+                                  setFocusedCriterionIndex(nextFocus.nextIndex);
+                                }
                               }
-                            }
-                          }}
-                          onClearScore={onClearGroupCriterionScore}
-                        />
-                      </React.Fragment>
-                    );
-                  });
-                })()}
+                            }}
+                            onClearScore={onClearGroupCriterionScore}
+                          />
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
 
-              {/* Group Common Observation Note */}
-              <div className="pt-2 border-t border-slate-200">
-                <label
-                  htmlFor="group-obs-note"
-                  className="block text-xs font-bold text-slate-700 mb-1.5"
-                >
+              {/* Inline Group Observation Note Input Bar (Matches Reference Design) */}
+              <div className="bg-white border border-slate-200/90 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-2xs">
+                <label htmlFor="group-obs-note" className="sr-only">
                   Grup Gözlem Notu
                 </label>
-                <textarea
+                <Users className="w-4 h-4 text-slate-400 shrink-0" />
+                <input
                   id="group-obs-note"
-                  rows={2}
+                  type="text"
                   value={selectedGroup.groupNote}
                   onChange={(e) => onUpdateGroupNote(e.target.value)}
-                  placeholder="Grubun işbirliği, görev paylaşımı ve ortak çıktısına dair gözlem notu..."
-                  className="w-full p-3 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-900"
+                  placeholder="Gözlem notu ekleyin..."
+                  className="flex-1 px-3.5 py-2 text-xs sm:text-sm text-slate-800 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
                 />
+                <span className="text-xs font-medium text-slate-400 shrink-0">
+                  Kaydedildi
+                </span>
               </div>
 
-              {/* Group-to-Student Evaluation Transfer Table (Gruptaki Öğrencilere Aktarılan Değerlendirme Tablosu) */}
-              <div className="pt-3 border-t border-slate-200 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <Users className="w-4 h-4 text-blue-900" />
+              {/* Group-to-Student Evaluation Transfer Table */}
+              {selectedGroup.studentIds.length > 0 && (
+                <div className="pt-2 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-slate-500" />
                       Gruptaki Öğrencilere Aktarılan Değerlendirme Özeti (
                       {selectedGroup.studentIds.length} Öğrenci)
                     </h3>
+
+                    {activeGroupLifecycle.isComplete &&
+                      activeGroupLifecycle.state !== 'applied' && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onApplyGroupScoresToMembers(selectedGroup, {
+                              advanceToNextGroup: false,
+                            })
+                          }
+                          className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 shadow-2xs"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          Şimdi Öğrencilere Aktar
+                        </button>
+                      )}
                   </div>
 
-                  {activeGroupLifecycle.isComplete &&
-                    selectedGroup.studentIds.length > 0 &&
-                    activeGroupLifecycle.state !== 'applied' && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onApplyGroupScoresToMembers(selectedGroup, {
-                            advanceToNextGroup: false,
-                          })
-                        }
-                        className="px-3.5 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                        Şimdi Öğrencilere Aktar
-                      </button>
-                    )}
-                </div>
-
-                {selectedGroup.studentIds.length === 0 ? (
-                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                    Grup değerlendirmesinin aktarılabilmesi için yukarıdan gruba
-                    en az bir öğrenci ekleyin.
-                  </div>
-                ) : (
                   <div className="overflow-x-auto rounded-xl border border-slate-200">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
@@ -1819,7 +1785,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                                 grpCalc.finalScoreOutOf100 !== null ? (
                                   grpCalc.dualResult ? (
                                     <div className="inline-flex flex-col items-end gap-0.5">
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-900 text-white font-bold text-[11px]">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900 text-white font-bold text-[11px]">
                                         Kitap:{' '}
                                         {
                                           grpCalc.dualResult
@@ -1827,7 +1793,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                                         }{' '}
                                         / 100
                                       </span>
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-900 text-white font-bold text-[11px]">
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 text-white font-bold text-[11px]">
                                         Konuşma:{' '}
                                         {
                                           grpCalc.dualResult
@@ -1837,7 +1803,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                                       </span>
                                     </div>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-blue-900 text-white font-bold">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-900 text-white font-bold">
                                       {grpCalc.finalScoreOutOf100} / 100
                                     </span>
                                   )
@@ -1849,11 +1815,11 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                               <td className="py-2.5 px-3">
                                 {isTransferred ? (
                                   <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-300">
-                                    <Check className="w-3 h-3 text-blue-900 stroke-[2.5]" />
+                                    <Check className="w-3 h-3 text-slate-900 stroke-[2.5]" />
                                     Öğrenciye Aktarıldı
                                   </span>
                                 ) : activeGroupLifecycle.isComplete ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-900 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
                                     Aktarım Bekliyor
                                   </span>
                                 ) : (
@@ -1874,7 +1840,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                                     onClick={() =>
                                       onInspectStudentInIndividualMode(stu.id)
                                     }
-                                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:border-blue-900 hover:text-blue-900 text-[11px] font-bold text-slate-700 cursor-pointer"
+                                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:border-slate-900 hover:text-slate-900 text-[11px] font-bold text-slate-700 cursor-pointer"
                                   >
                                     Öğrenci Kartı →
                                   </button>
@@ -1886,8 +1852,61 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                       </tbody>
                     </table>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
+
+              {/* Bottom Navigation Footer Bar (Matches Reference Design: < Önceki Grup | • Otomatik Kaydedildi | Sonraki Grup ->) */}
+              {(() => {
+                const currentGrpIdx = effectiveGroups.findIndex(
+                  (g) => g.id === selectedGroup.id
+                );
+                const prevGrp =
+                  currentGrpIdx > 0 ? effectiveGroups[currentGrpIdx - 1] : null;
+                const nextGrp =
+                  currentGrpIdx >= 0 &&
+                  currentGrpIdx < effectiveGroups.length - 1
+                    ? effectiveGroups[currentGrpIdx + 1]
+                    : null;
+
+                return (
+                  <div className="pt-4 border-t border-slate-200/80 flex items-center justify-between gap-4">
+                    <button
+                      type="button"
+                      disabled={!prevGrp}
+                      onClick={() => {
+                        if (prevGrp) {
+                          onSelectGroup(prevGrp.id);
+                          onDismissGroupBanner?.();
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer py-2 px-1 transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Önceki Grup</span>
+                    </button>
+
+                    <div className="inline-flex items-center gap-2 text-xs font-medium text-slate-500">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span>Otomatik Kaydedildi</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!nextGrp}
+                      onClick={() => {
+                        if (nextGrp) {
+                          onSelectGroup(nextGrp.id);
+                          onDismissGroupBanner?.();
+                        }
+                      }}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-950 text-white text-xs sm:text-sm font-bold shadow-xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    >
+                      <span>Sonraki Grup</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div className="bg-white border border-slate-300 rounded-2xl p-6 text-center space-y-3 shadow-xs">
@@ -1906,3 +1925,4 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
     </div>
   );
 };
+

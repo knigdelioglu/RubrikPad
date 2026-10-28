@@ -8,6 +8,7 @@ import type {
   StudentEvaluation,
   StudentGroup,
   VerifiedBackupBundle,
+  InstitutionSettings,
 } from '../types.ts';
 import {
   freezeRubricSnapshot,
@@ -3383,5 +3384,86 @@ export async function purgeSyntheticSeedDataAsync(
   }
 }
 
+export const INSTITUTION_SETTINGS_STORAGE_KEY =
+  'rubrikpad_institution_settings_v1';
 
+export const DEFAULT_INSTITUTION_SETTINGS: InstitutionSettings = {
+  schoolName: '',
+  teacherName: '',
+  principalName: '',
+};
 
+let memoryInstitutionSettings: InstitutionSettings = {
+  ...DEFAULT_INSTITUTION_SETTINGS,
+};
+
+function sanitizeSingleInstitutionField(value: unknown, maxLen = 160): string {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+export function sanitizeInstitutionSettings(raw: unknown): InstitutionSettings {
+  if (!raw || typeof raw !== 'object') {
+    return { ...DEFAULT_INSTITUTION_SETTINGS };
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    schoolName: sanitizeSingleInstitutionField(obj.schoolName, 160),
+    teacherName: sanitizeSingleInstitutionField(obj.teacherName, 120),
+    principalName: sanitizeSingleInstitutionField(obj.principalName, 120),
+  };
+}
+
+export function loadInstitutionSettings(): InstitutionSettings {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(INSTITUTION_SETTINGS_STORAGE_KEY);
+      if (raw) {
+        const parsed = parseJsonSafelyWithoutPrototypePollution(raw);
+        const sanitized = sanitizeInstitutionSettings(parsed);
+        memoryInstitutionSettings = sanitized;
+        return sanitized;
+      }
+    } catch {
+      // fall through to memory fallback
+    }
+  }
+  return { ...memoryInstitutionSettings };
+}
+
+export function saveInstitutionSettings(
+  settings: Partial<InstitutionSettings>
+): InstitutionSettings {
+  const current = loadInstitutionSettings();
+  const merged = sanitizeInstitutionSettings({
+    ...current,
+    ...settings,
+  });
+  memoryInstitutionSettings = merged;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(
+        INSTITUTION_SETTINGS_STORAGE_KEY,
+        JSON.stringify(merged)
+      );
+    } catch {
+      // ignore localStorage write errors
+    }
+  }
+  return merged;
+}
+
+export function __clearInstitutionSettingsForTests(): void {
+  memoryInstitutionSettings = { ...DEFAULT_INSTITUTION_SETTINGS };
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(INSTITUTION_SETTINGS_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}

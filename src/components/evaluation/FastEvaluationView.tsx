@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -26,7 +26,6 @@ import {
 } from '../../utils/rubricLogic.ts';
 import {
   RubricCriterionCard,
-  RubricViewModeToggle,
   type RubricCardViewMode,
 } from './RubricCriterionCard.tsx';
 
@@ -121,7 +120,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   activeClassroom,
   onSelectClassroom,
 }) => {
-  const [viewMode, setViewMode] = useState<RubricCardViewMode>('compact');
+  const viewMode: RubricCardViewMode = 'compact';
   const effectiveSessions =
     allSessions && allSessions.length > 0 ? allSessions : [activeSession];
   const effectiveRubricsMap =
@@ -212,11 +211,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            <RubricViewModeToggle
-              viewMode={viewMode}
-              onChangeViewMode={setViewMode}
-            />
-
             <button
               type="button"
               onClick={onTogglePrecisionScoring}
@@ -777,16 +771,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                                 1. Kitap İçeriği — 70 Puan (Kitap Türüne Özgü 4
                                 Ölçüt)
                               </span>
-                              <span className="font-mono-num text-blue-900">
-                                {currentScoreCalc.dualResult.contentScoreOutOf70}{' '}
-                                / 70 Puan (
-                                {
-                                  currentScoreCalc.dualResult
-                                    .completedContentCount
-                                }
-                                /{currentScoreCalc.dualResult.totalContentCount}
-                                )
-                              </span>
                             </div>
                           )}
                           {showSpeakingHeader &&
@@ -795,19 +779,6 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                                 <span>
                                   2. Ortak Konuşma Değerlendirmesi — 100 Puan
                                   (Ortak 6 Ölçüt)
-                                </span>
-                                <span className="font-mono-num text-slate-800">
-                                  Konuşma:{' '}
-                                  {
-                                    currentScoreCalc.dualResult
-                                      .speakingScoreOutOf100
-                                  }{' '}
-                                  / 100 · Kitap Sunumuna %30 Katkı: +
-                                  {
-                                    currentScoreCalc.dualResult
-                                      .speakingContributionOutOf30
-                                  }{' '}
-                                  / 30 Puan
                                 </span>
                               </div>
                             )}

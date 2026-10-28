@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileDown,
   Printer,
@@ -15,8 +15,11 @@ import type {
   Student,
   Rubric,
   EvaluationSession,
+  InstitutionSettings,
 } from '../types.ts';
 import {
+  getCriterionEarnedPoints,
+  getCriterionSection,
   getStudentEvaluationBreakdown,
   getStudentProgressHistory,
   isScoreAssigned,
@@ -26,7 +29,9 @@ import {
   resolvePdfColumnOptions,
   type PdfColumnOptions,
   type PdfColumnPreset,
+  type DualReportMode,
 } from '../utils/pdfGenerator.ts';
+import { loadInstitutionSettings } from '../utils/storageLayer.ts';
 
 type StudentProgressItem = ReturnType<typeof getStudentProgressHistory>[number];
 
@@ -59,6 +64,9 @@ interface ReportPreviewModalProps {
   rubrics: Rubric[];
   reportDateFormatted: string;
   selectedAcademicTermLabel?: string;
+  institutionSettings?: InstitutionSettings;
+  initialDualReportMode?: DualReportMode;
+  onChangeDualReportMode?: (mode: DualReportMode) => void;
 }
 
 const PRESET_DEFINITIONS: {
@@ -99,6 +107,9 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
   rubrics,
   reportDateFormatted,
   selectedAcademicTermLabel = 'Tüm Eğitim Dönemleri',
+  institutionSettings,
+  initialDualReportMode = 'both',
+  onChangeDualReportMode,
 }) => {
   const [columnOptions, setColumnOptions] = useState<PdfColumnOptions>({
     preset: 'with_notes',
@@ -106,11 +117,25 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
     showFinalScoreAndLevel: true,
     showObservationNotes: true,
     showSignatures: true,
+    dualReportMode: initialDualReportMode,
   });
+
+  useEffect(() => {
+    setColumnOptions((prev) => ({
+      ...prev,
+      dualReportMode: initialDualReportMode,
+    }));
+  }, [initialDualReportMode, isOpen]);
 
   if (!isOpen) return null;
 
-  const colOpts = resolvePdfColumnOptions(columnOptions);
+  const effectiveInstitution = institutionSettings || loadInstitutionSettings();
+  const colOpts = resolvePdfColumnOptions({
+    ...columnOptions,
+    schoolName: effectiveInstitution.schoolName,
+    teacherName: effectiveInstitution.teacherName,
+    principalName: effectiveInstitution.principalName,
+  });
 
   const handleSelectPreset = (preset: PdfColumnPreset) => {
     const resolved = resolvePdfColumnOptions({
@@ -329,13 +354,21 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
         {/* Scrollable A4 Report Preview Canvas */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           <div className="max-w-4xl mx-auto pdf-report-sheet p-6 sm:p-8 space-y-6 bg-white">
-            {/* MODE 1: STUDENT PORTFOLIO (PARENT SHAREABLE) */}
+            {/* MODE 1: STUDENT PORTFOLIO */}
             {effectiveMode === 'student_portfolio' && activeStudent && (
               <>
                 <div className="pdf-report-banner rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div className="space-y-1">
+                    {colOpts.schoolName && (
+                      <div
+                        data-testid="preview-school-name-header"
+                        className="text-xs font-bold uppercase tracking-wider text-amber-200"
+                      >
+                        {colOpts.schoolName}
+                      </div>
+                    )}
                     <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
-                      Veli Bilgilendirme ve Öğrenci Gelişim Raporu ·{' '}
+                      Öğrenci Gelişim ve Performans Raporu ·{' '}
                       {activePresetMeta.label}
                     </div>
                     <h3 className="text-xl sm:text-2xl font-bold text-white">
@@ -536,158 +569,422 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
               activeReportSession &&
               activeReportRubric && (
                 <>
-                  <div className="pdf-report-banner rounded-xl p-5 space-y-1">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
-                      Ölçüt Temelli Performans Değerlendirme Çizelgesi ·{' '}
-                      {activePresetMeta.label}
+                  {isDualBookSpeakingRubric(activeReportRubric) && (
+                    <div
+                      data-testid="preview-dual-report-switcher"
+                      className="no-print bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2"
+                    >
+                      <div className="text-xs font-bold text-slate-800">
+                        Tek Değerlendirme, İki Sonuç — Rapor Görünümü:
+                      </div>
+                      <div className="inline-flex rounded-lg bg-white border border-slate-200 p-0.5 gap-1">
+                        {(
+                          [
+                            {
+                              id: 'both',
+                              label: 'Her İki Rapor (Kitap + Konuşma)',
+                            },
+                            {
+                              id: 'book',
+                              label: '1. Kitap Sunumu Raporu (100P)',
+                            },
+                            {
+                              id: 'speaking',
+                              label: '2. Konuşma Sınavı Raporu (100P)',
+                            },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            data-testid={`preview-dual-mode-${opt.id}`}
+                            onClick={() => {
+                              setColumnOptions((prev) => ({
+                                ...prev,
+                                dualReportMode: opt.id,
+                              }));
+                              onChangeDualReportMode?.(opt.id);
+                            }}
+                            className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-colors ${
+                              colOpts.dualReportMode === opt.id
+                                ? 'bg-blue-900 text-white'
+                                : 'text-slate-700 hover:text-slate-900'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <h3 className="text-xl font-bold text-white">
-                      {activeClassroom?.name} — {activeReportSession.title}
-                    </h3>
-                    <div className="text-xs text-slate-200">
-                      Rubrik: <strong>{activeReportRubric.title}</strong> ·
-                      Tarih:{' '}
-                      <span className="font-mono-num">
-                        {activeReportSession.date}
-                      </span>
-                    </div>
-                  </div>
+                  )}
 
-                  <div className="border border-slate-200 rounded-xl overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-700">
-                          <th className="py-2.5 px-3 w-14">No</th>
-                          <th className="py-2.5 px-3 w-44">
-                            Öğrenci Adı Soyadı
-                          </th>
-                          {colOpts.showCriterionScores &&
-                            activeReportRubric.criteria.map((c) => (
-                              <th key={c.id} className="py-2.5 px-2 text-center">
-                                <div>{c.title}</div>
-                                <div className="font-mono-num text-[10px] font-normal text-slate-500">
-                                  ({c.maxPoints ?? c.weight}P)
-                                </div>
+                  {(!isDualBookSpeakingRubric(activeReportRubric) ||
+                    colOpts.dualReportMode === 'both' ||
+                    colOpts.dualReportMode === 'book') && (
+                    <div
+                      data-testid="preview-book-report-section"
+                      className="space-y-4"
+                    >
+                      <div className="pdf-report-banner rounded-xl p-5 space-y-1">
+                        {colOpts.schoolName && (
+                          <div
+                            data-testid="preview-school-name-header"
+                            className="text-xs font-bold uppercase tracking-wider text-amber-200"
+                          >
+                            {colOpts.schoolName}
+                          </div>
+                        )}
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
+                          {isDualBookSpeakingRubric(activeReportRubric)
+                            ? `1. KİTAP SUNUMU DEĞERLENDİRME ÇİZELGESİ (100 PUAN) · ${activePresetMeta.label}`
+                            : `Ölçüt Temelli Performans Değerlendirme Çizelgesi · ${activePresetMeta.label}`}
+                        </div>
+                        <h3 className="text-xl font-bold text-white">
+                          {activeClassroom?.name} — {activeReportSession.title}
+                        </h3>
+                        <div className="text-xs text-slate-200">
+                          Rubrik: <strong>{activeReportRubric.title}</strong> ·
+                          Tarih:{' '}
+                          <span className="font-mono-num">
+                            {activeReportSession.date}
+                          </span>
+                          {isDualBookSpeakingRubric(activeReportRubric) && (
+                            <span className="ml-2 text-blue-200">
+                              (Kitap İçeriği: 70 Puan + Ortak Konuşma %30: 30
+                              Puan = 100 Puan)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="border border-slate-200 rounded-xl overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-700">
+                              <th className="py-2.5 px-3 w-14">No</th>
+                              <th className="py-2.5 px-3 w-44">
+                                Öğrenci Adı Soyadı
                               </th>
-                            ))}
-                          {colOpts.showFinalScoreAndLevel && (
-                            <>
-                              {isDualBookSpeakingRubric(activeReportRubric) ? (
-                                <>
-                                  <th className="py-2.5 px-2 text-center w-24">
-                                    Kitap Sunumu (100)
-                                  </th>
-                                  <th className="py-2.5 px-2 text-center w-24">
-                                    Konuşma Sınavı (100)
-                                  </th>
-                                </>
-                              ) : (
-                                <th className="py-2.5 px-2 text-center w-24">
-                                  Kesin (100)
-                                </th>
-                              )}
-                              <th className="py-2.5 px-3 w-28">Düzey</th>
-                            </>
-                          )}
-                          {colOpts.showObservationNotes && (
-                            <th className="py-2.5 px-3">Gözlem Notları</th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200 text-xs">
-                        {classStudents.map((stu) => {
-                          const ev = activeReportSession.evaluations[stu.id];
-                          const { effectiveCalc, activeSource } =
-                            getStudentEvaluationBreakdown(
-                              activeReportRubric,
-                              ev
-                            );
-                          const isDual = isDualBookSpeakingRubric(
-                            activeReportRubric
-                          );
-                          const dual = effectiveCalc.dualResult;
-                          const activeScores =
-                            activeSource === 'group'
-                              ? ev?.groupCriterionScores || {}
-                              : ev?.criterionScores || {};
-                          const activeDirect =
-                            activeSource === 'group'
-                              ? ev?.groupDirectScores || {}
-                              : ev?.directCriterionScores || {};
-                          const combinedNote = [
-                            ev?.note,
-                            ev?.groupNote ? `[Grup]: ${ev.groupNote}` : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' | ');
-
-                          return (
-                            <tr key={stu.id}>
-                              <td className="py-2 px-3 font-mono-num font-bold text-slate-600">
-                                {stu.studentNumber}
-                              </td>
-                              <td className="py-2 px-3 font-semibold text-slate-900">
-                                {stu.fullName}
-                              </td>
                               {colOpts.showCriterionScores &&
-                                activeReportRubric.criteria.map((c) => {
-                                  const directVal = activeDirect[c.id];
-                                  const pts = activeScores[c.id];
-                                  return (
-                                    <td
-                                      key={c.id}
-                                      className="py-2 px-2 text-center font-mono-num font-semibold text-slate-800"
-                                    >
-                                      {isScoreAssigned(directVal)
-                                        ? `${directVal}P`
-                                        : isScoreAssigned(pts)
-                                        ? pts
-                                        : '—'}
-                                    </td>
-                                  );
-                                })}
+                                activeReportRubric.criteria.map((c) => (
+                                  <th
+                                    key={c.id}
+                                    className="py-2.5 px-2 text-center"
+                                  >
+                                    <div>{c.title}</div>
+                                    <div className="font-mono-num text-[10px] font-normal text-slate-500">
+                                      ({c.maxPoints ?? c.weight}P)
+                                    </div>
+                                  </th>
+                                ))}
                               {colOpts.showFinalScoreAndLevel && (
                                 <>
-                                  {isDual && dual ? (
+                                  {isDualBookSpeakingRubric(
+                                    activeReportRubric
+                                  ) ? (
                                     <>
-                                      <td className="py-2 px-2 text-center font-mono-num font-bold text-slate-900">
-                                        {dual.isBookPresentationComplete &&
-                                        dual.finalBookPresentationScoreOutOf100 !==
-                                          null
-                                          ? dual.finalBookPresentationScoreOutOf100
-                                          : '—'}
-                                      </td>
-                                      <td className="py-2 px-2 text-center font-mono-num font-bold text-emerald-900">
-                                        {dual.isSpeakingComplete &&
-                                        dual.finalSpeakingScoreOutOf100 !== null
-                                          ? dual.finalSpeakingScoreOutOf100
-                                          : '—'}
-                                      </td>
+                                      <th className="py-2.5 px-2 text-center w-24">
+                                        İçerik (70)
+                                      </th>
+                                      <th className="py-2.5 px-2 text-center w-24">
+                                        Sunum (%30)
+                                      </th>
+                                      <th className="py-2.5 px-2 text-center w-24">
+                                        Kitap Sunumu (100)
+                                      </th>
                                     </>
                                   ) : (
-                                    <td className="py-2 px-2 text-center font-mono-num font-bold text-slate-900">
-                                      {effectiveCalc.isComplete &&
-                                      effectiveCalc.finalScoreOutOf100 !== null
-                                        ? effectiveCalc.finalScoreOutOf100
-                                        : '—'}
-                                    </td>
+                                    <th className="py-2.5 px-2 text-center w-24">
+                                      Kesin (100)
+                                    </th>
                                   )}
-                                  <td className="py-2 px-3 text-slate-700">
-                                    {effectiveCalc.performanceLabel}
-                                  </td>
+                                  <th className="py-2.5 px-3 w-28">Düzey</th>
                                 </>
                               )}
                               {colOpts.showObservationNotes && (
-                                <td className="py-2 px-3 text-slate-600">
-                                  {combinedNote || '—'}
-                                </td>
+                                <th className="py-2.5 px-3">Gözlem Notları</th>
                               )}
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 text-xs">
+                            {classStudents.map((stu) => {
+                              const ev =
+                                activeReportSession.evaluations[stu.id];
+                              const { effectiveCalc, activeSource } =
+                                getStudentEvaluationBreakdown(
+                                  activeReportRubric,
+                                  ev
+                                );
+                              const isDual = isDualBookSpeakingRubric(
+                                activeReportRubric
+                              );
+                              const dual = effectiveCalc.dualResult;
+                              const activeScores =
+                                activeSource === 'group'
+                                  ? ev?.groupCriterionScores || {}
+                                  : ev?.criterionScores || {};
+                              const activeDirect =
+                                activeSource === 'group'
+                                  ? ev?.groupDirectScores || {}
+                                  : ev?.directCriterionScores || {};
+                              const combinedNote = [
+                                ev?.note,
+                                ev?.groupNote
+                                  ? `[Grup]: ${ev.groupNote}`
+                                  : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' | ');
+
+                              return (
+                                <tr key={stu.id}>
+                                  <td className="py-2 px-3 font-mono-num font-bold text-slate-600">
+                                    {stu.studentNumber}
+                                  </td>
+                                  <td className="py-2 px-3 font-semibold text-slate-900">
+                                    {stu.fullName}
+                                  </td>
+                                  {colOpts.showCriterionScores &&
+                                    activeReportRubric.criteria.map((c) => {
+                                      const directVal = activeDirect[c.id];
+                                      const pts = activeScores[c.id];
+                                      const earnedPts =
+                                        getCriterionEarnedPoints(
+                                          c,
+                                          pts,
+                                          directVal
+                                        );
+                                      return (
+                                        <td
+                                          key={c.id}
+                                          className="py-2 px-2 text-center font-mono-num font-semibold text-slate-800"
+                                        >
+                                          {earnedPts !== null
+                                            ? earnedPts
+                                            : '—'}
+                                        </td>
+                                      );
+                                    })}
+                                  {colOpts.showFinalScoreAndLevel && (
+                                    <>
+                                      {isDual && dual ? (
+                                        <>
+                                          <td className="py-2 px-2 text-center font-mono-num font-semibold text-slate-700">
+                                            {dual.completedContentCount > 0
+                                              ? `${dual.contentScoreOutOf70}/70`
+                                              : '—'}
+                                          </td>
+                                          <td className="py-2 px-2 text-center font-mono-num font-semibold text-slate-700">
+                                            {dual.completedSpeakingCount > 0
+                                              ? `${dual.speakingContributionOutOf30}/30`
+                                              : '—'}
+                                          </td>
+                                          <td className="py-2 px-2 text-center font-mono-num font-bold text-slate-900">
+                                            {dual.isBookPresentationComplete &&
+                                            dual.finalBookPresentationScoreOutOf100 !==
+                                              null
+                                              ? dual.finalBookPresentationScoreOutOf100
+                                              : '—'}
+                                          </td>
+                                        </>
+                                      ) : (
+                                        <td className="py-2 px-2 text-center font-mono-num font-bold text-slate-900">
+                                          {effectiveCalc.isComplete &&
+                                          effectiveCalc.finalScoreOutOf100 !==
+                                            null
+                                            ? effectiveCalc.finalScoreOutOf100
+                                            : '—'}
+                                        </td>
+                                      )}
+                                      <td className="py-2 px-3 text-slate-700">
+                                        {effectiveCalc.performanceLabel}
+                                      </td>
+                                    </>
+                                  )}
+                                  {colOpts.showObservationNotes && (
+                                    <td className="py-2 px-3 text-slate-600">
+                                      {combinedNote || '—'}
+                                    </td>
+                                  )}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* DEDICATED SPEAKING EXAM REPORT TABLE (100 PUAN) */}
+                  {isDualBookSpeakingRubric(activeReportRubric) &&
+                    (colOpts.dualReportMode === 'both' ||
+                      colOpts.dualReportMode === 'speaking') && (
+                      <div
+                        data-testid="preview-speaking-report-section"
+                        className="space-y-4 pt-2"
+                      >
+                        <div className="bg-emerald-950 text-white rounded-xl p-5 space-y-1">
+                          {colOpts.schoolName && (
+                            <div className="text-xs font-bold uppercase tracking-wider text-amber-200">
+                              {colOpts.schoolName}
+                            </div>
+                          )}
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-200">
+                            2. KONUŞMA SINAVI DEĞERLENDİRME ÇİZELGESİ (100
+                            PUAN) · {activePresetMeta.label}
+                          </div>
+                          <h3 className="text-xl font-bold text-white">
+                            {activeClassroom?.name} —{' '}
+                            {activeReportSession.title} (Konuşma Sınavı Raporu)
+                          </h3>
+                          <div className="text-xs text-emerald-100">
+                            Ortak Konuşma Değerlendirmesi (6 Ölçüt · 100 Puan)
+                            · Tarih:{' '}
+                            <span className="font-mono-num">
+                              {activeReportSession.date}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="border border-emerald-200 rounded-xl overflow-x-auto">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="bg-emerald-50 border-b border-emerald-200 text-xs font-bold text-emerald-950">
+                                <th className="py-2.5 px-3 w-14">No</th>
+                                <th className="py-2.5 px-3 w-44">
+                                  Öğrenci Adı Soyadı
+                                </th>
+                                {colOpts.showCriterionScores &&
+                                  activeReportRubric.criteria
+                                    .filter(
+                                      (c, idx) =>
+                                        getCriterionSection(
+                                          c,
+                                          idx,
+                                          activeReportRubric
+                                        ) === 'speaking'
+                                    )
+                                    .map((c) => (
+                                      <th
+                                        key={c.id}
+                                        className="py-2.5 px-2 text-center"
+                                      >
+                                        <div>{c.title}</div>
+                                        <div className="font-mono-num text-[10px] font-normal text-emerald-800">
+                                          ({c.maxPoints ?? c.weight}P)
+                                        </div>
+                                      </th>
+                                    ))}
+                                {colOpts.showFinalScoreAndLevel && (
+                                  <>
+                                    <th className="py-2.5 px-2 text-center w-28">
+                                      Konuşma Sınavı (100)
+                                    </th>
+                                    <th className="py-2.5 px-3 w-32">
+                                      Konuşma Düzeyi
+                                    </th>
+                                  </>
+                                )}
+                                {colOpts.showObservationNotes && (
+                                  <th className="py-2.5 px-3">
+                                    Gözlem Notları
+                                  </th>
+                                )}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200 text-xs">
+                              {classStudents.map((stu) => {
+                                const ev =
+                                  activeReportSession.evaluations[stu.id];
+                                const { effectiveCalc, activeSource } =
+                                  getStudentEvaluationBreakdown(
+                                    activeReportRubric,
+                                    ev
+                                  );
+                                const dual = effectiveCalc.dualResult;
+                                const activeScores =
+                                  activeSource === 'group'
+                                    ? ev?.groupCriterionScores || {}
+                                    : ev?.criterionScores || {};
+                                const activeDirect =
+                                  activeSource === 'group'
+                                    ? ev?.groupDirectScores || {}
+                                    : ev?.directCriterionScores || {};
+                                const combinedNote = [
+                                  ev?.note,
+                                  ev?.groupNote
+                                    ? `[Grup]: ${ev.groupNote}`
+                                    : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' | ');
+                                const speakingCriteria =
+                                  activeReportRubric.criteria.filter(
+                                    (c, idx) =>
+                                      getCriterionSection(
+                                        c,
+                                        idx,
+                                        activeReportRubric
+                                      ) === 'speaking'
+                                  );
+
+                                return (
+                                  <tr key={stu.id}>
+                                    <td className="py-2 px-3 font-mono-num font-bold text-slate-600">
+                                      {stu.studentNumber}
+                                    </td>
+                                    <td className="py-2 px-3 font-semibold text-slate-900">
+                                      {stu.fullName}
+                                    </td>
+                                    {colOpts.showCriterionScores &&
+                                      speakingCriteria.map((c) => {
+                                        const earnedPts =
+                                          getCriterionEarnedPoints(
+                                            c,
+                                            activeScores[c.id],
+                                            activeDirect[c.id]
+                                          );
+                                        return (
+                                          <td
+                                            key={c.id}
+                                            className="py-2 px-2 text-center font-mono-num font-semibold text-slate-800"
+                                          >
+                                            {earnedPts !== null
+                                              ? earnedPts
+                                              : '—'}
+                                          </td>
+                                        );
+                                      })}
+                                    {colOpts.showFinalScoreAndLevel && (
+                                      <>
+                                        <td className="py-2 px-2 text-center font-mono-num font-bold text-emerald-900">
+                                          {dual &&
+                                          dual.isSpeakingComplete &&
+                                          dual.finalSpeakingScoreOutOf100 !==
+                                            null
+                                            ? dual.finalSpeakingScoreOutOf100
+                                            : '—'}
+                                        </td>
+                                        <td className="py-2 px-3 text-slate-700">
+                                          {dual
+                                            ? dual.speakingPerformanceLabel
+                                            : effectiveCalc.performanceLabel}
+                                        </td>
+                                      </>
+                                    )}
+                                    {colOpts.showObservationNotes && (
+                                      <td className="py-2 px-3 text-slate-600">
+                                        {combinedNote || '—'}
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                 </>
               )}
 
@@ -695,8 +992,16 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
             {effectiveMode === 'classroom_overview' && (
               <>
                 <div className="pdf-report-banner rounded-xl p-5 space-y-1">
+                  {colOpts.schoolName && (
+                    <div
+                      data-testid="preview-school-name-header"
+                      className="text-xs font-bold uppercase tracking-wider text-amber-200"
+                    >
+                      {colOpts.schoolName}
+                    </div>
+                  )}
                   <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">
-                    Resmi PDF Çıktı ve Veli Paylaşım Raporu ·{' '}
+                    Resmi PDF Çıktı ve Değerlendirme Raporu ·{' '}
                     {activePresetMeta.label}
                   </div>
                   <h3 className="text-xl font-bold text-white">
@@ -825,26 +1130,49 @@ export const ReportPreviewModal: React.FC<ReportPreviewModalProps> = ({
               </>
             )}
 
-            {/* Official Signature Block inside Preview Sheet */}
+            {/* Official Signature Block inside Preview Sheet (Ders Öğretmeni & Okul Müdürü) */}
             {colOpts.showSignatures && (
-              <div className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700">
+              <div
+                data-testid="preview-signature-grid"
+                className="pdf-signature-grid grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-200 text-xs text-slate-700"
+              >
                 <div className="pdf-signature-box">
                   <div className="font-bold text-slate-900">Ders Öğretmeni</div>
-                  <div className="text-slate-500 mt-0.5">
-                    Adı Soyadı ve İmza
-                  </div>
+                  {colOpts.teacherName ? (
+                    <>
+                      <div
+                        data-testid="preview-signature-teacher-name"
+                        className="font-semibold text-slate-800 mt-0.5"
+                      >
+                        {colOpts.teacherName}
+                      </div>
+                      <div className="text-slate-500 mt-0.5">İmza</div>
+                    </>
+                  ) : (
+                    <div className="text-slate-500 mt-0.5">
+                      Adı Soyadı ve İmza
+                    </div>
+                  )}
                 </div>
                 <div className="pdf-signature-box">
-                  <div className="font-bold text-slate-900">Öğrenci Velisi</div>
-                  <div className="text-slate-500 mt-0.5">
-                    Bilgi Edindim · Adı Soyadı ve İmza
-                  </div>
-                </div>
-                <div className="pdf-signature-box">
-                  <div className="font-bold text-slate-900">
-                    Okul Müdürlüğü / İdare
-                  </div>
-                  <div className="text-slate-500 mt-0.5">Mühür ve Onay</div>
+                  <div className="font-bold text-slate-900">Okul Müdürü</div>
+                  {colOpts.principalName ? (
+                    <>
+                      <div
+                        data-testid="preview-signature-principal-name"
+                        className="font-semibold text-slate-800 mt-0.5"
+                      >
+                        {colOpts.principalName}
+                      </div>
+                      <div className="text-slate-500 mt-0.5">
+                        İmza ve Mühür
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-slate-500 mt-0.5">
+                      Adı Soyadı, İmza ve Mühür
+                    </div>
+                  )}
                 </div>
               </div>
             )}

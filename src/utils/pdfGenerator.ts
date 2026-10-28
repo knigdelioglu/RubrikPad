@@ -6,6 +6,8 @@ import type {
   Student,
 } from '../types.ts';
 import {
+  getCriterionEarnedPoints,
+  getCriterionSection,
   getEffectiveSessionRubric,
   getStudentEvaluationBreakdown,
   getStudentProgressHistory,
@@ -16,6 +18,10 @@ import {
   LIBERATION_MONO_REGULAR_TTF_BASE64,
   LIBERATION_MONO_BOLD_TTF_BASE64,
 } from './embeddedTurkishFont.ts';
+import {
+  loadInstitutionSettings,
+  sanitizeInstitutionSettings,
+} from './storageLayer.ts';
 
 /**
  * Decodes a base64 string into a Uint8Array in both browser and Node environments.
@@ -253,6 +259,7 @@ function chunkArray<T>(items: T[], chunkSize: number): T[][] {
  * - Validates that the rubric and classroom belong to the session (P2 Export Security).
  */
 export type PdfColumnPreset = 'names_only' | 'with_scores' | 'with_notes';
+export type DualReportMode = 'both' | 'book' | 'speaking';
 
 export interface PdfColumnOptions {
   preset?: PdfColumnPreset;
@@ -260,15 +267,28 @@ export interface PdfColumnOptions {
   showFinalScoreAndLevel?: boolean;
   showObservationNotes?: boolean;
   showSignatures?: boolean;
+  dualReportMode?: DualReportMode;
+  schoolName?: string;
+  teacherName?: string;
+  principalName?: string;
 }
 
 export function resolvePdfColumnOptions(
   options?: PdfColumnOptions
 ): Required<PdfColumnOptions> {
   const preset: PdfColumnPreset = options?.preset || 'with_notes';
+  const storedInstitution = loadInstitutionSettings();
+  const sanitizedOverrides = sanitizeInstitutionSettings({
+    schoolName: options?.schoolName ?? storedInstitution.schoolName,
+    teacherName: options?.teacherName ?? storedInstitution.teacherName,
+    principalName: options?.principalName ?? storedInstitution.principalName,
+  });
   const defaultByPreset: Record<
     PdfColumnPreset,
-    Omit<Required<PdfColumnOptions>, 'preset'>
+    Omit<
+      Required<PdfColumnOptions>,
+      'preset' | 'dualReportMode' | 'schoolName' | 'teacherName' | 'principalName'
+    >
   > = {
     names_only: {
       showCriterionScores: false,
@@ -299,7 +319,27 @@ export function resolvePdfColumnOptions(
     showObservationNotes:
       options?.showObservationNotes ?? base.showObservationNotes,
     showSignatures: options?.showSignatures ?? base.showSignatures,
+    dualReportMode: options?.dualReportMode ?? 'both',
+    schoolName: sanitizedOverrides.schoolName,
+    teacherName: sanitizedOverrides.teacherName,
+    principalName: sanitizedOverrides.principalName,
   };
+}
+
+function formatOfficialSignatureLine(
+  teacherName: string,
+  principalName: string,
+  pageCounterText?: string
+): string {
+  const teacherPart = teacherName
+    ? `Ders Öğretmeni: ${teacherName} (İmza: ____________)`
+    : 'Ders Öğretmeni İmza: ______________________';
+  const principalPart = principalName
+    ? `Okul Müdürü: ${principalName} (İmza / Mühür: ____________)`
+    : 'Okul Müdürü İmza / Mühür: ______________________';
+  return pageCounterText
+    ? `${teacherPart}          ${principalPart}          ${pageCounterText}`
+    : `${teacherPart}          ${principalPart}`;
 }
 
 export function generatePaginatedSessionPdfBytes(
@@ -376,30 +416,54 @@ export function generatePaginatedSessionPdfBytes(
       : rowsPerPage;
 
   const studentPages = chunkArray(sessionStudents, effectiveRowsPerPage);
-  const totalPages = studentPages.length;
+  const isDualRubric = isDualBookSpeakingRubric(effectiveRubric);
+  const includeBookSection =
+    !isDualRubric ||
+    colOpts.dualReportMode === 'both' ||
+    colOpts.dualReportMode === 'book';
+  const includeSpeakingSection =
+    isDualRubric &&
+    (colOpts.dualReportMode === 'both' || colOpts.dualReportMode === 'speaking');
+
+  const speakingCriteria = isDualRubric
+    ? allCriteria.filter(
+        (c, idx) => getCriterionSection(c, idx, effectiveRubric) === 'speaking'
+      )
+    : [];
+  const speakingStudentPages = includeSpeakingSection
+    ? chunkArray(sessionStudents, rowsPerPage)
+    : [];
+  const bookStudentPages = includeBookSection ? studentPages : [];
+  const totalPages = bookStudentPages.length + speakingStudentPages.length;
   const pageStreams: string[] = [];
 
-  studentPages.forEach((pageStudents, pageIdx) => {
+  bookStudentPages.forEach((pageStudents, pageIdx) => {
     const ops: string[] = [];
 
     // 1. Header Title with embedded Unicode TrueType font
+    const schoolPrefix = colOpts.schoolName ? `${colOpts.schoolName} — ` : '';
     pushTextOp(
       ops,
       '/F2',
       11.5,
       36,
       560,
-      `ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - ${classroom.name}`
+      isDualRubric
+        ? `${schoolPrefix}ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU (KİTAP SUNUMU - 100 PUAN) - ${classroom.name}`
+        : `${schoolPrefix}ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - ${classroom.name}`
     );
 
     // 2. Subtitle Metadata
+    const schoolMetaPrefix = colOpts.schoolName
+      ? `Okul: ${colOpts.schoolName} | `
+      : '';
     pushTextOp(
       ops,
       '/F1',
       8,
       36,
       545,
-      `Oturum: ${session.title} | Rubrik: ${effectiveRubric.title} (${allCriteria.length} Ölçüt) | Tarih: ${session.date} | Sayfa ${
+      `${schoolMetaPrefix}Oturum: ${session.title} | Rubrik: ${effectiveRubric.title} (${allCriteria.length} Ölçüt) | Tarih: ${session.date} | Sayfa ${
         pageIdx + 1
       }/${totalPages}`
     );
@@ -446,10 +510,9 @@ export function generatePaginatedSessionPdfBytes(
               .join(' ')
           : '';
 
-        const isDual = isDualBookSpeakingRubric(effectiveRubric);
         const scoreCols = colOpts.showFinalScoreAndLevel
-          ? isDual
-            ? '  İçerik(70) Konuşma(100) Kitap(100)  Düzey'
+          ? isDualRubric
+            ? '  İçerik(70) Sunum(%30)   Kitap(100)  Düzey'
             : '  Bireysel  Grup    Kesin(100)  Düzey'
           : '';
 
@@ -484,11 +547,10 @@ export function generatePaginatedSessionPdfBytes(
           ? ev?.groupDirectScores || {}
           : ev?.directCriterionScores || {};
 
-      const isDual = isDualBookSpeakingRubric(effectiveRubric);
       const dual = effectiveCalc.dualResult;
 
       const indStr = (
-        isDual && dual
+        isDualRubric && dual
           ? dual.isContentComplete
             ? `${dual.contentScoreOutOf70}/70`
             : dual.completedContentCount > 0
@@ -499,24 +561,22 @@ export function generatePaginatedSessionPdfBytes(
           : individualCalc.completedCriteriaCount > 0
           ? `Eksik(${individualCalc.completedCriteriaCount}/${individualCalc.totalCriteriaCount})`
           : '-'
-      ).padEnd(isDual ? 10 : 8, ' ');
+      ).padEnd(isDualRubric ? 10 : 8, ' ');
 
       const grpStr = (
-        isDual && dual
-          ? dual.finalSpeakingScoreOutOf100 !== null
-            ? String(dual.finalSpeakingScoreOutOf100)
-            : dual.completedSpeakingCount > 0
-            ? `Eksik(${dual.completedSpeakingCount}/${dual.totalSpeakingCount})`
+        isDualRubric && dual
+          ? dual.completedSpeakingCount > 0
+            ? `${dual.speakingContributionOutOf30}/30`
             : '-'
           : groupCalc.finalScoreOutOf100 !== null
           ? String(groupCalc.finalScoreOutOf100)
           : groupCalc.completedCriteriaCount > 0
           ? `Eksik(${groupCalc.completedCriteriaCount}/${groupCalc.totalCriteriaCount})`
           : '-'
-      ).padEnd(isDual ? 12 : 6, ' ');
+      ).padEnd(isDualRubric ? 12 : 6, ' ');
 
       const finalStr = (
-        isDual && dual
+        isDualRubric && dual
           ? dual.finalBookPresentationScoreOutOf100 !== null
             ? String(dual.finalBookPresentationScoreOutOf100)
             : effectiveCalc.completedCriteriaCount > 0
@@ -547,8 +607,15 @@ export function generatePaginatedSessionPdfBytes(
                     return `${codePrefix}${d}`.padEnd(8, ' ');
                   }
                   const p = activeScores[c.id];
-                  const valStr = isScoreAssigned(p) ? String(p) : '-';
-                  return `${codePrefix}${valStr}`.padEnd(8, ' ');
+                  if (!isScoreAssigned(p)) {
+                    return `${codePrefix}-`.padEnd(8, ' ');
+                  }
+                  const maxLvl = Math.max(...c.levels.map((l) => l.points), 1);
+                  const displayVal =
+                    isDualRubric || maxLvl === 2
+                      ? getCriterionEarnedPoints(c, p, d) ?? p
+                      : p;
+                  return `${codePrefix}${displayVal}`.padEnd(8, ' ');
                 })
                 .join(' ')
             : '';
@@ -558,18 +625,14 @@ export function generatePaginatedSessionPdfBytes(
             : '';
 
           const dualContinuationSummary =
-            isDual && dual && colOpts.showFinalScoreAndLevel
+            isDualRubric && dual && colOpts.showFinalScoreAndLevel
               ? `   |   Kitap Sunumu Notu: ${
                   dual.finalBookPresentationScoreOutOf100 !== null
                     ? `${dual.finalBookPresentationScoreOutOf100}/100`
                     : 'Eksik'
-                } (İçerik: ${dual.contentScoreOutOf70}/70 + %30 Konuşma: ${
+                } (İçerik: ${dual.contentScoreOutOf70}/70 + %30 Sunum: ${
                   dual.speakingContributionOutOf30
-                }/30)   |   Konuşma Sınavı Notu: ${
-                  dual.finalSpeakingScoreOutOf100 !== null
-                    ? `${dual.finalSpeakingScoreOutOf100}/100`
-                    : 'Eksik'
-                }`
+                }/30)`
               : '';
 
           const rowLine =
@@ -614,9 +677,174 @@ export function generatePaginatedSessionPdfBytes(
         7.5,
         36,
         38,
-        `Ders Öğretmeni İmza: ______________________          Okul Müdürlüğü Onay: ______________________          Sayfa ${
-          pageIdx + 1
-        } / ${totalPages}`
+        formatOfficialSignatureLine(
+          colOpts.teacherName,
+          colOpts.principalName,
+          `Sayfa ${pageIdx + 1} / ${totalPages}`
+        )
+      );
+    }
+
+    pageStreams.push(ops.join('\n'));
+  });
+
+  // Dedicated Speaking Exam Report Pages (100 Puan) for dual book + speaking rubrics
+  speakingStudentPages.forEach((pageStudents, spkPageIdx) => {
+    const ops: string[] = [];
+    const globalPageNum = bookStudentPages.length + spkPageIdx + 1;
+    const schoolPrefix = colOpts.schoolName ? `${colOpts.schoolName} — ` : '';
+    const schoolMetaPrefix = colOpts.schoolName
+      ? `Okul: ${colOpts.schoolName} | `
+      : '';
+
+    pushTextOp(
+      ops,
+      '/F2',
+      11.5,
+      36,
+      560,
+      `${schoolPrefix}KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN) - ${classroom.name}`
+    );
+
+    pushTextOp(
+      ops,
+      '/F1',
+      8,
+      36,
+      545,
+      `${schoolMetaPrefix}Oturum: ${session.title} | Ortak Konuşma Ölçütleri (${speakingCriteria.length} Ölçüt / 100 Puan) | Tarih: ${session.date} | Sayfa ${globalPageNum}/${totalPages}`
+    );
+
+    const speakingLegendChunks = chunkArray(
+      speakingCriteria.map((c, idx) =>
+        colOpts.showCriterionScores
+          ? `S${idx + 1}: ${c.title} (${c.maxPoints ?? c.weight}P)`
+          : `S${idx + 1}: ${c.title}`
+      ),
+      2
+    );
+
+    let legendY = 532;
+    speakingLegendChunks.forEach((lineItems) => {
+      pushTextOp(ops, '/F1', 7, 36, legendY, lineItems.join('   |   '));
+      legendY -= 10;
+    });
+
+    const headerDividerY = legendY - 2;
+    ops.push(`0.75 w 36 ${headerDividerY} m 806 ${headerDividerY} l S`);
+
+    let tableHeaderY = headerDividerY - 12;
+    const spkCritHeaders = colOpts.showCriterionScores
+      ? speakingCriteria
+          .map(
+            (c, idx) =>
+              `S${idx + 1}(${c.maxPoints ?? c.weight}P)`.padEnd(9, ' ')
+          )
+          .join(' ')
+      : '';
+    const spkScoreCols = colOpts.showFinalScoreAndLevel
+      ? '  Konuşma Sınavı (100)   Konuşma Düzeyi'
+      : '';
+
+    pushTextOp(
+      ops,
+      '/F2',
+      7.2,
+      36,
+      tableHeaderY,
+      `No     Ad Soyad                  ${spkCritHeaders}${spkScoreCols}`
+    );
+    tableHeaderY -= 11;
+
+    const tableTopLineY = tableHeaderY + 5;
+    ops.push(`0.5 w 36 ${tableTopLineY} m 806 ${tableTopLineY} l S`);
+
+    let y = tableTopLineY - 13;
+    pageStudents.forEach((stu) => {
+      const ev = session.evaluations[stu.id];
+      const { effectiveCalc, activeSource } = getStudentEvaluationBreakdown(
+        effectiveRubric,
+        ev
+      );
+      const dual = effectiveCalc.dualResult;
+
+      const activeScores =
+        activeSource === 'group'
+          ? ev?.groupCriterionScores || {}
+          : ev?.criterionScores || {};
+      const activeDirect =
+        activeSource === 'group'
+          ? ev?.groupDirectScores || {}
+          : ev?.directCriterionScores || {};
+
+      const spkVals = colOpts.showCriterionScores
+        ? speakingCriteria
+            .map((c, idx) => {
+              const earned = getCriterionEarnedPoints(
+                c,
+                activeScores[c.id],
+                activeDirect[c.id]
+              );
+              const valStr = earned !== null ? String(earned) : '-';
+              return `S${idx + 1}:${valStr}`.padEnd(9, ' ');
+            })
+            .join(' ')
+        : '';
+
+      const spkFinalStr = (
+        dual && dual.finalSpeakingScoreOutOf100 !== null
+          ? `Konuşma Sınavı Notu: ${dual.finalSpeakingScoreOutOf100}/100`
+          : dual && dual.completedSpeakingCount > 0
+          ? `Eksik(${dual.completedSpeakingCount}/${dual.totalSpeakingCount})`
+          : '-'
+      ).padEnd(28, ' ');
+
+      const spkLevelStr = dual
+        ? dual.speakingPerformanceLabel
+        : effectiveCalc.performanceLabel;
+
+      const rowLine = `${stu.studentNumber.padEnd(6, ' ')} ${stu.fullName
+        .slice(0, 24)
+        .padEnd(25, ' ')} ${spkVals}${
+        colOpts.showFinalScoreAndLevel ? `  ${spkFinalStr}  ${spkLevelStr}` : ''
+      }`;
+
+      pushTextOp(ops, '/F1', 7.2, 36, y, rowLine);
+      y -= 12;
+
+      if (colOpts.showObservationNotes) {
+        const combinedNote = [ev?.note, ev?.groupNote]
+          .filter((n) => Boolean(n && n.trim()))
+          .join(' | ');
+        if (combinedNote) {
+          pushTextOp(
+            ops,
+            '/F1',
+            6.6,
+            48,
+            y + 2,
+            `Not: ${combinedNote.slice(0, 110)}`
+          );
+          y -= 10;
+        }
+      }
+
+      y -= 3;
+    });
+
+    if (colOpts.showSignatures) {
+      ops.push('0.5 w 36 54 m 806 54 l S');
+      pushTextOp(
+        ops,
+        '/F2',
+        7.5,
+        36,
+        38,
+        formatOfficialSignatureLine(
+          colOpts.teacherName,
+          colOpts.principalName,
+          `Sayfa ${globalPageNum} / ${totalPages}`
+        )
       );
     }
 
@@ -859,13 +1087,17 @@ export function generateStudentPortfolioPdfBytes(
     const ops: string[] = [];
 
     // Header Banner
+    const schoolPrefix = colOpts.schoolName ? `${colOpts.schoolName} — ` : '';
+    const schoolMetaPrefix = colOpts.schoolName
+      ? `Okul: ${colOpts.schoolName} | `
+      : '';
     pushTextOp(
       ops,
       '/F2',
       12,
       36,
       560,
-      `VELİ BİLGİLENDİRME VE ÖĞRENCİ GELİŞİM RAPORU — ${student.fullName}`
+      `${schoolPrefix}ÖĞRENCİ GELİŞİM VE PERFORMANS RAPORU — ${student.fullName}`
     );
 
     pushTextOp(
@@ -874,7 +1106,7 @@ export function generateStudentPortfolioPdfBytes(
       8.5,
       36,
       544,
-      `Okul No: #${student.studentNumber} | Sınıf: ${
+      `${schoolMetaPrefix}Okul No: #${student.studentNumber} | Sınıf: ${
         classroom?.name || 'Belirtilmedi'
       } (${classroom?.gradeLevel || '11. Sınıf'}) | Ders: ${
         classroom?.subject || 'Türk Dili ve Edebiyatı'
@@ -997,7 +1229,7 @@ export function generateStudentPortfolioPdfBytes(
       });
     }
 
-    // Official Parent & Teacher Signature Block
+    // Official Teacher & Principal Signature Block
     if (colOpts.showSignatures) {
       ops.push('0.5 w 36 58 m 806 58 l S');
       pushTextOp(
@@ -1006,7 +1238,11 @@ export function generateStudentPortfolioPdfBytes(
         7.5,
         36,
         40,
-        `Ders Öğretmeni İmza: ____________________     Veli Adı Soyadı / İmza: ____________________     Okul İdaresi Onay: ____________________`
+        formatOfficialSignatureLine(
+          colOpts.teacherName,
+          colOpts.principalName,
+          `Sayfa ${pageIdx + 1} / ${totalPages}`
+        )
       );
     }
 
@@ -1064,13 +1300,18 @@ export function generateClassroomOverviewPdfBytes(
   const gradeLevel = classroom?.gradeLevel || '11. Sınıf';
   const subject = classroom?.subject || 'Türk Dili ve Edebiyatı';
 
+  const schoolPrefix = colOpts.schoolName ? `${colOpts.schoolName} — ` : '';
+  const schoolMetaPrefix = colOpts.schoolName
+    ? `Okul: ${colOpts.schoolName} | `
+    : '';
+
   pushTextOp(
     ops,
     '/F2',
     12,
     36,
     560,
-    `SINIF GELİŞİM VE RUBRİK DEĞERLENDİRME ÖZET RAPORU — ${className}`
+    `${schoolPrefix}SINIF GELİŞİM VE RUBRİK DEĞERLENDİRME ÖZET RAPORU — ${className}`
   );
 
   pushTextOp(
@@ -1079,7 +1320,7 @@ export function generateClassroomOverviewPdfBytes(
     8.5,
     36,
     544,
-    `Kademe: ${gradeLevel} | Ders: ${subject} | Kayıtlı Öğrenci: ${students.length} | Oturum Sayısı: ${sessions.length} | Tarih: ${reportDate}`
+    `${schoolMetaPrefix}Kademe: ${gradeLevel} | Ders: ${subject} | Kayıtlı Öğrenci: ${students.length} | Oturum Sayısı: ${sessions.length} | Tarih: ${reportDate}`
   );
 
   ops.push('0.75 w 36 534 m 806 534 l S');
@@ -1188,7 +1429,7 @@ export function generateClassroomOverviewPdfBytes(
       7.5,
       36,
       40,
-      `Ders Öğretmeni İmza: ____________________     Zümre Başkanı İmza: ____________________     Okul Müdürlüğü Onay: ____________________`
+      formatOfficialSignatureLine(colOpts.teacherName, colOpts.principalName)
     );
   }
 
@@ -1277,7 +1518,13 @@ export function downloadSessionPdfFile(
       .replace(/[^a-z0-9ğüşıöç]+/gi, '_')
       .replace(/^_+|_+$/g, '')
       .slice(0, 64) || 'oturum';
-  const filename = `degerlendirme_raporu_${safeTitle}.pdf`;
+  const prefix =
+    columnOptions?.dualReportMode === 'book'
+      ? 'kitap_sunumu_raporu'
+      : columnOptions?.dualReportMode === 'speaking'
+      ? 'konusma_sinavi_raporu'
+      : 'degerlendirme_raporu';
+  const filename = `${prefix}_${safeTitle}.pdf`;
   triggerPdfBlobDownload(bytes, filename);
   return filename;
 }

@@ -91,6 +91,9 @@ import {
   __setSimulateIndexedDbFailureForTests,
   stripSyntheticSeedEntities,
   purgeSyntheticSeedDataSync,
+  loadInstitutionSettings,
+  saveInstitutionSettings,
+  __clearInstitutionSettingsForTests,
 } from './storageLayer.ts';
 import {
   INITIAL_CLASSROOMS,
@@ -107,6 +110,8 @@ import {
 } from '../data/bookPresentationRubric.ts';
 import {
   generatePaginatedSessionPdfBytes,
+  generateStudentPortfolioPdfBytes,
+  generateClassroomOverviewPdfBytes,
   decodePdfTextWithToUnicode,
   normalizePdfTextLine,
 } from './pdfGenerator.ts';
@@ -2560,6 +2565,26 @@ test('Audit #19: getStudentConsecutiveLowScoreReminder triggers "Gözlem notu ek
   assert.equal(reminderStu3.reminderLabel, 'Gözlem notu ekle');
   assert.equal(reminderStu3.consecutiveCount, 3);
   assert.equal(reminderStu3.triggerType, 'consecutive_sessions');
+
+  // Once an observation note is entered for stu-1 or stu-3, shouldRemind becomes false
+  const sessionWithNoteForStu1: EvaluationSession = {
+    ...sessionWith3LowCriteria,
+    evaluations: {
+      ...sessionWith3LowCriteria.evaluations,
+      'stu-1': {
+        ...sessionWith3LowCriteria.evaluations['stu-1'],
+        note: 'Ek tekrar çalışması planlandı.',
+      },
+    },
+  };
+  const reminderAfterNoteStu1 = getStudentConsecutiveLowScoreReminder(
+    'stu-1',
+    sessionWithNoteForStu1,
+    [sessionWithNoteForStu1],
+    { 'rub-4c': fourCriteriaRubric }
+  );
+  assert.equal(reminderAfterNoteStu1.hasObservationNote, true);
+  assert.equal(reminderAfterNoteStu1.shouldRemind, false);
 });
 
 test('Data Security Audit Fix: Backup size cap, prototype pollution guard, and strict score/entity validation', () => {
@@ -3887,7 +3912,243 @@ test('Regression: runtime legacy V3 session without rubricSnapshot, bulk criteri
   assert.equal(reconciledAfterRemoval['stu-g1'].groupSpeakingExamScore, 80);
 });
 
+test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned points (20, 10, 5, 0) instead of raw level indices (2, 1, 0) and include dedicated Speaking Exam Report', () => {
+  const stu: Student = {
+    id: 'stu-rep-1',
+    classId: 'cls-rep-1',
+    studentNumber: '111',
+    fullName: 'Ayşe Kaya',
+  };
+  const cls: Classroom = {
+    id: 'cls-rep-1',
+    name: '9-A',
+    gradeLevel: '9. Sınıf',
+    subject: 'Türk Dili ve Edebiyatı',
+    academicYear: '2026-2027',
+  };
+  const crits = LITERARY_BOOK_PRESENTATION_RUBRIC.criteria;
+  const session: EvaluationSession = {
+    id: 'ses-rep-1',
+    title: 'Kitap Değerlendirmesi',
+    date: '2026-10-28',
+    classId: 'cls-rep-1',
+    rubricId: LITERARY_BOOK_PRESENTATION_RUBRIC.id,
+    rubricSnapshot: structuredClone(LITERARY_BOOK_PRESENTATION_RUBRIC),
+    status: 'completed',
+    mode: 'individual',
+    generalSessionNote: '',
+    groups: [],
+    evaluations: {
+      'stu-rep-1': {
+        studentId: 'stu-rep-1',
+        updatedAt: '2026-10-28T14:40:00Z',
+        note: '',
+        tags: [],
+        criterionScores: {
+          [crits[0].id]: 2, // 20P
+          [crits[1].id]: 2, // 20P
+          [crits[2].id]: 2, // 20P
+          [crits[3].id]: 2, // 10P
+          [crits[4].id]: 2, // 20P
+          [crits[5].id]: 1, // 10P (out of 20P)
+          [crits[6].id]: 1, // 10P (out of 20P)
+          [crits[7].id]: 2, // 20P
+          [crits[8].id]: 2, // 10P
+          [crits[9].id]: 1, // 5P (out of 10P)
+        },
+      },
+    },
+  };
 
+  // 1. Progress History criterionBreakdown uses real points (20/20, 10/20, 10/10, 5/10), not 2/2 or 1/2
+  const history = getStudentProgressHistory('stu-rep-1', [session], {
+    [LITERARY_BOOK_PRESENTATION_RUBRIC.id]: LITERARY_BOOK_PRESENTATION_RUBRIC,
+  });
+  assert.equal(history.length, 1);
+  const breakdown = history[0].criterionBreakdown;
+  assert.equal(breakdown[0].selectedPoints, 20);
+  assert.equal(breakdown[0].maxPoints, 20);
+  assert.equal(breakdown[3].selectedPoints, 10);
+  assert.equal(breakdown[3].maxPoints, 10);
+  assert.equal(breakdown[5].selectedPoints, 10); // Kısmen on 20P criterion -> 10P
+  assert.equal(breakdown[5].maxPoints, 20);
+  assert.equal(breakdown[9].selectedPoints, 5); // Kısmen on 10P criterion -> 5P
+  assert.equal(breakdown[9].maxPoints, 10);
 
+  // 2. CSV outputs real points (20, 20, 20, 10, 20, 10, 10, 20, 10, 5)
+  const csv = generateSessionCsv(
+    session,
+    LITERARY_BOOK_PRESENTATION_RUBRIC,
+    [stu],
+    cls.id
+  );
+  assert.ok(
+    csv.includes('20,20,20,10,20,10,10,20,10,5'),
+    `Expected real earned criterion points in CSV, got: ${csv}`
+  );
 
+  // 3. PDF includes real earned points (K1:20, K4:10, K6:10, S1:20, S2:10, S6:5) and dedicated Konuşma Sınavı Raporu page
+  const pdfBothBytes = generatePaginatedSessionPdfBytes(
+    session,
+    LITERARY_BOOK_PRESENTATION_RUBRIC,
+    cls,
+    [stu],
+    16,
+    { dualReportMode: 'both' }
+  );
+  const pdfBothText = new TextDecoder('utf-8').decode(pdfBothBytes);
+  assert.ok(pdfBothText.includes('K1:20'));
+  assert.ok(pdfBothText.includes('K4:10'));
+  assert.ok(pdfBothText.includes('K6:10'));
+  assert.ok(
+    pdfBothText.includes('KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN)')
+  );
+  assert.ok(pdfBothText.includes('S1:20'));
+  assert.ok(pdfBothText.includes('S2:10'));
+  assert.ok(pdfBothText.includes('S6:5'));
+
+  // 4. Standalone Speaking Exam PDF mode ('speaking') generates only the Speaking Exam Report
+  const pdfSpeakingOnlyBytes = generatePaginatedSessionPdfBytes(
+    session,
+    LITERARY_BOOK_PRESENTATION_RUBRIC,
+    cls,
+    [stu],
+    16,
+    { dualReportMode: 'speaking' }
+  );
+  const pdfSpeakingText = new TextDecoder('utf-8').decode(pdfSpeakingOnlyBytes);
+  assert.ok(
+    pdfSpeakingText.includes('KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN)')
+  );
+  assert.ok(
+    !pdfSpeakingText.includes('(KİTAP SUNUMU - 100 PUAN)'),
+    'Speaking-only PDF should not include Book Presentation table page'
+  );
+
+  // 5. Standalone Book Presentation PDF mode ('book') and CSV ('book') must NEVER contain Konuşma Sınavı Notu
+  const pdfBookOnlyBytes = generatePaginatedSessionPdfBytes(
+    session,
+    LITERARY_BOOK_PRESENTATION_RUBRIC,
+    cls,
+    [stu],
+    16,
+    { dualReportMode: 'book' }
+  );
+  const pdfBookText = decodePdfTextWithToUnicode(pdfBookOnlyBytes);
+  assert.ok(pdfBookText.includes('Kitap Sunumu Notu: 93/100'));
+  assert.ok(!pdfBookText.includes('Konuşma Sınavı'));
+  assert.ok(!pdfBookText.includes('Konuşma(100)'));
+
+  const csvBookOnly = generateSessionCsv(
+    session,
+    LITERARY_BOOK_PRESENTATION_RUBRIC,
+    [stu],
+    cls.id,
+    'book'
+  );
+  assert.ok(csvBookOnly.includes('Kitap Sunumu Notu (100)'));
+  assert.ok(!csvBookOnly.includes('Konuşma Sınavı Notu (100)'));
+});
+
+test('Institution Settings & Official Signatures: Settings persist schoolName, teacherName, principalName and PDF reports display Okul Adı, Ders Öğretmeni, and Okul Müdürü without Öğrenci Velisi', () => {
+  __clearInstitutionSettingsForTests();
+  try {
+    const saved = saveInstitutionSettings({
+      schoolName: 'Atatürk Anadolu Lisesi',
+      teacherName: 'Ayşe Yılmaz',
+      principalName: 'Mehmet Demir',
+    });
+    assert.equal(saved.schoolName, 'Atatürk Anadolu Lisesi');
+    assert.equal(saved.teacherName, 'Ayşe Yılmaz');
+    assert.equal(saved.principalName, 'Mehmet Demir');
+
+    const loaded = loadInstitutionSettings();
+    assert.deepEqual(loaded, {
+      schoolName: 'Atatürk Anadolu Lisesi',
+      teacherName: 'Ayşe Yılmaz',
+      principalName: 'Mehmet Demir',
+    });
+
+    const stu: Student = {
+      id: 'stu-inst-1',
+      classId: 'cls-inst-1',
+      studentNumber: '101',
+      fullName: 'Zeynep Kaya',
+    };
+    const cls: Classroom = {
+      id: 'cls-inst-1',
+      name: '10-A',
+      gradeLevel: '10. Sınıf',
+      subject: 'Türk Dili ve Edebiyatı',
+      academicYear: '2026-2027',
+    };
+    const crits = LITERARY_BOOK_PRESENTATION_RUBRIC.criteria;
+    const session: EvaluationSession = {
+      id: 'ses-inst-1',
+      title: 'Edebî Eser Değerlendirmesi',
+      date: '2026-10-28',
+      classId: 'cls-inst-1',
+      rubricId: LITERARY_BOOK_PRESENTATION_RUBRIC.id,
+      rubricSnapshot: structuredClone(LITERARY_BOOK_PRESENTATION_RUBRIC),
+      status: 'completed',
+      mode: 'individual',
+      generalSessionNote: '',
+      groups: [],
+      evaluations: {
+        'stu-inst-1': {
+          studentId: 'stu-inst-1',
+          updatedAt: '2026-10-28T15:00:00Z',
+          note: '',
+          tags: [],
+          criterionScores: Object.fromEntries(crits.map((c) => [c.id, 2])),
+        },
+      },
+    };
+
+    const sessionPdfBytes = generatePaginatedSessionPdfBytes(
+      session,
+      LITERARY_BOOK_PRESENTATION_RUBRIC,
+      cls,
+      [stu],
+      16,
+      { dualReportMode: 'both' }
+    );
+    const decodedSessionPdf = decodePdfTextWithToUnicode(sessionPdfBytes);
+    assert.ok(decodedSessionPdf.includes('Atatürk Anadolu Lisesi'));
+    assert.ok(decodedSessionPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
+    assert.ok(decodedSessionPdf.includes('Okul Müdürü: Mehmet Demir'));
+    assert.ok(!decodedSessionPdf.includes('Öğrenci Velisi'));
+    assert.ok(!decodedSessionPdf.includes('Veli Adı Soyadı'));
+    assert.ok(!decodedSessionPdf.includes('Okul Müdürlüğü'));
+
+    const portfolioPdfBytes = generateStudentPortfolioPdfBytes(
+      stu,
+      cls,
+      [session],
+      {
+        [LITERARY_BOOK_PRESENTATION_RUBRIC.id]: LITERARY_BOOK_PRESENTATION_RUBRIC,
+      }
+    );
+    const decodedPortfolioPdf = decodePdfTextWithToUnicode(portfolioPdfBytes);
+    assert.ok(decodedPortfolioPdf.includes('Atatürk Anadolu Lisesi'));
+    assert.ok(decodedPortfolioPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
+    assert.ok(decodedPortfolioPdf.includes('Okul Müdürü: Mehmet Demir'));
+    assert.ok(!decodedPortfolioPdf.includes('Öğrenci Velisi'));
+    assert.ok(!decodedPortfolioPdf.includes('Veli Adı Soyadı'));
+
+    const overviewPdfBytes = generateClassroomOverviewPdfBytes(
+      cls,
+      [stu],
+      [session],
+      [LITERARY_BOOK_PRESENTATION_RUBRIC]
+    );
+    const decodedOverviewPdf = decodePdfTextWithToUnicode(overviewPdfBytes);
+    assert.ok(decodedOverviewPdf.includes('Atatürk Anadolu Lisesi'));
+    assert.ok(decodedOverviewPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
+    assert.ok(decodedOverviewPdf.includes('Okul Müdürü: Mehmet Demir'));
+    assert.ok(!decodedOverviewPdf.includes('Öğrenci Velisi'));
+  } finally {
+    __clearInstitutionSettingsForTests();
+  }
+});
 

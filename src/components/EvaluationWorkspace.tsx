@@ -54,10 +54,14 @@ import {
   getSessionGroupsForClassroom,
   createInitialSessionGroups,
   replaceClassroomGroupsInSession,
+  isDualBookSpeakingRubric,
   MAX_SESSION_TITLE_LENGTH,
   MAX_NOTE_LENGTH,
 } from '../utils/rubricLogic.ts';
-import { downloadSessionPdfFile } from '../utils/pdfGenerator.ts';
+import {
+  downloadSessionPdfFile,
+  type DualReportMode,
+} from '../utils/pdfGenerator.ts';
 import {
   STANDARD_GRADE_LEVELS,
   STANDARD_SUBJECTS,
@@ -86,7 +90,9 @@ interface EvaluationWorkspaceProps {
   onCreateSession: (newSession: EvaluationSession) => void;
   onDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
-  onNavigateTab?: (tab: 'evaluate' | 'classes' | 'rubrics' | 'reports') => void;
+  onNavigateTab?: (
+    tab: 'evaluate' | 'classes' | 'rubrics' | 'reports' | 'settings'
+  ) => void;
 }
 
 export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
@@ -812,13 +818,14 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const handleExportPdf = () => {
+  const handleExportPdf = (dualMode: DualReportMode = 'both') => {
     if (!activeSession || !activeRubric || !activeClassroom) return;
     downloadSessionPdfFile(
       activeSession,
       activeRubric,
       activeClassroom,
-      students
+      students,
+      { dualReportMode: dualMode }
     );
   };
 
@@ -1175,7 +1182,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               });
             }}
             onUndoLastAction={handleUndoLastAction}
-            onExportPdf={handleExportPdf}
+            onExportPdf={() => handleExportPdf('both')}
             onOpenQuickNoteModal={(studentId) =>
               setQuickNoteModalStudentId(studentId)
             }
@@ -1368,9 +1375,34 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
               Geri Al {undoCount > 0 ? `(${undoCount})` : ''}
             </button>
 
+            {isDualBookSpeakingRubric(activeRubric) && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleExportPdf('book')}
+                  data-testid="download-book-only-pdf-btn"
+                  title="Yalnızca Kitap Sunumu Değerlendirme Raporunu (100 Puan) konuşma sınavı notu olmadan PDF olarak indir"
+                  className="px-3 py-1.5 text-xs font-bold text-blue-900 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileDown className="w-3.5 h-3.5 text-blue-900" />
+                  Kitap Raporu (PDF)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExportPdf('speaking')}
+                  data-testid="download-speaking-only-pdf-btn"
+                  title="Yalnızca Konuşma Sınavı Değerlendirme Raporunu (100 Puan) PDF olarak indir"
+                  className="px-3 py-1.5 text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileDown className="w-3.5 h-3.5 text-emerald-800" />
+                  Konuşma Raporu (PDF)
+                </button>
+              </>
+            )}
+
             <button
               type="button"
-              onClick={handleExportPdf}
+              onClick={() => handleExportPdf('both')}
               data-testid="download-active-session-pdf-btn"
               title="Aktif oturum sonuçlarını yapılandırılmış bir tablo halinde PDF olarak indir"
               className="px-3 py-1.5 text-xs font-bold text-slate-900 bg-slate-100 border border-slate-300 rounded-xl hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
