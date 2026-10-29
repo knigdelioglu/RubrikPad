@@ -352,7 +352,8 @@ export function validateRubric(rubric: Rubric): {
         (rubric.criteria.length !== 10 ||
           getCriterionSection(rubric.criteria[0], 0, rubric) !== 'content' ||
           rubric.criteria.filter((c, i) => getCriterionSection(c, i, rubric) === 'content').length !== 4 ||
-          rubric.criteria.filter((c, i) => getCriterionSection(c, i, rubric) === 'speaking').length !== 6)) {
+          rubric.criteria.filter((c, i) => getCriterionSection(c, i, rubric) === 'speaking').length !== 6 ||
+          rubric.criteria.some((c, i) => getCriterionSection(c, i, rubric) !== (i < 4 ? 'content' : 'speaking')))) {
       errors.push('Bu puanlama modeli K1 ilk ölçüt olmak üzere dört içerik ve altı konuşma ölçütü gerektirir.');
     }
     if (Math.round(contentPoints * 100) / 100 !== 70 || Math.round(contentWeight * 100) / 100 !== 70) {
@@ -458,8 +459,9 @@ export function getWeightedDualReportCriterion(
     const raw = getCriterionEarnedPoints(criterion, scores?.[criterion.id], directScores?.[criterion.id]);
     return { maximum, earned: raw === null ? null : Math.round((raw / sectionMaximum) * total * 100) / 100 };
   }
+  const bookUsesThreeSpeakingCriteria = (rubric.version ?? 0) >= 7;
   const maximum = report === 'book'
-    ? section === 'content' ? (criterion.maxPoints ?? criterion.weight) : 5
+    ? section === 'content' ? (criterion.maxPoints ?? criterion.weight) : bookUsesThreeSpeakingCriteria ? (speakingIndex < 3 ? 10 : undefined) : 5
     : index === 0 ? 10 : section === 'speaking' ? [15, 20, 20, 15, 15, 5][speakingIndex] : undefined;
   if (maximum === undefined) return null;
   const raw = getCriterionEarnedPoints(criterion, scores?.[criterion.id], directScores?.[criterion.id]);
@@ -485,6 +487,7 @@ export function calculateDualBookSpeakingScore(
   // Version 6 assigns a whole-number contribution to each criterion. Version 5
   // snapshots keep their original final-only rounding for historical reports.
   const wholeCriterionScores = weightedDual && (rubric.version ?? 0) >= 6;
+  const bookUsesThreeSpeakingCriteria = weightedDual && (rubric.version ?? 0) >= 7;
   let contentEarnedPoints = 0;
   let contentMaxPoints = 0;
   let contentCompletedCount = 0;
@@ -502,6 +505,8 @@ export function calculateDualBookSpeakingScore(
   let weightedBookSpeaking = 0;
   let weightedSpeaking = 0;
   let sharedTopicCompleted = false;
+  let bookSpeakingTotal = 0;
+  let bookSpeakingCompleted = 0;
   rubric.criteria.forEach((criterion, idx) => {
     const sec = getCriterionSection(criterion, idx, rubric) || (idx < 4 ? 'content' : 'speaking');
     const isRequired = criterion.required !== false;
@@ -530,6 +535,11 @@ export function calculateDualBookSpeakingScore(
         }
       }
     } else {
+      const bookCriterion = weightedDual ? getWeightedDualReportCriterion(rubric, idx, 'book', criterionScores, directCriterionScores) : null;
+      if (bookCriterion) {
+        bookSpeakingTotal += 1;
+        if (bookCriterion.earned !== null) bookSpeakingCompleted += 1;
+      }
       speakingTotalCount += 1;
       speakingMaxPoints += effectiveWeight;
       if (isRequired) speakingRequiredCount += 1;
@@ -539,7 +549,7 @@ export function calculateDualBookSpeakingScore(
         speakingEarnedPoints += earned;
         if (weightedDual) {
           weightedSpeaking += getWeightedDualReportCriterion(rubric, idx, 'speaking', criterionScores, directCriterionScores)?.earned ?? 0;
-          weightedBookSpeaking += getWeightedDualReportCriterion(rubric, idx, 'book', criterionScores, directCriterionScores)?.earned ?? 0;
+          weightedBookSpeaking += bookCriterion?.earned ?? 0;
         }
       }
     }
@@ -583,7 +593,9 @@ export function calculateDualBookSpeakingScore(
   const speakingContributionOutOf30 =
     wholeCriterionScores ? speakingContributionRaw : weightedDual ? Math.round(speakingContributionRaw) : Math.round(speakingContributionRaw * 10) / 10;
 
-  const isBookPresentationComplete = isContentComplete && isSpeakingComplete;
+  const isBookPresentationComplete = isContentComplete && (bookUsesThreeSpeakingCriteria
+    ? bookSpeakingTotal === 3 && bookSpeakingCompleted === 3
+    : isSpeakingComplete);
 
   const provisionalBookPresentationScoreOutOf100 = Math.min(
     100,
@@ -602,8 +614,8 @@ export function calculateDualBookSpeakingScore(
       : getPerformanceBandAndLabel(provisionalSpeakingScoreOutOf100)
           .performanceLabel;
 
-  const totalCompleted = contentCompletedCount + speakingCompletedCount;
-  const totalCount = contentTotalCount + speakingTotalCount;
+  const totalCompleted = contentCompletedCount + (bookUsesThreeSpeakingCriteria ? bookSpeakingCompleted : speakingCompletedCount);
+  const totalCount = contentTotalCount + (bookUsesThreeSpeakingCriteria ? bookSpeakingTotal : speakingTotalCount);
 
   const bookPresentationPerformanceLabel =
     totalCompleted === 0
@@ -800,7 +812,9 @@ export function calculateWeightedScore(
       maxRawPoints,
       completedCriteriaCount,
       totalCriteriaCount,
-      isComplete: true,
+      // Continue prompting for K8–K10 until the speaking result is complete,
+      // even when the book result has already become available.
+      isComplete: dualResult.isSpeakingComplete,
       performanceBand,
       performanceLabel,
       dualResult,
@@ -3292,7 +3306,7 @@ export function getStudentProgressHistory(
       getStudentEvaluationBreakdown(rubric, evalRecord);
 
     // P0 #2: Only include completed evaluations in final longitudinal grade progression
-    if (!effectiveCalc.isComplete || effectiveCalc.finalScoreOutOf100 === null) continue;
+    if (effectiveCalc.finalScoreOutOf100 === null) continue;
 
     const activeScores =
       activeSource === 'group'
@@ -3303,19 +3317,22 @@ export function getStudentProgressHistory(
         ? evalRecord.groupDirectScores || {}
         : evalRecord.directCriterionScores || {};
 
-    const criterionBreakdown = rubric.criteria.map((c: RubricCriterion, idx: number) => {
+    const criterionBreakdown = rubric.criteria.flatMap((c: RubricCriterion, idx: number) => {
       const section = getCriterionSection(c, idx, rubric);
-      const maxPoints = c.maxPoints ?? c.weight;
-      const earnedPts = getCriterionEarnedPoints(c, activeScores[c.id], activeDirect[c.id]);
+      const useBookCriteria = rubric.scoringMode === 'dual_weighted_book_and_speaking' && (rubric.version ?? 0) >= 7;
+      const reportCriterion = useBookCriteria ? getWeightedDualReportCriterion(rubric, idx, 'book', activeScores, activeDirect) : null;
+      if (useBookCriteria && !reportCriterion) return [];
+      const maxPoints = reportCriterion?.maximum ?? c.maxPoints ?? c.weight;
+      const earnedPts = reportCriterion ? reportCriterion.earned : getCriterionEarnedPoints(c, activeScores[c.id], activeDirect[c.id]);
       const selectedPoints = earnedPts !== null ? earnedPts : 0;
       const scorePercent = maxPoints > 0 ? Math.round((selectedPoints / maxPoints) * 100) : 0;
-      return {
+      return [{
         criterionTitle: c.title,
         scorePercent,
         selectedPoints,
         maxPoints,
         section,
-      };
+      }];
     });
 
     const dual = effectiveCalc.dualResult;
@@ -3635,7 +3652,7 @@ export function generateSessionCsv(
 
   const criterionColumns = isDual
     ? [
-        ...(dualReportMode !== 'speaking' ? effectiveRubric.criteria.map((criterion, index) => ({ criterion, index, report: 'book' as const })) : []),
+        ...(dualReportMode !== 'speaking' ? effectiveRubric.criteria.flatMap((criterion, index) => getWeightedDualReportCriterion(effectiveRubric, index, 'book', {}) ? [{ criterion, index, report: 'book' as const }] : []) : []),
         ...(dualReportMode !== 'book' ? effectiveRubric.criteria.flatMap((criterion, index) => getWeightedDualReportCriterion(effectiveRubric, index, 'speaking', {}) ? [{ criterion, index, report: 'speaking' as const }] : []) : []),
       ]
     : includedCriteria.map((criterion) => ({ criterion, index: effectiveRubric.criteria.indexOf(criterion), report: null }));
@@ -3747,9 +3764,7 @@ export function generateSessionCsv(
         ? dual.finalBookPresentationScoreOutOf100
         : dual &&
           dual.contentCompletedCount + dual.speakingCompletedCount > 0
-        ? `Eksik (${
-            dual.contentCompletedCount + dual.speakingCompletedCount
-          }/${dual.contentTotalCount + dual.speakingTotalCount})`
+        ? dual.bookPresentationPerformanceLabel
         : '-';
     const speakingFinalCell =
       dual?.finalSpeakingScoreOutOf100 !== null &&

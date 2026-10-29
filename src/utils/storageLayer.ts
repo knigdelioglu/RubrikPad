@@ -3154,7 +3154,7 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
             seedMatch &&
             (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(r.id) &&
             (r.version ?? 3) < (seedMatch.version ?? 4) &&
-            (r.criteria.length === 7 || ((r.version === 4 || r.version === 5) && r.criteria.length === 10))
+            (r.criteria.length === 7 || ((r.version === 4 || r.version === 5 || r.version === 6) && r.criteria.length === 10))
           ) {
             gradeBackfilled = true;
             return r.criteria.length === 7 ? { ...seedMatch } : {
@@ -3329,7 +3329,7 @@ export async function purgeSyntheticSeedDataAsync(
                       r.id
                     ) &&
                     (r.version ?? 3) < (seedMatch.version ?? 4) &&
-                    (r.criteria.length === 7 || ((r.version === 4 || r.version === 5) && r.criteria.length === 10))
+                    (r.criteria.length === 7 || ((r.version === 4 || r.version === 5 || r.version === 6) && r.criteria.length === 10))
                   ) {
                     gradeBackfilled = true;
                     return r.criteria.length === 7 ? { ...seedMatch } : {

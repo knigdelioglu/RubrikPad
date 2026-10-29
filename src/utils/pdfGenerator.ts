@@ -410,11 +410,14 @@ export function generatePaginatedSessionPdfBytes(
   const allCriteria: RubricCriterion[] = effectiveRubric.criteria || [];
   const reportCriterion = (criterion: RubricCriterion, report: 'book' | 'speaking', scores: Record<string, number | null | undefined> = {}, direct?: Record<string, number | null | undefined>) =>
     getWeightedDualReportCriterion(effectiveRubric, allCriteria.indexOf(criterion), report, scores, direct);
+  const bookCriteria = isDualBookSpeakingRubric(effectiveRubric)
+    ? allCriteria.filter(c => reportCriterion(c, 'book') !== null)
+    : allCriteria;
   // All criterion columns belong on the student's single table row.
-  const criterionBands = chunkArray(allCriteria, Math.max(1, allCriteria.length));
-  const criteriaPerBand = Math.max(1, allCriteria.length);
+  const criterionBands = chunkArray(bookCriteria, Math.max(1, bookCriteria.length));
+  const criteriaPerBand = Math.max(1, bookCriteria.length);
   const tableFontSize = colOpts.showCriterionScores
-    ? Math.min(7.2, 770 / ((33 + allCriteria.length * 9 + (colOpts.showFinalScoreAndLevel ? 38 : 0)) * 0.6))
+    ? Math.min(7.2, 770 / ((33 + bookCriteria.length * 9 + (colOpts.showFinalScoreAndLevel ? 38 : 0)) * 0.6))
     : 7.2;
 
   // Strictly isolate students to the requested `classroom.id` so multi-class sessions never leak another class's roster into this classroom's official PDF report
@@ -432,7 +435,7 @@ export function generatePaginatedSessionPdfBytes(
     const rowHeight = colOpts.showObservationNotes ? 25 : 15;
     return Math.max(1, Math.floor((firstRowY - 68) / rowHeight));
   };
-  const effectiveRowsPerPage = Math.min(rowsPerPage, maxRowsForLegend(allCriteria.length));
+  const effectiveRowsPerPage = Math.min(rowsPerPage, maxRowsForLegend(bookCriteria.length));
 
   const studentPages = chunkArray(sessionStudents, effectiveRowsPerPage);
   const isDualRubric = isDualBookSpeakingRubric(effectiveRubric);
@@ -484,17 +487,17 @@ export function generatePaginatedSessionPdfBytes(
       8,
       36,
       545,
-      `${schoolMetaPrefix}Oturum: ${session.title} | Rubrik: ${effectiveRubric.title} (${allCriteria.length} Ölçüt) | Tarih: ${session.date} | Sayfa ${
+      `${schoolMetaPrefix}Oturum: ${session.title} | Rubrik: ${effectiveRubric.title} (${bookCriteria.length} Ölçüt) | Tarih: ${session.date} | Sayfa ${
         pageIdx + 1
       }/${totalPages}`
     );
 
     // 3. Full Rubric Criteria Legend
     const criteriaLegendChunks = chunkArray(
-      allCriteria.map((c, idx) =>
+      bookCriteria.map((c) =>
         colOpts.showCriterionScores
-          ? `K${idx + 1}: ${c.title} (${reportCriterion(c, 'book')?.maximum ?? c.maxPoints ?? c.weight}P)`
-          : `K${idx + 1}: ${c.title}`
+          ? `K${allCriteria.indexOf(c) + 1}: ${c.title} (${reportCriterion(c, 'book')?.maximum ?? c.maxPoints ?? c.weight}P)`
+          : `K${allCriteria.indexOf(c) + 1}: ${c.title}`
       ),
       2
     );
@@ -523,7 +526,7 @@ export function generatePaginatedSessionPdfBytes(
           ? band
               .map(
                 (c, idx) =>
-                  `K${bandOffset + idx + 1}(${reportCriterion(c, 'book')?.maximum ?? c.maxPoints ?? c.weight}P)`.padEnd(
+                  `K${allCriteria.indexOf(c) + 1}(${reportCriterion(c, 'book')?.maximum ?? c.maxPoints ?? c.weight}P)`.padEnd(
                     8,
                     ' '
                   )
@@ -599,7 +602,7 @@ export function generatePaginatedSessionPdfBytes(
           ? dual.finalBookPresentationScoreOutOf100 !== null
             ? String(dual.finalBookPresentationScoreOutOf100)
             : effectiveCalc.completedCriteriaCount > 0
-            ? `Taslak(${effectiveCalc.completedCriteriaCount}/${effectiveCalc.totalCriteriaCount})`
+            ? dual.bookPresentationPerformanceLabel
             : '-'
           : effectiveCalc.finalScoreOutOf100 !== null
           ? String(effectiveCalc.finalScoreOutOf100)
@@ -620,7 +623,7 @@ export function generatePaginatedSessionPdfBytes(
           const critVals = colOpts.showCriterionScores
             ? band
                 .map((c, idx) => {
-                  const codePrefix = `K${bandOffset + idx + 1}:`;
+                  const codePrefix = `K${allCriteria.indexOf(c) + 1}:`;
                   const d = activeDirect[c.id];
                   const weighted = reportCriterion(c, 'book', activeScores, activeDirect);
                   if (weighted) return `${codePrefix}${weighted.earned ?? '-'}`.padEnd(8, ' ');

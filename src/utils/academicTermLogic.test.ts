@@ -214,3 +214,26 @@ test('archiving survives backup and excludes scores from active reports until re
   const restored = partitionSessionsByArchiveStatus([active[0], archiveEvaluationSession(loaded.state.sessions[1], false)]).activeSessions;
   assert.equal(computeTermComparisonAnalytics(restored, { rubric }, ALL_ACADEMIC_TERMS).currentSnapshot.averageScore, 60);
 });
+
+test('a finished book score is included in progress and averages even when speaking-only criteria remain', async () => {
+  const { INFORMATIVE_BOOK_PRESENTATION_RUBRIC } = await import('../data/bookPresentationRubric.ts');
+  const { getStudentProgressHistory, getNextPendingStudent } = await import('./rubricLogic.ts');
+  const r = INFORMATIVE_BOOK_PRESENTATION_RUBRIC;
+  const partial: EvaluationSession = {
+    id: 'book-only', title: 'Kitap', date: '2026-10-29', classId: 'class', rubricId: r.id,
+    rubricSnapshot: r, status: 'in_progress', mode: 'individual', groups: [], generalSessionNote: '',
+    evaluations: { student: { studentId: 'student', criterionScores: Object.fromEntries(r.criteria.slice(0, 7).map(c => [c.id, 2])), note: '', tags: [], updatedAt: '2026-10-29' } },
+  };
+  const history = getStudentProgressHistory('student', [partial], { [r.id]: r });
+  assert.equal(history.length, 1);
+  assert.equal(history[0].finalScoreOutOf100, 100);
+  assert.equal(history[0].speakingExamScoreOutOf100, null);
+  assert.equal(history[0].criterionBreakdown.length, 7);
+  const summary = computeTermComparisonAnalytics([partial], { [r.id]: r }, ALL_ACADEMIC_TERMS);
+  assert.equal(summary.currentSnapshot.averageScore, 100);
+  const classStudents: Student[] = [
+    { id: 'other', classId: 'class', studentNumber: '1', fullName: 'Diğer' },
+    { id: 'student', classId: 'class', studentNumber: '2', fullName: 'Öğrenci' },
+  ];
+  assert.equal(getNextPendingStudent(classStudents, partial.evaluations, r, 'other')?.id, 'student');
+});

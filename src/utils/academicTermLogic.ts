@@ -499,10 +499,7 @@ function computeSnapshotForSessions(
     if (!rubric) continue;
     for (const ev of Object.values(sess.evaluations || {})) {
       const { effectiveCalc } = getStudentEvaluationBreakdown(rubric, ev);
-      if (
-        effectiveCalc.isComplete &&
-        effectiveCalc.finalScoreOutOf100 !== null
-      ) {
+      if (effectiveCalc.finalScoreOutOf100 !== null) {
         scores.push(effectiveCalc.finalScoreOutOf100);
       }
     }

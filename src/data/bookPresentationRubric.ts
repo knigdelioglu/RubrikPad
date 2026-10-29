@@ -174,7 +174,7 @@ const INFORMATIVE_CONTENT_CRITERIA: RubricCriterion[] = [
  * 1. Edebî Eser Okuma ve Sunum Rubriği (Tek Değerlendirme, İki Sonuç — v4)
  * - 1. Kitap İçeriği: 4 ölçüt, 70 puan
  * - 2. Ortak konuşma: 6 ölçüt, ham ölçek toplamı 100 puan
- * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + altı sunum ölçütü (her biri 5, toplam 30)
+ * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + K5–K7 (her biri 10, toplam 30)
  * - Konuşma Sınavı Notu (100 üzerinden): K1 (10) ve altı konuşma ölçütü (15, 20, 20, 15, 15, 5)
  * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
  */
@@ -184,10 +184,10 @@ export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
   description:
-    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + Sunum 30 = 100) hem de Konuşma Sınavı Notu (K1 10 + konuşma 90 = 100) ayrı ayrı hesaplanır.',
+    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (K1–K4 70 + K5–K7 30 = 100) hem de Konuşma Sınavı Notu (K1 10 + konuşma 90 = 100) ayrı ayrı hesaplanır.',
   maxLevelPoints: 2,
   createdAt: '2026-10-27',
-  version: 6,
+  version: 7,
   scoringMode: 'dual_weighted_book_and_speaking',
   criteria: [
     ...LITERARY_CONTENT_CRITERIA,
@@ -203,7 +203,7 @@ export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
  * 2. Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum Rubriği (Tek Değerlendirme, İki Sonuç — v4)
  * - 1. Kitap İçeriği: 4 ölçüt, 70 puan
  * - 2. Ortak konuşma: 6 ölçüt, ham ölçek toplamı 100 puan
- * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + altı sunum ölçütü (her biri 5, toplam 30)
+ * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + K5–K7 (her biri 10, toplam 30)
  * - Konuşma Sınavı Notu (100 üzerinden): K1 (10) ve altı konuşma ölçütü (15, 20, 20, 15, 15, 5)
  * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
  */
@@ -213,10 +213,10 @@ export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC: Rubric = {
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
   description:
-    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + Sunum 30 = 100) hem de Konuşma Sınavı Notu (K1 10 + konuşma 90 = 100) ayrı ayrı hesaplanır.',
+    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (K1–K4 70 + K5–K7 30 = 100) hem de Konuşma Sınavı Notu (K1 10 + konuşma 90 = 100) ayrı ayrı hesaplanır.',
   maxLevelPoints: 2,
   createdAt: '2026-10-27',
-  version: 6,
+  version: 7,
   scoringMode: 'dual_weighted_book_and_speaking',
   criteria: [
     ...INFORMATIVE_CONTENT_CRITERIA,

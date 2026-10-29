@@ -1077,7 +1077,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                       <span className="font-bold text-blue-950">
                         Tek Değerlendirme, İki Sonuç Sistemi:
                       </span>{' '}
-                      {activeRubric.scoringMode === 'dual_weighted_book_and_speaking' ? 'On ölçüt bir kez puanlanır. Kitap notunda K5–K10 beşer puandır; konuşma notunda K1 10, K5–K10 sırasıyla 15, 20, 20, 15, 15, 5 puandır. Kısmen düzeyi için 5 puanlık ölçüt 3, 15 puanlık ölçüt 8 puandır.' : 'Dört içerik ve altı konuşma ölçütü birer kez puanlanır.'}
+                      {activeRubric.scoringMode === 'dual_weighted_book_and_speaking' ? (activeRubric.version ?? 0) >= 7 ? 'Kitap notunda K1–K4 70, K5–K7 onar puandır. K8–K10 yalnızca konuşma sınavında kullanılır. Konuşma notunda K1 10, K5–K10 sırasıyla 15, 20, 20, 15, 15, 5 puandır.' : 'Kitap notunda K5–K10 beşer puandır; konuşma notunda K1 10, K5–K10 sırasıyla 15, 20, 20, 15, 15, 5 puandır.' : 'Dört içerik ve altı konuşma ölçütü birer kez puanlanır.'}
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5 shrink-0 font-mono-num font-bold">
                       <span className="px-2 py-0.5 rounded bg-blue-900 text-white">

@@ -3822,14 +3822,14 @@ test('Regression: runtime legacy V3 session without rubricSnapshot, bulk criteri
     );
     if (i === 9) {
       // After 9 criteria (5 speaking criteria scored, 1 speaking missing): neither score is finalized yet
-      assert.equal(bulkEvals['stu-bulk-1'].bookPresentationScore, null);
+      assert.equal(bulkEvals['stu-bulk-1'].bookPresentationScore, 85);
       assert.equal(bulkEvals['stu-bulk-1'].speakingExamScore, null);
       assert.equal(bulkEvals['stu-bulk-1'].contentScoreOutOf70, 70);
     }
   }
   assert.equal(bulkEvals['stu-bulk-1'].contentScoreOutOf70, 70);
   assert.equal(bulkEvals['stu-bulk-1'].speakingExamScore, 57);
-  assert.equal(bulkEvals['stu-bulk-1'].bookPresentationScore, 88);
+  assert.equal(bulkEvals['stu-bulk-1'].bookPresentationScore, 85);
 
   // 3. Group evaluation and membership reconciliation persist and clean up dual group scores
   const groupSession: EvaluationSession = {
@@ -3883,12 +3883,12 @@ test('Regression: runtime legacy V3 session without rubricSnapshot, bulk criteri
   const updatedGroup = grpRes.updatedSession.groups[0];
   assert.equal(updatedGroup.groupContentScoreOutOf70, 55);
   assert.equal(updatedGroup.groupSpeakingExamScore, 76);
-  assert.equal(updatedGroup.groupBookPresentationScore, 79);
+  assert.equal(updatedGroup.groupBookPresentationScore, 80);
 
   const memberEval = grpRes.updatedSession.evaluations['stu-g1'];
   assert.equal(memberEval.groupContentScoreOutOf70, 55);
   assert.equal(memberEval.groupSpeakingExamScore, 76);
-  assert.equal(memberEval.groupBookPresentationScore, 79);
+  assert.equal(memberEval.groupBookPresentationScore, 80);
 
   // Removing stu-g2 from the group clears their reflected group dual scores
   const reconciledAfterRemoval = reconcileGroupEvaluationsWithMemberships(
@@ -3909,7 +3909,7 @@ test('Regression: runtime legacy V3 session without rubricSnapshot, bulk criteri
     reconciledAfterRemoval['stu-g2'].groupContentScoreOutOf70,
     undefined
   );
-  assert.equal(reconciledAfterRemoval['stu-g1'].groupBookPresentationScore, 79);
+  assert.equal(reconciledAfterRemoval['stu-g1'].groupBookPresentationScore, 80);
   assert.equal(reconciledAfterRemoval['stu-g1'].groupSpeakingExamScore, 76);
 });
 
@@ -3971,10 +3971,9 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
   assert.equal(breakdown[0].maxPoints, 20);
   assert.equal(breakdown[3].selectedPoints, 10);
   assert.equal(breakdown[3].maxPoints, 10);
-  assert.equal(breakdown[5].selectedPoints, 10); // Kısmen on 20P criterion -> 10P
-  assert.equal(breakdown[5].maxPoints, 20);
-  assert.equal(breakdown[9].selectedPoints, 5); // Kısmen on 10P criterion -> 5P
-  assert.equal(breakdown[9].maxPoints, 10);
+  assert.equal(breakdown[5].selectedPoints, 5); // Kısmen on 20P criterion -> 10P
+  assert.equal(breakdown[5].maxPoints, 10);
+  assert.equal(breakdown.length, 7); // Kısmen on 10P criterion -> 5P
 
   // 2. CSV outputs real points (20, 20, 20, 10, 20, 10, 10, 20, 10, 5)
   const csv = generateSessionCsv(
@@ -3984,7 +3983,7 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
     cls.id
   );
   assert.ok(
-    csv.includes('20,20,20,10,5,3,3,5,5,3,10,15,10,10,15,15,3,70,24,94,78'),
+    csv.includes('20,20,20,10,10,5,5,10,15,10,10,15,15,3,70,20,90,78'),
     `Expected weighted criterion contributions and totals in CSV, got: ${csv}`
   );
 
@@ -4004,7 +4003,7 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
   assert.ok(
     pdfBothText.includes('KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN)')
   );
-  assert.ok(pdfBothText.includes('K5:5'));
+  assert.ok(pdfBothText.includes('K5:10'));
   assert.ok(pdfBothText.includes('K5:15'));
   assert.ok(pdfBothText.includes('K6:10'));
   assert.ok(pdfBothText.includes('K10:3'));
@@ -4043,7 +4042,10 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
     { dualReportMode: 'book' }
   );
   const pdfBookText = decodePdfTextWithToUnicode(pdfBookOnlyBytes);
-  assert.match(pdfBookText, /111\s+Ayşe Kaya[^\n]*K9:5[^\n]*K10:3[^\n]*94/);
+  assert.match(pdfBookText, /111\s+Ayşe Kaya[^\n]*K5:10[^\n]*K7:5[^\n]*90/);
+  assert.ok(!pdfBookText.includes('K8:'));
+  assert.ok(!pdfBookText.includes('K9:'));
+  assert.ok(!pdfBookText.includes('K10:'));
   assert.ok(!pdfBookText.includes('Ek Ölçüt'));
   assert.ok(!pdfBookText.includes('Kitap Sunumu Notu:'));
   assert.ok(!pdfBookText.includes('Konuşma Sınavı'));
@@ -4057,6 +4059,9 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
     'book'
   );
   assert.ok(csvBookOnly.includes('Kitap Sunumu Notu (100)'));
+  assert.ok(!csvBookOnly.includes('Kitap K8:'));
+  assert.ok(!csvBookOnly.includes('Kitap K9:'));
+  assert.ok(!csvBookOnly.includes('Kitap K10:'));
   assert.ok(!csvBookOnly.includes('Konuşma Sınavı Notu (100)'));
 });
 
@@ -4197,9 +4202,9 @@ test('weighted book and speaking model uses separate weights, whole final scores
   const scores = (values: number[]) => Object.fromEntries(rubric.criteria.map((c, i) => [c.id, values[i]]));
   const zeynep = calculateWeightedScore(rubric, {}, scores([20, 20, 20, 10, 10, 20, 10, 20, 10, 10])).dualResult!;
   const fatma = calculateWeightedScore(rubric, {}, scores([10, 0, 20, 5, 20, 20, 20, 10, 10, 10])).dualResult!;
-  assert.equal(zeynep.finalBookPresentationScoreOutOf100, 96);
+  assert.equal(zeynep.finalBookPresentationScoreOutOf100, 90);
   assert.equal(zeynep.finalSpeakingScoreOutOf100, 83);
-  assert.equal(fatma.finalBookPresentationScoreOutOf100, 63);
+  assert.equal(fatma.finalBookPresentationScoreOutOf100, 65);
   assert.equal(fatma.finalSpeakingScoreOutOf100, 88);
   for (const [values, result] of [
     [[20, 20, 20, 10, 10, 20, 10, 20, 10, 10], zeynep],
@@ -4232,12 +4237,25 @@ test('weighted book and speaking model uses separate weights, whole final scores
   const prior = calculateWeightedScore(previousWeighted, {}, scores([20, 20, 20, 10, 10, 20, 10, 20, 10, 10])).dualResult!;
   assert.equal(prior.finalBookPresentationScoreOutOf100, 95);
   assert.equal(prior.finalSpeakingScoreOutOf100, 83);
+  const previousWhole: Rubric = { ...rubric, version: 6 };
+  const oldWhole = calculateWeightedScore(previousWhole, {}, scores([20, 20, 20, 10, 10, 20, 10, 20, 10, 10])).dualResult!;
+  assert.equal(oldWhole.finalBookPresentationScoreOutOf100, 96);
+  assert.equal(oldWhole.finalSpeakingScoreOutOf100, 83);
   // Each of the six five-point criteria awards 3 for a partial performance;
   // the 15-point speaking criteria each award 8, rather than 7.5.
   const allPartial = calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map(c => [c.id, 1]))).dualResult!;
-  assert.equal(allPartial.speakingContributionOutOf30, 18);
-  assert.equal(allPartial.finalBookPresentationScoreOutOf100, 53);
+  assert.equal(allPartial.speakingContributionOutOf30, 15);
+  assert.equal(allPartial.finalBookPresentationScoreOutOf100, 50);
   assert.equal(allPartial.finalSpeakingScoreOutOf100, 52);
+  const bookOnlyScores = Object.fromEntries(rubric.criteria.slice(0, 7).map(c => [c.id, 2]));
+  const bookOnly = calculateWeightedScore(rubric, bookOnlyScores);
+  assert.equal(bookOnly.dualResult?.finalBookPresentationScoreOutOf100, 100);
+  assert.equal(bookOnly.dualResult?.finalSpeakingScoreOutOf100, null);
+  assert.equal(bookOnly.isComplete, false); // Do not auto-advance before K8–K10.
+  const speakingOnlyScores = Object.fromEntries([rubric.criteria[0], ...rubric.criteria.slice(4)].map(c => [c.id, 2]));
+  const speakingOnly = calculateWeightedScore(rubric, speakingOnlyScores).dualResult!;
+  assert.equal(speakingOnly.finalBookPresentationScoreOutOf100, null);
+  assert.equal(speakingOnly.finalSpeakingScoreOutOf100, 100);
 });
 
 test('upgrading a v4 catalog freezes the old rubric on existing sessions and preserves scores in backup', () => {
@@ -4256,7 +4274,9 @@ test('upgrading a v4 catalog freezes the old rubric on existing sessions and pre
     const session: EvaluationSession = { id: 'session', title: 'Önceki değerlendirme', classId: 'class', rubricId: legacy.id, date: '2026-10-29', status: 'completed', mode: 'individual', groups: [], generalSessionNote: '', evaluations: { student: { studentId: 'student', criterionScores: {}, directCriterionScores: Object.fromEntries(legacy.criteria.map((c, i) => [c.id, points[i]])), note: '', tags: [], updatedAt: '2026-10-29' } } };
     const weightedV5: Rubric = { ...structuredClone(INFORMATIVE_BOOK_PRESENTATION_RUBRIC), version: 5 };
     const v5Session: EvaluationSession = { ...session, id: 'v5-session', rubricSnapshot: weightedV5 };
-    mockStore.set(STORAGE_KEY, JSON.stringify(createVerifiedBackupBundle({ classrooms: [classroom], students: [student], rubrics: [legacy], sessions: [session, v5Session] })));
+    const weightedV6: Rubric = { ...structuredClone(INFORMATIVE_BOOK_PRESENTATION_RUBRIC), version: 6 };
+    const v6Session: EvaluationSession = { ...session, id: 'v6-session', rubricSnapshot: weightedV6 };
+    mockStore.set(STORAGE_KEY, JSON.stringify(createVerifiedBackupBundle({ classrooms: [classroom], students: [student], rubrics: [legacy], sessions: [session, v5Session, v6Session] })));
     purgeSyntheticSeedDataSync(INITIAL_RUBRICS);
     const restored = verifyAndParseBackupBundle(mockStore.get(STORAGE_KEY)!);
     assert.equal(restored.isValid, true);
@@ -4273,5 +4293,33 @@ test('upgrading a v4 catalog freezes the old rubric on existing sessions and pre
     const weightedResult = getStudentEvaluationBreakdown(oldWeighted.rubricSnapshot!, oldWeighted.evaluations.student).effectiveCalc.dualResult!;
     assert.equal(weightedResult.finalBookPresentationScoreOutOf100, 95);
     assert.equal(weightedResult.finalSpeakingScoreOutOf100, 83);
+    const oldV6 = restored.state.sessions[2];
+    assert.equal(oldV6.rubricSnapshot?.version, 6);
+    assert.equal(getStudentEvaluationBreakdown(oldV6.rubricSnapshot!, oldV6.evaluations.student).effectiveCalc.dualResult?.finalBookPresentationScoreOutOf100, 96);
   } finally { (globalThis as unknown as { window?: unknown }).window = prevWindow; }
+});
+
+test('v6 catalog upgrade freezes existing sessions and activates v7 only for new sessions', () => {
+  const store = new Map<string, string>();
+  const previous = (globalThis as unknown as { window?: unknown }).window;
+  (globalThis as unknown as { window: unknown }).window = { localStorage: {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value),
+    removeItem: (key: string) => store.delete(key),
+  } };
+  try {
+    const rubric: Rubric = { ...structuredClone(INFORMATIVE_BOOK_PRESENTATION_RUBRIC), version: 6 };
+    const direct = [20,20,20,10,10,20,10,20,10,10];
+    const session: EvaluationSession = { id: 'v6', title: 'Eski oturum', classId: 'class', rubricId: rubric.id, date: '2026-10-29', status: 'completed', mode: 'individual', groups: [], generalSessionNote: '', evaluations: { student: { studentId: 'student', criterionScores: {}, directCriterionScores: Object.fromEntries(rubric.criteria.map((c, i) => [c.id, direct[i]])), note: '', tags: [], updatedAt: '2026-10-29' } } };
+    const classroom: Classroom = { id: 'class', name: 'A', gradeLevel: '11. Sınıf', subject: 'Türk Dili ve Edebiyatı', academicYear: '2026-2027' };
+    const student: Student = { id: 'student', classId: 'class', studentNumber: '1', fullName: 'Örnek Öğrenci' };
+    store.set(STORAGE_KEY, JSON.stringify(createVerifiedBackupBundle({ classrooms: [classroom], students: [student], rubrics: [rubric], sessions: [session] })));
+    purgeSyntheticSeedDataSync(INITIAL_RUBRICS);
+    const result = verifyAndParseBackupBundle(store.get(STORAGE_KEY)!);
+    assert.ok(result.isValid && result.state);
+    assert.equal(result.state.rubrics.find(r => r.id === rubric.id)?.version, 7);
+    const frozen = result.state.sessions[0].rubricSnapshot;
+    assert.equal(frozen?.version, 6);
+    assert.equal(getStudentEvaluationBreakdown(frozen!, session.evaluations.student).effectiveCalc.finalScoreOutOf100, 96);
+  } finally { (globalThis as unknown as { window?: unknown }).window = previous; }
 });
