@@ -1394,27 +1394,24 @@ test('multi-class evaluation sessions isolate students and groups per classroom 
 
 
 
-test('independent speaking exam matches the dual rubric criteria and scores without modifying it', () => {
+test('independent exam uses exactly the six common speaking criteria and their original points', () => {
   const dual = INFORMATIVE_BOOK_PRESENTATION_RUBRIC;
   const speaking = SPEAKING_EXAM_RUBRIC;
   assert.equal(speaking.scoringMode, 'standard_100');
   assert.equal(validateRubric(speaking).isValid, true);
-  assert.deepEqual(speaking.criteria.map(c => c.maxPoints), [10, 15, 20, 20, 15, 15, 5]);
-  assert.deepEqual(speaking.criteria.map(c => c.title), [dual.criteria[0], ...dual.criteria.slice(4)].map(c => c.title));
+  assert.deepEqual(speaking.criteria.map(c => c.maxPoints), [20, 20, 20, 20, 10, 10]);
+  assert.deepEqual(speaking.criteria.map(c => [c.title, c.maxPoints, c.levels]), dual.criteria.slice(4).map(c => [c.title, c.maxPoints, c.levels]));
   for (const grade of ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf']) {
     assert.ok(getRubricsByGradeAndSubject(INITIAL_RUBRICS, grade, 'Türk Dili ve Edebiyatı').some(r => r.id === speaking.id));
   }
   assert.ok(!getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Matematik').some(r => r.id === speaking.id));
-  for (const levels of [[0, 0, 0, 0, 0, 0, 0], [1, 1, 1, 1, 1, 1, 1], [2, 2, 2, 2, 2, 2, 2], [1, 2, 2, 1, 2, 1, 2]]) {
-    const standaloneScores = Object.fromEntries(speaking.criteria.map((c, i) => [c.id, levels[i]]));
-    const sameDualCriteria = [dual.criteria[0], ...dual.criteria.slice(4)];
-    const dualScores = Object.fromEntries(sameDualCriteria.map((c, i) => [c.id, levels[i]]));
-    const standalone = calculateWeightedScore(speaking, standaloneScores);
-    const combined = calculateDualBookSpeakingScore(dual, dualScores);
-    assert.equal(standalone.finalScoreOutOf100, combined.finalSpeakingScoreOutOf100);
+  for (const [level, expected] of [[0, 0], [1, 50], [2, 100]] as const) {
+    const scores = Object.fromEntries(speaking.criteria.map(c => [c.id, level]));
+    assert.equal(calculateWeightedScore(speaking, scores).finalScoreOutOf100, expected);
   }
+  const mixed = [1, 2, 2, 1, 1, 2];
+  assert.equal(calculateWeightedScore(speaking, Object.fromEntries(speaking.criteria.map((c, i) => [c.id, mixed[i]]))).finalScoreOutOf100, 75);
   const partial = calculateWeightedScore(speaking, { [speaking.criteria[0].id]: 2 });
   assert.equal(partial.finalScoreOutOf100, null);
   assert.equal(partial.dualResult, undefined);
-  assert.equal(calculateWeightedScore(speaking, Object.fromEntries(speaking.criteria.map(c => [c.id, 1]))).finalScoreOutOf100, 52);
 });

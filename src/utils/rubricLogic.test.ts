@@ -109,7 +109,7 @@ import {
   LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
   LEGACY_V3_LITERARY_BOOK_RUBRIC,
 } from '../data/bookPresentationRubric.ts';
-import { SPEAKING_EXAM_RUBRIC_ID } from '../data/speakingExamRubric.ts';
+import { SPEAKING_EXAM_RUBRIC, SPEAKING_EXAM_RUBRIC_ID } from '../data/speakingExamRubric.ts';
 import {
   generatePaginatedSessionPdfBytes,
   generateStudentPortfolioPdfBytes,
@@ -4354,5 +4354,40 @@ test('adding the independent speaking rubric preserves existing combined session
     assert.deepEqual(loaded.state.sessions[0], initial.state.sessions[0]);
     const after = getStudentEvaluationBreakdown(loaded.state.sessions[0].rubricSnapshot!, loaded.state.sessions[0].evaluations.student).effectiveCalc.dualResult;
     assert.deepEqual(after, before);
+  } finally { (globalThis as unknown as { window?: unknown }).window = previous; }
+});
+
+test('independent speaking rubric v1 upgrades its catalog without changing existing sessions', () => {
+  const store = new Map<string, string>();
+  const previous = (globalThis as unknown as { window?: unknown }).window;
+  (globalThis as unknown as { window: unknown }).window = { localStorage: {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value),
+    removeItem: (key: string) => store.delete(key),
+  } };
+  try {
+    const shared = structuredClone(SPEAKING_EXAM_RUBRIC.criteria);
+    const topic = { ...shared[0], id: 'crit-bagimsiz-konusma-1', title: 'Konuyu ve temel düşünceyi doğru ve konuya uygun aktarma', maxPoints: 10, weight: 10 };
+    for (const oldVersion of [1, 3]) {
+    const oldRubric: Rubric = { ...structuredClone(SPEAKING_EXAM_RUBRIC), version: oldVersion, criteria: [topic, ...shared.map((c, i) => ({ ...c, weight: [15,20,20,15,15,5][i], maxPoints: [15,20,20,15,15,5][i] }))] };
+    const classroom: Classroom = { id: 'class', name: 'A', gradeLevel: '11. Sınıf', subject: 'Türk Dili ve Edebiyatı', academicYear: '2026-2027' };
+    const student: Student = { id: 'student', classId: 'class', studentNumber: '1', fullName: 'Örnek Öğrenci' };
+    const evaluation = { studentId: 'student', criterionScores: Object.fromEntries(oldRubric.criteria.map((c, i) => [c.id, i % 2 ? 2 : 1])), note: 'Korunacak not', tags: [], updatedAt: '2026-10-29' };
+    const session: EvaluationSession = { id: 'old', title: 'Önceki konuşma', classId: 'class', rubricId: oldRubric.id, date: '2026-10-29', status: 'completed', mode: 'individual', groups: [], generalSessionNote: '', evaluations: { student: evaluation } };
+    const previousScore = calculateWeightedScore(oldRubric, evaluation.criterionScores).finalScoreOutOf100;
+    store.set(STORAGE_KEY, JSON.stringify(createVerifiedBackupBundle({ classrooms: [classroom], students: [student], rubrics: [oldRubric, INFORMATIVE_BOOK_PRESENTATION_RUBRIC], sessions: [session] })));
+    purgeSyntheticSeedDataSync(INITIAL_RUBRICS);
+    const restored = verifyAndParseBackupBundle(store.get(STORAGE_KEY)!);
+    assert.ok(restored.isValid && restored.state);
+    const updated = restored.state.rubrics.find(r => r.id === SPEAKING_EXAM_RUBRIC_ID)!;
+    assert.equal(updated.version, 4);
+    assert.deepEqual(updated.criteria.map(c => c.maxPoints), [20, 20, 20, 20, 10, 10]);
+    const saved = restored.state.sessions[0];
+    assert.equal(saved.rubricSnapshot?.version, Math.max(oldVersion, 3));
+    assert.equal(saved.rubricSnapshot?.criteria.length, 7);
+    assert.equal(calculateWeightedScore(saved.rubricSnapshot!, saved.evaluations.student.criterionScores).finalScoreOutOf100, previousScore);
+    assert.equal(saved.evaluations.student.note, 'Korunacak not');
+    assert.deepEqual(restored.state.rubrics.find(r => r.id === INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id), INFORMATIVE_BOOK_PRESENTATION_RUBRIC);
+    }
   } finally { (globalThis as unknown as { window?: unknown }).window = previous; }
 });

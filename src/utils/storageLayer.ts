@@ -24,6 +24,7 @@ import {
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
   BOOK_PRESENTATION_RUBRIC_IDS,
 } from '../data/bookPresentationRubric.ts';
+import { SPEAKING_EXAM_RUBRIC_ID } from '../data/speakingExamRubric.ts';
 
 export const CURRENT_SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'rubrikpad_state_v3';
@@ -3102,8 +3103,15 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
           }
         }
 
+        const oldSpeakingRubric = cleaned.rubrics.find(r => r.id === SPEAKING_EXAM_RUBRIC_ID && (r.version ?? 1) <= 3 && r.criteria.length === 7);
+        const speakingSeed = seedById.get(SPEAKING_EXAM_RUBRIC_ID);
         let sessionsUpdated = false;
         const syncedSessions = cleaned.sessions.map((ses) => {
+          if (oldSpeakingRubric && speakingSeed && ses.rubricId === SPEAKING_EXAM_RUBRIC_ID &&
+              (!ses.rubricSnapshot || ses.rubricSnapshot.id !== ses.rubricId)) {
+            sessionsUpdated = true;
+            return { ...ses, rubricSnapshot: freezeRubricSnapshot(oldSpeakingRubric) };
+          }
           if (
             ses.rubricId === LEGACY_BOOK_PRESENTATION_RUBRIC_ID &&
             (!ses.rubricSnapshot ||
@@ -3150,6 +3158,10 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
 
         const syncedRubrics = filteredRubrics.map((r) => {
           const seedMatch = seedById.get(r.id);
+          if (seedMatch && r.id === SPEAKING_EXAM_RUBRIC_ID && (r.version ?? 1) <= 3 && r.criteria.length === 7) {
+            gradeBackfilled = true;
+            return { ...seedMatch };
+          }
           if (
             seedMatch &&
             (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(r.id) &&
@@ -3268,8 +3280,15 @@ export async function purgeSyntheticSeedDataAsync(
                   }
                 }
 
+                const oldSpeakingRubric = cleaned.rubrics.find(r => r.id === SPEAKING_EXAM_RUBRIC_ID && (r.version ?? 1) <= 3 && r.criteria.length === 7);
+                const speakingSeed = seedById.get(SPEAKING_EXAM_RUBRIC_ID);
                 let sessionsUpdated = false;
                 const syncedSessions = cleaned.sessions.map((ses) => {
+                  if (oldSpeakingRubric && speakingSeed && ses.rubricId === SPEAKING_EXAM_RUBRIC_ID &&
+                      (!ses.rubricSnapshot || ses.rubricSnapshot.id !== ses.rubricId)) {
+                    sessionsUpdated = true;
+                    return { ...ses, rubricSnapshot: freezeRubricSnapshot(oldSpeakingRubric) };
+                  }
                   if (
                     ses.rubricId === LEGACY_BOOK_PRESENTATION_RUBRIC_ID &&
                     (!ses.rubricSnapshot ||
@@ -3323,6 +3342,10 @@ export async function purgeSyntheticSeedDataAsync(
 
                 const syncedRubrics = filteredRubrics.map((r) => {
                   const seedMatch = seedById.get(r.id);
+                  if (seedMatch && r.id === SPEAKING_EXAM_RUBRIC_ID && (r.version ?? 1) <= 3 && r.criteria.length === 7) {
+                    gradeBackfilled = true;
+                    return { ...seedMatch };
+                  }
                   if (
                     seedMatch &&
                     (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(
