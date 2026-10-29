@@ -443,11 +443,13 @@ export function generatePaginatedSessionPdfBytes(
 
   const speakingCriteria = isDualRubric
     ? allCriteria.filter(
-        (c, idx) => getCriterionSection(c, idx, effectiveRubric) === 'speaking'
+        (c, idx) => getCriterionSection(c, idx, effectiveRubric) === 'speaking' || (effectiveRubric.scoringMode === 'dual_weighted_book_and_speaking' && idx === 0)
       )
     : [];
+  const weightedDual = effectiveRubric.scoringMode === 'dual_weighted_book_and_speaking';
+  const speakingCodes = weightedDual ? ['K1', 'K5', 'K6', 'K7', 'K8', 'K9', 'K10'] : speakingCriteria.map((_, i) => `S${i + 1}`);
   const speakingStudentPages = includeSpeakingSection
-    ? chunkArray(sessionStudents, Math.min(rowsPerPage, maxRowsForLegend(speakingCriteria.length)))
+    ? chunkArray(sessionStudents, Math.min(rowsPerPage, maxRowsForLegend(speakingCriteria.length + (weightedDual ? 4 : 0))))
     : [];
   const bookStudentPages = includeBookSection ? studentPages : [];
   const totalPages = bookStudentPages.length + speakingStudentPages.length;
@@ -528,7 +530,7 @@ export function generatePaginatedSessionPdfBytes(
 
         const scoreCols = colOpts.showFinalScoreAndLevel
           ? isDualRubric
-            ? '  İçerik(70) Sunum(%30)   Kitap(100)'
+            ? '  İçerik(70) Sunum(30)    Kitap(100)'
             : '  Bireysel  Grup    Kesin(100)'
           : '';
 
@@ -707,8 +709,8 @@ export function generatePaginatedSessionPdfBytes(
     const speakingLegendChunks = chunkArray(
       speakingCriteria.map((c, idx) =>
         colOpts.showCriterionScores
-          ? `S${idx + 1}: ${c.title} (${c.maxPoints ?? c.weight}P)`
-          : `S${idx + 1}: ${c.title}`
+          ? `${speakingCodes[idx]}: ${c.title} (${c.maxPoints ?? c.weight}P)`
+          : `${speakingCodes[idx]}: ${c.title}`
       ),
       2
     );
@@ -719,6 +721,14 @@ export function generatePaginatedSessionPdfBytes(
       legendY -= 10;
     });
 
+    if (weightedDual) {
+      pushTextOp(ops, '/F1', 7, 36, legendY, 'Konuşma notu ağırlıkları: K1 10, K5 15, K6 20, K7 20, K8 15, K9 15, K10 5.');
+      legendY -= 10;
+      if ((effectiveRubric.version ?? 0) >= 6) {
+        pushTextOp(ops, '/F1', 7, 36, legendY, 'Kısmen düzeyi: 5 puanlık ölçütte 3, 15 puanlık ölçütte 8 puan.');
+        legendY -= 10;
+      }
+    }
     const headerDividerY = legendY - 2;
     ops.push(`0.75 w 36 ${headerDividerY} m 806 ${headerDividerY} l S`);
 
@@ -727,7 +737,7 @@ export function generatePaginatedSessionPdfBytes(
       ? speakingCriteria
           .map(
             (c, idx) =>
-              `S${idx + 1}(${c.maxPoints ?? c.weight}P)`.padEnd(9, ' ')
+              `${speakingCodes[idx]}(${c.maxPoints ?? c.weight}P)`.padEnd(9, ' ')
           )
           .join(' ')
       : '';
@@ -775,7 +785,7 @@ export function generatePaginatedSessionPdfBytes(
                 activeDirect[c.id]
               );
               const valStr = earned !== null ? String(earned) : '-';
-              return `S${idx + 1}:${valStr}`.padEnd(9, ' ');
+              return `${speakingCodes[idx]}:${valStr}`.padEnd(9, ' ');
             })
             .join(' ')
         : '';
@@ -1135,7 +1145,7 @@ export function generateStudentPortfolioPdfBytes(
               y,
               `Kesin Puan: ${item.scoreOutOf100} / 100   |   Kitap Sunumu Notu: ${
                 item.bookPresentationScoreOutOf100 ?? item.scoreOutOf100
-              } / 100 (İçerik: ${item.contentScoreOutOf70 ?? 0}/70 + %30 Konuşma: ${
+              } / 100 (İçerik: ${item.contentScoreOutOf70 ?? 0}/70 + Sunum: ${
                 item.speakingContributionOutOf30 ?? 0
               }/30)   |   Konuşma Sınavı Notu: ${
                 item.speakingExamScoreOutOf100 ?? '-'

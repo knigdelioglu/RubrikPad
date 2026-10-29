@@ -52,16 +52,16 @@ function levels(no: string, partial: string, yes: string): RubricLevel[] {
 const LITERARY_CONTENT_CRITERIA: RubricCriterion[] = [
   {
     id: 'crit-ees-1',
-    title: 'İçeriği ve temel anlamı kavrama',
+    title: 'Eserin temel anlamını doğru ve konuya uygun aktarma',
     category: '1. Kitap İçeriği (70 Puan)',
     section: 'content',
     weight: 20,
     maxPoints: 20,
     required: true,
     levels: levels(
-      'Eserin konusu, izleği (teması) veya temel anlamı doğru aktarılmamış ya da hiç açıklanmamıştır.',
-      'Eserin konusu veya izleği genel hatlarıyla belirtilmiş ancak temel anlam bütünlüğü eksik ya da yüzeysel aktarılmıştır.',
-      'Eserin türüne göre konusu, izleği (teması) ve temel anlamı doğru, açık ve bütünlüklü biçimde açıklanmıştır.'
+      'Konuşmada eserin konusu veya temel anlamı doğru ve konuya uygun biçimde aktarılmamıştır.',
+      'Konuşmada eserin konusu ve temel anlamı kısmen doğru veya eksik aktarılmıştır.',
+      'Konuşmada eserin konusu ve temel anlamı doğru, açık ve konuya uygun biçimde aktarılmıştır.'
     ),
   },
   {
@@ -114,16 +114,16 @@ const LITERARY_CONTENT_CRITERIA: RubricCriterion[] = [
 const INFORMATIVE_CONTENT_CRITERIA: RubricCriterion[] = [
   {
     id: 'crit-bks-1',
-    title: 'Konuyu, amacı ve temel düşünceyi kavrama',
+    title: 'Konuyu ve temel düşünceyi doğru ve konuya uygun aktarma',
     category: '1. Kitap İçeriği (70 Puan)',
     section: 'content',
     weight: 20,
     maxPoints: 20,
     required: true,
     levels: levels(
-      'Kitabın ele aldığı konu, yazılış amacı veya savunduğu temel düşünce (tez) doğru aktarılmamış ya da hiç açıklanmamıştır.',
-      'Kitabın konusu belirtilmiş ancak yazılış amacı veya temel düşüncesi eksik ya da yüzeysel biçimde ifade edilmiştir.',
-      'Kitabın konusu, yazılış amacı ve merkezî düşüncesi (tezi) doğru, açık ve bütünlüklü biçimde ortaya konulmuştur.'
+      'Konuşmada kitabın konusu veya temel düşüncesi doğru ve konuya uygun biçimde aktarılmamıştır.',
+      'Konuşmada kitabın konusu ve temel düşüncesi kısmen doğru veya eksik aktarılmıştır.',
+      'Konuşmada kitabın konusu ve temel düşüncesi doğru, açık ve konuya uygun biçimde aktarılmıştır.'
     ),
   },
   {
@@ -173,9 +173,9 @@ const INFORMATIVE_CONTENT_CRITERIA: RubricCriterion[] = [
 /**
  * 1. Edebî Eser Okuma ve Sunum Rubriği (Tek Değerlendirme, İki Sonuç — v4)
  * - 1. Kitap İçeriği: 4 ölçüt, 70 puan
- * - 2. Ortak Konuşma Değerlendirmesi: 6 ölçüt, 100 puan
- * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + Konuşma Puanının %30'u (30)
- * - Konuşma Sınavı Notu (100 üzerinden): 6 Konuşma Ölçütünün Toplamı (100)
+ * - 2. Ortak konuşma: 6 ölçüt, ham ölçek toplamı 100 puan
+ * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + altı sunum ölçütü (her biri 5, toplam 30)
+ * - Konuşma Sınavı Notu (100 üzerinden): K1 (10) ve altı konuşma ölçütü (15, 20, 20, 15, 15, 5)
  * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
  */
 export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
@@ -184,11 +184,11 @@ export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
   description:
-    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + %30 Konuşma = 100) hem de Konuşma Sınavı Notu (100) ayrı ayrı hesaplanır.',
+    'Roman, hikâye, şiir, tiyatro ve diğer edebî türlerdeki eserlerin sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + Sunum 30 = 100) hem de Konuşma Sınavı Notu (K1 10 + konuşma 90 = 100) ayrı ayrı hesaplanır.',
   maxLevelPoints: 2,
   createdAt: '2026-10-27',
-  version: 4,
-  scoringMode: 'dual_book_and_speaking',
+  version: 6,
+  scoringMode: 'dual_weighted_book_and_speaking',
   criteria: [
     ...LITERARY_CONTENT_CRITERIA,
     ...buildSharedSpeakingCriteria({
@@ -202,9 +202,9 @@ export const LITERARY_BOOK_PRESENTATION_RUBRIC: Rubric = {
 /**
  * 2. Bilgilendirici ve Düşünsel Kitap Okuma ve Sunum Rubriği (Tek Değerlendirme, İki Sonuç — v4)
  * - 1. Kitap İçeriği: 4 ölçüt, 70 puan
- * - 2. Ortak Konuşma Değerlendirmesi: 6 ölçüt, 100 puan
- * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + Konuşma Puanının %30'u (30)
- * - Konuşma Sınavı Notu (100 üzerinden): 6 Konuşma Ölçütünün Toplamı (100)
+ * - 2. Ortak konuşma: 6 ölçüt, ham ölçek toplamı 100 puan
+ * - Kitap Sunumu Notu (100 üzerinden): İçerik Puanı (70) + altı sunum ölçütü (her biri 5, toplam 30)
+ * - Konuşma Sınavı Notu (100 üzerinden): K1 (10) ve altı konuşma ölçütü (15, 20, 20, 15, 15, 5)
  * 9, 10, 11 ve 12. sınıflarda Türk Dili ve Edebiyatı dersi için erişilebilirdir.
  */
 export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC: Rubric = {
@@ -213,11 +213,11 @@ export const INFORMATIVE_BOOK_PRESENTATION_RUBRIC: Rubric = {
   subject: 'Türk Dili ve Edebiyatı',
   gradeLevel: 'Genel',
   description:
-    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + %30 Konuşma = 100) hem de Konuşma Sınavı Notu (100) ayrı ayrı hesaplanır.',
+    'Tarih, bilim, felsefe, araştırma ve düşünce kitaplarının sunumunu “Tek Değerlendirme, İki Sonuç” sistemiyle değerlendirir: 4 içerik ölçütü (70 puan) ve 6 ortak konuşma ölçütü (100 puan) tek seferde puanlanarak hem Kitap Sunumu Notu (İçerik 70 + Sunum 30 = 100) hem de Konuşma Sınavı Notu (K1 10 + konuşma 90 = 100) ayrı ayrı hesaplanır.',
   maxLevelPoints: 2,
   createdAt: '2026-10-27',
-  version: 4,
-  scoringMode: 'dual_book_and_speaking',
+  version: 6,
+  scoringMode: 'dual_weighted_book_and_speaking',
   criteria: [
     ...INFORMATIVE_CONTENT_CRITERIA,
     ...buildSharedSpeakingCriteria({

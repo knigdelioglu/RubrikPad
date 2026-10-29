@@ -522,7 +522,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
                               }{' '}
                               / 100 (İçerik:{' '}
                               {currentScoreCalc.dualResult.contentScoreOutOf70}
-                              /70 + %30 Konuşma:{' '}
+                              /70 + Sunum:{' '}
                               {
                                 currentScoreCalc.dualResult
                                   .speakingContributionOutOf30

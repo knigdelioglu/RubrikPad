@@ -1046,8 +1046,7 @@ export const IndividualEvaluationView: React.FC<
                         <span>
                           İçerik: {effectiveCalc.dualResult.contentScoreOutOf70}
                           /70 ({effectiveCalc.dualResult.completedContentCount}/
-                          {effectiveCalc.dualResult.totalContentCount}) + %30
-                          Konuşma:{' '}
+                          {effectiveCalc.dualResult.totalContentCount}) + Sunum:{' '}
                           {effectiveCalc.dualResult.speakingContributionOutOf30}
                           /30
                         </span>
@@ -1113,7 +1112,7 @@ export const IndividualEvaluationView: React.FC<
                         }`}
                       >
                         <span>
-                          6 Ortak Konuşma Ölçütü Toplamı (
+                          Konuşma sınavı ölçütleri (
                           {effectiveCalc.dualResult.completedSpeakingCount}/
                           {effectiveCalc.dualResult.totalSpeakingCount})
                         </span>

@@ -293,7 +293,7 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
   assert.deepEqual(
     literary.criteria.map((c) => [c.title, c.weight, c.maxPoints, c.section]),
     [
-      ['İçeriği ve temel anlamı kavrama', 20, 20, 'content'],
+      ['Eserin temel anlamını doğru ve konuya uygun aktarma', 20, 20, 'content'],
       ['Türe uygun edebî yapı, dil ve anlatımı çözümleme', 20, 20, 'content'],
       ['Yorumlama ve eleştirel değerlendirme', 20, 20, 'content'],
       ['Yorumları eserden örneklerle destekleme', 10, 10, 'content'],
@@ -310,7 +310,7 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
   assert.deepEqual(
     informative.criteria.map((c) => [c.title, c.weight, c.maxPoints, c.section]),
     [
-      ['Konuyu, amacı ve temel düşünceyi kavrama', 20, 20, 'content'],
+      ['Konuyu ve temel düşünceyi doğru ve konuya uygun aktarma', 20, 20, 'content'],
       [
         'Temel bilgileri, kavramları ve düşünceler arası ilişkileri açıklama',
         20,
@@ -331,7 +331,7 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
   for (const rubric of [literary, informative]) {
     assert.equal(ALL_GRADE_TDE_RUBRIC_IDS.has(rubric.id), true);
     assert.equal(isDualBookSpeakingRubric(rubric), true);
-    assert.equal(rubric.scoringMode, 'dual_book_and_speaking');
+    assert.equal(rubric.scoringMode, 'dual_weighted_book_and_speaking');
     assert.equal(rubric.gradeLevel, 'Genel');
     assert.equal(RubrikService.getEffectiveRubricGradeLevel(rubric), 'Genel');
     assert.equal(
@@ -451,12 +451,12 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
       Object.fromEntries(rubric.criteria.map((c) => [c.id, 1]))
     );
     assert.equal(allKismenCalc.isComplete, true);
-    assert.equal(allKismenCalc.finalScoreOutOf100, 50);
+    assert.equal(allKismenCalc.finalScoreOutOf100, 53);
     assert.equal(allKismenCalc.dualResult?.contentScoreOutOf70, 35);
-    assert.equal(allKismenCalc.dualResult?.speakingScoreOutOf100, 50);
-    assert.equal(allKismenCalc.dualResult?.speakingContributionOutOf30, 15);
-    assert.equal(allKismenCalc.dualResult?.finalBookPresentationScoreOutOf100, 50);
-    assert.equal(allKismenCalc.dualResult?.finalSpeakingScoreOutOf100, 50);
+    assert.equal(allKismenCalc.dualResult?.speakingScoreOutOf100, 52);
+    assert.equal(allKismenCalc.dualResult?.speakingContributionOutOf30, 18);
+    assert.equal(allKismenCalc.dualResult?.finalBookPresentationScoreOutOf100, 53);
+    assert.equal(allKismenCalc.dualResult?.finalSpeakingScoreOutOf100, 52);
 
     // 3. All Hayır (%0 -> 0 points): Complete with 0 for both results!
     const allNoResult = calculateWeightedScore(
@@ -490,11 +490,11 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
     const mixedResult = calculateWeightedScore(rubric, mixedScores);
     assert.equal(mixedResult.isComplete, true);
     assert.equal(mixedResult.dualResult?.contentScoreOutOf70, 50);
-    assert.equal(mixedResult.dualResult?.speakingScoreOutOf100, 80);
-    assert.equal(mixedResult.dualResult?.speakingContributionOutOf30, 24);
-    assert.equal(mixedResult.dualResult?.finalSpeakingScoreOutOf100, 80);
-    assert.equal(mixedResult.dualResult?.finalBookPresentationScoreOutOf100, 74);
-    assert.equal(mixedResult.finalScoreOutOf100, 74);
+    assert.equal(mixedResult.dualResult?.speakingScoreOutOf100, 85);
+    assert.equal(mixedResult.dualResult?.speakingContributionOutOf30, 23);
+    assert.equal(mixedResult.dualResult?.finalSpeakingScoreOutOf100, 85);
+    assert.equal(mixedResult.dualResult?.finalBookPresentationScoreOutOf100, 73);
+    assert.equal(mixedResult.finalScoreOutOf100, 73);
 
     // 5. Independent completion rules:
     // (a) If all 6 speaking criteria are scored (80/100) but 1 content criterion is unscored (null):
@@ -510,7 +510,7 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
     assert.equal(partialContentResult.isContentComplete, false);
     assert.equal(partialContentResult.isSpeakingComplete, true);
     assert.equal(partialContentResult.isBookPresentationComplete, false);
-    assert.equal(partialContentResult.finalSpeakingScoreOutOf100, 80);
+    assert.equal(partialContentResult.finalSpeakingScoreOutOf100, 85);
     assert.equal(partialContentResult.finalBookPresentationScoreOutOf100, null);
 
     // (b) If all 4 content criteria are scored (50/70) but 1 speaking criterion is unscored (null):
@@ -568,8 +568,8 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
     }
     assert.ok(persistedEval);
     assert.equal(persistedEval.contentScoreOutOf70, 50);
-    assert.equal(persistedEval.speakingExamScore, 80);
-    assert.equal(persistedEval.bookPresentationScore, 74);
+    assert.equal(persistedEval.speakingExamScore, 85);
+    assert.equal(persistedEval.bookPresentationScore, 73);
 
     // 7. CSV export contains separate columns for Content (70), %30 Speaking (30), Book Presentation (100), and Speaking Exam (100)
     const dualSession: EvaluationSession = {
@@ -600,10 +600,10 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
       'cls-10a'
     );
     assert.equal(csvText.includes('Kitap İçeriği Puanı (70)'), true);
-    assert.equal(csvText.includes('Konuşma %30 Katkısı (30)'), true);
+    assert.equal(csvText.includes('Sunum Katkısı (30)'), true);
     assert.equal(csvText.includes('Kitap Sunumu Notu (100)'), true);
     assert.equal(csvText.includes('Konuşma Sınavı Notu (100)'), true);
-    assert.equal(csvText.includes('50,24,74,80'), true);
+    assert.equal(csvText.includes('50,23,73,85'), true);
 
     // 8. Bulk fast evaluation ("Sadece Puanlanmamışlara Uygula") respects Hayır (0 points) as already scored:
     const bulkEvaluations = applyCriterionScoreToStudents(
@@ -742,8 +742,8 @@ test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes pro
     [stu]
   );
   const dualSessionPdfText = decodePdfTextWithToUnicode(dualSessionPdfBytes);
-  assert.equal(dualSessionPdfText.includes('Kitap Sunumu Notu: 74/100'), true);
-  assert.equal(dualSessionPdfText.includes('Konuşma Sınavı Notu: 80/100'), true);
+  assert.equal(dualSessionPdfText.includes('Kitap(100)'), true);
+  assert.equal(dualSessionPdfText.includes('Konuşma Sınavı Notu: 85/100'), true);
 
   const portfolioBytes = generateStudentPortfolioPdfBytes(
     stu,
@@ -761,9 +761,9 @@ test('generateStudentPortfolioPdfBytes and generateClassroomOverviewPdfBytes pro
     true
   );
   assert.equal(portfolioText.includes('Çağrı Şahin Öztürk'), true);
-  assert.equal(portfolioText.includes('Kitap Sunumu Notu: 74 / 100'), true);
-  assert.equal(portfolioText.includes('Konuşma Sınavı Notu: 80 / 100'), true);
-  assert.equal(portfolioText.includes('Ders Öğretmeni'), true);
+  assert.equal(portfolioText.includes('Kitap Sunumu Notu: 73 / 100'), true);
+  assert.equal(portfolioText.includes('Konuşma Sınavı Notu: 85 / 100'), true);
+  assert.equal(portfolioText.includes('Türk Dili ve Edebiyatı Öğretmeni'), true);
   assert.equal(portfolioText.includes('Okul Müdürü'), true);
   assert.equal(portfolioText.includes('Veli Adı Soyadı'), false);
 });

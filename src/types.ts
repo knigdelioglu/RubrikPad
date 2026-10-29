@@ -35,7 +35,7 @@ export interface RubricLevel {
 
 export type RubricCriterionSection = 'content' | 'speaking';
 
-export type RubricScoringMode = 'standard_100' | 'dual_book_and_speaking';
+export type RubricScoringMode = 'standard_100' | 'dual_book_and_speaking' | 'dual_weighted_book_and_speaking';
 
 export interface DualEvaluationResult {
   isDualRubric: true;

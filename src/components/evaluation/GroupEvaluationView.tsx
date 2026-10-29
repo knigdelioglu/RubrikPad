@@ -1242,7 +1242,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                         <span>
                           İçerik:{' '}
                           {activeGroupLifecycle.dualResult.contentScoreOutOf70}
-                          /70 + %30 Konuşma:{' '}
+                          /70 + Sunum:{' '}
                           {
                             activeGroupLifecycle.dualResult
                               .speakingContributionOutOf30
@@ -1316,7 +1316,7 @@ export const GroupEvaluationView: React.FC<GroupEvaluationViewProps> = ({
                         }`}
                       >
                         <span>
-                          6 Ortak Konuşma Ölçütü Toplamı (
+                          Konuşma sınavı ölçütleri (
                           {
                             activeGroupLifecycle.dualResult
                               .completedSpeakingCount

@@ -3154,10 +3154,13 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
             seedMatch &&
             (BOOK_PRESENTATION_RUBRIC_IDS as readonly string[]).includes(r.id) &&
             (r.version ?? 3) < (seedMatch.version ?? 4) &&
-            r.criteria.length === 7
+            (r.criteria.length === 7 || ((r.version === 4 || r.version === 5) && r.criteria.length === 10))
           ) {
             gradeBackfilled = true;
-            return { ...seedMatch };
+            return r.criteria.length === 7 ? { ...seedMatch } : {
+              ...r, version: seedMatch.version, scoringMode: seedMatch.scoringMode,
+              criteria: r.criteria.map((criterion, index) => index === 0 ? { ...criterion, title: seedMatch.criteria[0].title, levels: seedMatch.criteria[0].levels } : criterion),
+            };
           }
           if (seedMatch?.gradeLevel && r.gradeLevel !== seedMatch.gradeLevel) {
             gradeBackfilled = true;
@@ -3326,10 +3329,13 @@ export async function purgeSyntheticSeedDataAsync(
                       r.id
                     ) &&
                     (r.version ?? 3) < (seedMatch.version ?? 4) &&
-                    r.criteria.length === 7
+                    (r.criteria.length === 7 || ((r.version === 4 || r.version === 5) && r.criteria.length === 10))
                   ) {
                     gradeBackfilled = true;
-                    return { ...seedMatch };
+                    return r.criteria.length === 7 ? { ...seedMatch } : {
+                      ...r, version: seedMatch.version, scoringMode: seedMatch.scoringMode,
+                      criteria: r.criteria.map((criterion, index) => index === 0 ? { ...criterion, title: seedMatch.criteria[0].title, levels: seedMatch.criteria[0].levels } : criterion),
+                    };
                   }
                   if (
                     seedMatch?.gradeLevel &&

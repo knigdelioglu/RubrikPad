@@ -222,6 +222,7 @@ export function isDualBookSpeakingRubric(
 ): boolean {
   if (!rubric || !Array.isArray(rubric.criteria)) return false;
   if (rubric.scoringMode === 'standard_100') return false;
+  if (rubric.scoringMode === 'dual_weighted_book_and_speaking') return true;
   if (rubric.scoringMode === 'dual_book_and_speaking') return true;
   const hasContent = rubric.criteria.some((c) => c.section === 'content');
   const hasSpeaking = rubric.criteria.some((c) => c.section === 'speaking');
@@ -347,6 +348,13 @@ export function validateRubric(rubric: Rubric): {
   });
 
   if (isDual) {
+    if (rubric.scoringMode === 'dual_weighted_book_and_speaking' &&
+        (rubric.criteria.length !== 10 ||
+          getCriterionSection(rubric.criteria[0], 0, rubric) !== 'content' ||
+          rubric.criteria.filter((c, i) => getCriterionSection(c, i, rubric) === 'content').length !== 4 ||
+          rubric.criteria.filter((c, i) => getCriterionSection(c, i, rubric) === 'speaking').length !== 6)) {
+      errors.push('Bu puanlama modeli K1 ilk ölçüt olmak üzere dört içerik ve altı konuşma ölçütü gerektirir.');
+    }
     if (Math.round(contentPoints * 100) / 100 !== 70 || Math.round(contentWeight * 100) / 100 !== 70) {
       errors.push(
         `Kitap içeriği bölümü toplam 70 puan olmalıdır (Şu an: ${contentPoints} Puan).`
@@ -439,6 +447,12 @@ export function calculateDualBookSpeakingScore(
   criterionScores: Record<string, number | null | undefined>,
   directCriterionScores?: Record<string, number | null | undefined>
 ): DualEvaluationResult {
+  const weightedDual = rubric.scoringMode === 'dual_weighted_book_and_speaking';
+  // Version 6 assigns a whole-number contribution to each criterion. Version 5
+  // snapshots keep their original final-only rounding for historical reports.
+  const wholeCriterionScores = weightedDual && (rubric.version ?? 0) >= 6;
+  const contribution = (ratio: number, weight: number) =>
+    wholeCriterionScores ? Math.ceil(ratio * weight - 1e-10) : ratio * weight;
   let contentEarnedPoints = 0;
   let contentMaxPoints = 0;
   let contentCompletedCount = 0;
@@ -453,6 +467,10 @@ export function calculateDualBookSpeakingScore(
   let speakingRequiredCount = 0;
   let speakingCompletedRequiredCount = 0;
 
+  let weightedBookSpeaking = 0;
+  let weightedSpeaking = 0;
+  let speakingIndex = 0;
+  let sharedTopicCompleted = false;
   rubric.criteria.forEach((criterion, idx) => {
     const sec = getCriterionSection(criterion, idx, rubric) || (idx < 4 ? 'content' : 'speaking');
     const isRequired = criterion.required !== false;
@@ -474,7 +492,11 @@ export function calculateDualBookSpeakingScore(
       if (earned !== null) {
         contentCompletedCount += 1;
         if (isRequired) contentCompletedRequiredCount += 1;
-        contentEarnedPoints += earned;
+        contentEarnedPoints += wholeCriterionScores ? Math.ceil(earned - 1e-10) : earned;
+        if (weightedDual && idx === 0) {
+          weightedSpeaking += contribution(earned / effectiveWeight, 10);
+          sharedTopicCompleted = true;
+        }
       }
     } else {
       speakingTotalCount += 1;
@@ -484,7 +506,13 @@ export function calculateDualBookSpeakingScore(
         speakingCompletedCount += 1;
         if (isRequired) speakingCompletedRequiredCount += 1;
         speakingEarnedPoints += earned;
+        if (weightedDual) {
+          const ratio = earned / effectiveWeight;
+          weightedSpeaking += contribution(ratio, [15, 20, 20, 15, 15, 5][speakingIndex] ?? 0);
+          weightedBookSpeaking += contribution(ratio, 5);
+        }
       }
+      speakingIndex += 1;
     }
   });
 
@@ -496,7 +524,8 @@ export function calculateDualBookSpeakingScore(
   const isSpeakingComplete =
     speakingTotalCount > 0 &&
     speakingCompletedRequiredCount === speakingRequiredCount &&
-    speakingCompletedCount === speakingTotalCount;
+    speakingCompletedCount === speakingTotalCount &&
+    (!weightedDual || sharedTopicCompleted);
 
   const normalizedContentEarned =
     contentMaxPoints > 0 && contentMaxPoints !== 70
@@ -504,32 +533,32 @@ export function calculateDualBookSpeakingScore(
       : contentEarnedPoints;
 
   const finalContentScoreOutOf70 = isContentComplete
-    ? Math.min(70, Math.max(0, Math.round(normalizedContentEarned)))
+    ? Math.min(70, Math.max(0, wholeCriterionScores ? normalizedContentEarned : Math.round(normalizedContentEarned)))
     : null;
 
-  const normalizedSpeakingEarned =
+  const normalizedSpeakingEarned = weightedDual ? weightedSpeaking :
     speakingMaxPoints > 0 && speakingMaxPoints !== 100
       ? (speakingEarnedPoints / speakingMaxPoints) * 100
       : speakingEarnedPoints;
 
   const provisionalSpeakingScoreOutOf100 = Math.min(
     100,
-    Math.max(0, Math.round(normalizedSpeakingEarned))
+    Math.max(0, wholeCriterionScores ? normalizedSpeakingEarned : Math.round(normalizedSpeakingEarned))
   );
 
   const finalSpeakingScoreOutOf100 = isSpeakingComplete
     ? provisionalSpeakingScoreOutOf100
     : null;
 
-  const speakingContributionRaw = normalizedSpeakingEarned * 0.3;
+  const speakingContributionRaw = weightedDual ? weightedBookSpeaking : normalizedSpeakingEarned * 0.3;
   const speakingContributionOutOf30 =
-    Math.round(speakingContributionRaw * 10) / 10;
+    wholeCriterionScores ? speakingContributionRaw : weightedDual ? Math.round(speakingContributionRaw) : Math.round(speakingContributionRaw * 10) / 10;
 
   const isBookPresentationComplete = isContentComplete && isSpeakingComplete;
 
   const provisionalBookPresentationScoreOutOf100 = Math.min(
     100,
-    Math.max(0, Math.round(normalizedContentEarned + speakingContributionRaw))
+    Math.max(0, wholeCriterionScores ? normalizedContentEarned + speakingContributionRaw : Math.round(normalizedContentEarned + speakingContributionRaw))
   );
 
   const finalBookPresentationScoreOutOf100 = isBookPresentationComplete
@@ -537,10 +566,10 @@ export function calculateDualBookSpeakingScore(
     : null;
 
   const speakingPerformanceLabel =
-    speakingCompletedCount === 0
+    speakingCompletedCount === 0 && !(weightedDual && sharedTopicCompleted)
       ? 'Değerlendirilmedi'
       : !isSpeakingComplete
-      ? `Eksik Ölçüt (${speakingCompletedCount}/${speakingTotalCount})`
+      ? `Eksik Ölçüt (${speakingCompletedCount + (weightedDual && sharedTopicCompleted ? 1 : 0)}/${speakingTotalCount + (weightedDual ? 1 : 0)})`
       : getPerformanceBandAndLabel(provisionalSpeakingScoreOutOf100)
           .performanceLabel;
 
@@ -569,13 +598,13 @@ export function calculateDualBookSpeakingScore(
     totalContentCount: contentTotalCount,
     isContentComplete,
     finalContentScoreOutOf70,
-    speakingEarnedPoints: roundedSpeakingEarned,
+    speakingEarnedPoints: weightedDual ? Math.round(roundedSpeakingEarned) : roundedSpeakingEarned,
     speakingScoreOutOf100: provisionalSpeakingScoreOutOf100,
     speakingMaxPoints: speakingMaxPoints || 100,
-    speakingCompletedCount,
-    completedSpeakingCount: speakingCompletedCount,
-    speakingTotalCount,
-    totalSpeakingCount: speakingTotalCount,
+    speakingCompletedCount: speakingCompletedCount + (weightedDual && sharedTopicCompleted ? 1 : 0),
+    completedSpeakingCount: speakingCompletedCount + (weightedDual && sharedTopicCompleted ? 1 : 0),
+    speakingTotalCount: speakingTotalCount + (weightedDual ? 1 : 0),
+    totalSpeakingCount: speakingTotalCount + (weightedDual ? 1 : 0),
     isSpeakingComplete,
     finalSpeakingScoreOutOf100,
     provisionalSpeakingScoreOutOf100,
@@ -3571,7 +3600,7 @@ export function generateSessionCsv(
     isDual && dualReportMode === 'speaking'
       ? effectiveRubric.criteria.filter(
           (c, idx) =>
-            getCriterionSection(c, idx, effectiveRubric) === 'speaking'
+            getCriterionSection(c, idx, effectiveRubric) === 'speaking' || (effectiveRubric.scoringMode === 'dual_weighted_book_and_speaking' && idx === 0)
         )
       : effectiveRubric.criteria;
 
@@ -3587,14 +3616,14 @@ export function generateSessionCsv(
       ? dualReportMode === 'book'
         ? [
             'Kitap İçeriği Puanı (70)',
-            'Sunum %30 Katkısı (30)',
+            'Sunum Katkısı (30)',
             'Kitap Sunumu Notu (100)',
           ]
         : dualReportMode === 'speaking'
         ? ['Konuşma Sınavı Notu (100)']
         : [
             'Kitap İçeriği Puanı (70)',
-            'Konuşma %30 Katkısı (30)',
+            'Sunum Katkısı (30)',
             'Kitap Sunumu Notu (100)',
             'Konuşma Sınavı Notu (100)',
           ]

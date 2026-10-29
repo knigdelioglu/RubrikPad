@@ -1077,14 +1077,14 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
                       <span className="font-bold text-blue-950">
                         Tek Değerlendirme, İki Sonuç Sistemi:
                       </span>{' '}
-                      4 kitap içeriği ölçütü (70 Puan) ve 6 ortak konuşma ölçütü (100 Puan) yalnızca birer kez puanlanır.
+                      {activeRubric.scoringMode === 'dual_weighted_book_and_speaking' ? 'On ölçüt bir kez puanlanır. Kitap notunda K5–K10 beşer puandır; konuşma notunda K1 10, K5–K10 sırasıyla 15, 20, 20, 15, 15, 5 puandır. Kısmen düzeyi için 5 puanlık ölçüt 3, 15 puanlık ölçüt 8 puandır.' : 'Dört içerik ve altı konuşma ölçütü birer kez puanlanır.'}
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5 shrink-0 font-mono-num font-bold">
                       <span className="px-2 py-0.5 rounded bg-blue-900 text-white">
-                        Kitap Sunumu: İçerik (70) + %30 Konuşma = 100P
+                        {activeRubric.scoringMode === 'dual_weighted_book_and_speaking' ? 'Kitap: İçerik 70 + Sunum 30' : 'Kitap: İçerik 70 + Konuşmanın %30’u'}
                       </span>
                       <span className="px-2 py-0.5 rounded bg-emerald-800 text-white">
-                        Konuşma Sınavı: 6 Konuşma Ölçütü = 100P
+                        {activeRubric.scoringMode === 'dual_weighted_book_and_speaking' ? 'Konuşma: K1 10 + Konuşma 90' : 'Konuşma: 6 ölçüt 100'}
                       </span>
                     </div>
                   </div>
