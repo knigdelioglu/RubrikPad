@@ -4035,7 +4035,9 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
     { dualReportMode: 'book' }
   );
   const pdfBookText = decodePdfTextWithToUnicode(pdfBookOnlyBytes);
-  assert.ok(pdfBookText.includes('Kitap Sunumu Notu: 93/100'));
+  assert.match(pdfBookText, /111\s+Ayşe Kaya[^\n]*K9:10[^\n]*K10:5[^\n]*93/);
+  assert.ok(!pdfBookText.includes('Ek Ölçüt'));
+  assert.ok(!pdfBookText.includes('Kitap Sunumu Notu:'));
   assert.ok(!pdfBookText.includes('Konuşma Sınavı'));
   assert.ok(!pdfBookText.includes('Konuşma(100)'));
 
@@ -4116,8 +4118,12 @@ test('Institution Settings & Official Signatures: Settings persist schoolName, t
     const decodedSessionPdf = decodePdfTextWithToUnicode(sessionPdfBytes);
     assert.ok(!decodedSessionPdf.includes('Düzey'));
     assert.ok(decodedSessionPdf.includes('Atatürk Anadolu Lisesi'));
-    assert.ok(decodedSessionPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
-    assert.ok(decodedSessionPdf.includes('Okul Müdürü: Mehmet Demir'));
+    assert.ok(decodedSessionPdf.includes('Ayşe Yılmaz'));
+    assert.ok(decodedSessionPdf.includes('Türk Dili ve Edebiyatı Öğretmeni'));
+    assert.ok(!decodedSessionPdf.includes('İmza'));
+    assert.ok(!decodedSessionPdf.includes('Mühür'));
+    assert.ok(decodedSessionPdf.includes('Mehmet Demir'));
+    assert.ok(decodedSessionPdf.includes('Okul Müdürü'));
     assert.ok(!decodedSessionPdf.includes('Öğrenci Velisi'));
     assert.ok(!decodedSessionPdf.includes('Veli Adı Soyadı'));
     assert.ok(!decodedSessionPdf.includes('Okul Müdürlüğü'));
@@ -4133,8 +4139,12 @@ test('Institution Settings & Official Signatures: Settings persist schoolName, t
     const decodedPortfolioPdf = decodePdfTextWithToUnicode(portfolioPdfBytes);
     assert.ok(!decodedPortfolioPdf.includes('Başarı Düzeyi'));
     assert.ok(decodedPortfolioPdf.includes('Atatürk Anadolu Lisesi'));
-    assert.ok(decodedPortfolioPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
-    assert.ok(decodedPortfolioPdf.includes('Okul Müdürü: Mehmet Demir'));
+    assert.ok(decodedPortfolioPdf.includes('Ayşe Yılmaz'));
+    assert.ok(decodedPortfolioPdf.includes('Türk Dili ve Edebiyatı Öğretmeni'));
+    assert.ok(!decodedPortfolioPdf.includes('İmza'));
+    assert.ok(!decodedPortfolioPdf.includes('Mühür'));
+    assert.ok(decodedPortfolioPdf.includes('Mehmet Demir'));
+    assert.ok(decodedPortfolioPdf.includes('Okul Müdürü'));
     assert.ok(!decodedPortfolioPdf.includes('Öğrenci Velisi'));
     assert.ok(!decodedPortfolioPdf.includes('Veli Adı Soyadı'));
 
@@ -4146,8 +4156,12 @@ test('Institution Settings & Official Signatures: Settings persist schoolName, t
     );
     const decodedOverviewPdf = decodePdfTextWithToUnicode(overviewPdfBytes);
     assert.ok(decodedOverviewPdf.includes('Atatürk Anadolu Lisesi'));
-    assert.ok(decodedOverviewPdf.includes('Ders Öğretmeni: Ayşe Yılmaz'));
-    assert.ok(decodedOverviewPdf.includes('Okul Müdürü: Mehmet Demir'));
+    assert.ok(decodedOverviewPdf.includes('Ayşe Yılmaz'));
+    assert.ok(decodedOverviewPdf.includes('Türk Dili ve Edebiyatı Öğretmeni'));
+    assert.ok(!decodedOverviewPdf.includes('İmza'));
+    assert.ok(!decodedOverviewPdf.includes('Mühür'));
+    assert.ok(decodedOverviewPdf.includes('Mehmet Demir'));
+    assert.ok(decodedOverviewPdf.includes('Okul Müdürü'));
     assert.ok(!decodedOverviewPdf.includes('Öğrenci Velisi'));
   } finally {
     __clearInstitutionSettingsForTests();

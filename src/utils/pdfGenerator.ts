@@ -327,20 +327,19 @@ export function resolvePdfColumnOptions(
   };
 }
 
-function formatOfficialSignatureLine(
-  teacherName: string,
-  principalName: string,
+type PdfTextWriter = (ops: string[], font: '/F1' | '/F2', size: number, x: number, y: number, text: string) => void;
+
+function writeOfficialSignatureBlock(
+  ops: string[], write: PdfTextWriter, teacherName: string, principalName: string,
   pageCounterText?: string
-): string {
-  const teacherPart = teacherName
-    ? `Ders Öğretmeni: ${teacherName} (İmza: ____________)`
-    : 'Ders Öğretmeni İmza: ______________________';
-  const principalPart = principalName
-    ? `Okul Müdürü: ${principalName} (İmza / Mühür: ____________)`
-    : 'Okul Müdürü İmza / Mühür: ______________________';
-  return pageCounterText
-    ? `${teacherPart}          ${principalPart}          ${pageCounterText}`
-    : `${teacherPart}          ${principalPart}`;
+): void {
+  // Keep names and their titles in separate, aligned lines, even when names are not set.
+  const nameSize = (name: string) => Math.min(8, 260 / Math.max(name.length * 0.6, 1));
+  if (teacherName) write(ops, '/F2', nameSize(teacherName), 36, 40, teacherName);
+  if (principalName) write(ops, '/F2', nameSize(principalName), 340, 40, principalName);
+  write(ops, '/F1', 7.5, 36, 27, 'Türk Dili ve Edebiyatı Öğretmeni');
+  write(ops, '/F1', 7.5, 340, 27, 'Okul Müdürü');
+  if (pageCounterText) write(ops, '/F2', 7.5, 700, 40, pageCounterText);
 }
 
 export function generatePaginatedSessionPdfBytes(
@@ -398,8 +397,12 @@ export function generatePaginatedSessionPdfBytes(
   };
 
   const allCriteria: RubricCriterion[] = effectiveRubric.criteria || [];
-  const criteriaPerBand = 8;
-  const criterionBands = chunkArray(allCriteria, criteriaPerBand);
+  // All criterion columns belong on the student's single table row.
+  const criterionBands = chunkArray(allCriteria, Math.max(1, allCriteria.length));
+  const criteriaPerBand = Math.max(1, allCriteria.length);
+  const tableFontSize = colOpts.showCriterionScores
+    ? Math.min(7.2, 770 / ((33 + allCriteria.length * 9 + (colOpts.showFinalScoreAndLevel ? 38 : 0)) * 0.6))
+    : 7.2;
 
   // Strictly isolate students to the requested `classroom.id` so multi-class sessions never leak another class's roster into this classroom's official PDF report
   const sessionStudents = students
@@ -410,11 +413,13 @@ export function generatePaginatedSessionPdfBytes(
       })
     );
 
-  // If a rubric has > 8 criteria, each student row uses 1 extra continuation line per additional band
-  const effectiveRowsPerPage =
-    criterionBands.length > 1
-      ? Math.max(5, Math.min(rowsPerPage, Math.floor(14 / criterionBands.length)))
-      : rowsPerPage;
+  // Reserve room for the footer when every student has an observation note.
+  const maxRowsForLegend = (criterionCount: number) => {
+    const firstRowY = 532 - Math.ceil(criterionCount / 2) * 10 - 33;
+    const rowHeight = colOpts.showObservationNotes ? 25 : 15;
+    return Math.max(1, Math.floor((firstRowY - 68) / rowHeight));
+  };
+  const effectiveRowsPerPage = Math.min(rowsPerPage, maxRowsForLegend(allCriteria.length));
 
   const studentPages = chunkArray(sessionStudents, effectiveRowsPerPage);
   const isDualRubric = isDualBookSpeakingRubric(effectiveRubric);
@@ -432,7 +437,7 @@ export function generatePaginatedSessionPdfBytes(
       )
     : [];
   const speakingStudentPages = includeSpeakingSection
-    ? chunkArray(sessionStudents, rowsPerPage)
+    ? chunkArray(sessionStudents, Math.min(rowsPerPage, maxRowsForLegend(speakingCriteria.length)))
     : [];
   const bookStudentPages = includeBookSection ? studentPages : [];
   const totalPages = bookStudentPages.length + speakingStudentPages.length;
@@ -520,11 +525,9 @@ export function generatePaginatedSessionPdfBytes(
         const headerLine =
           bandIdx === 0
             ? `No     Ad Soyad                  ${critHeaders}${scoreCols}`
-            : `       [Ek Ölçütler K${bandOffset + 1}-K${
-                bandOffset + band.length
-              }]       ${critHeaders}`;
+            : critHeaders;
 
-        pushTextOp(ops, '/F2', 7.2, 36, tableHeaderY, headerLine);
+        pushTextOp(ops, '/F2', tableFontSize, 36, tableHeaderY, headerLine);
         tableHeaderY -= 11;
       });
     }
@@ -625,25 +628,11 @@ export function generatePaginatedSessionPdfBytes(
             ? `  ${indStr}  ${grpStr}  ${finalStr}`
             : '';
 
-          const dualContinuationSummary =
-            isDualRubric && dual && colOpts.showFinalScoreAndLevel
-              ? `   |   Kitap Sunumu Notu: ${
-                  dual.finalBookPresentationScoreOutOf100 !== null
-                    ? `${dual.finalBookPresentationScoreOutOf100}/100`
-                    : 'Eksik'
-                } (İçerik: ${dual.contentScoreOutOf70}/70 + %30 Sunum: ${
-                  dual.speakingContributionOutOf30
-                }/30)`
-              : '';
+          const rowLine = `${stu.studentNumber.padEnd(6, ' ')} ${stu.fullName
+            .slice(0, 24)
+            .padEnd(25, ' ')} ${critVals}${scoreVals}`;
 
-          const rowLine =
-            bandIdx === 0
-              ? `${stu.studentNumber.padEnd(6, ' ')} ${stu.fullName
-                  .slice(0, 24)
-                  .padEnd(25, ' ')} ${critVals}${scoreVals}`
-              : `       (Ek Ölçüt Puanları)       ${critVals}${dualContinuationSummary}`;
-
-          pushTextOp(ops, '/F1', 7.2, 36, y, rowLine);
+          pushTextOp(ops, '/F1', tableFontSize, 36, y, rowLine);
           y -= 12;
         });
       }
@@ -672,18 +661,7 @@ export function generatePaginatedSessionPdfBytes(
     // 6. Footer & Official Signature Block on every page
     if (colOpts.showSignatures) {
       ops.push('0.5 w 36 54 m 806 54 l S');
-      pushTextOp(
-        ops,
-        '/F2',
-        7.5,
-        36,
-        38,
-        formatOfficialSignatureLine(
-          colOpts.teacherName,
-          colOpts.principalName,
-          `Sayfa ${pageIdx + 1} / ${totalPages}`
-        )
-      );
+      writeOfficialSignatureBlock(ops, pushTextOp, colOpts.teacherName, colOpts.principalName, `Sayfa ${pageIdx + 1} / ${totalPages}`);
     }
 
     pageStreams.push(ops.join('\n'));
@@ -831,18 +809,7 @@ export function generatePaginatedSessionPdfBytes(
 
     if (colOpts.showSignatures) {
       ops.push('0.5 w 36 54 m 806 54 l S');
-      pushTextOp(
-        ops,
-        '/F2',
-        7.5,
-        36,
-        38,
-        formatOfficialSignatureLine(
-          colOpts.teacherName,
-          colOpts.principalName,
-          `Sayfa ${globalPageNum} / ${totalPages}`
-        )
-      );
+      writeOfficialSignatureBlock(ops, pushTextOp, colOpts.teacherName, colOpts.principalName, `Sayfa ${globalPageNum} / ${totalPages}`);
     }
 
     pageStreams.push(ops.join('\n'));
@@ -1227,18 +1194,7 @@ export function generateStudentPortfolioPdfBytes(
     // Official Teacher & Principal Signature Block
     if (colOpts.showSignatures) {
       ops.push('0.5 w 36 58 m 806 58 l S');
-      pushTextOp(
-        ops,
-        '/F2',
-        7.5,
-        36,
-        40,
-        formatOfficialSignatureLine(
-          colOpts.teacherName,
-          colOpts.principalName,
-          `Sayfa ${pageIdx + 1} / ${totalPages}`
-        )
-      );
+      writeOfficialSignatureBlock(ops, pushTextOp, colOpts.teacherName, colOpts.principalName, `Sayfa ${pageIdx + 1} / ${totalPages}`);
     }
 
     pageStreams.push(ops.join('\n'));
@@ -1418,14 +1374,7 @@ export function generateClassroomOverviewPdfBytes(
 
   if (colOpts.showSignatures) {
     ops.push('0.5 w 36 58 m 806 58 l S');
-    pushTextOp(
-      ops,
-      '/F2',
-      7.5,
-      36,
-      40,
-      formatOfficialSignatureLine(colOpts.teacherName, colOpts.principalName)
-    );
+    writeOfficialSignatureBlock(ops, pushTextOp, colOpts.teacherName, colOpts.principalName);
   }
 
   return assemblePdfDocumentFromPageStreams(
