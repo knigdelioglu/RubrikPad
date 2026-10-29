@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { SPEAKING_EXAM_RUBRIC, SPEAKING_EXAM_RUBRIC_ID } from '../../data/speakingExamRubric.ts';
 import { INITIAL_RUBRICS } from '../../data/seedData.ts';
 import {
   BOOK_PRESENTATION_RUBRIC_ID,
@@ -52,7 +53,7 @@ import {
 } from '../../services/RubrikService.ts';
 
 test('INITIAL_RUBRICS retains the 8 100-point 11th grade rubrics alongside the 2 all-grade book presentation rubrics', () => {
-  assert.equal(INITIAL_RUBRICS.length, 10);
+  assert.equal(INITIAL_RUBRICS.length, 11);
   const grade11Rubrics = INITIAL_RUBRICS.filter((r) => TDE_11_RUBRIC_IDS.has(r.id));
   assert.equal(grade11Rubrics.length, 8);
   for (const rubric of grade11Rubrics) {
@@ -103,7 +104,7 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(matched11Tde.length, 10);
+  assert.equal(matched11Tde.length, 11);
   assert.equal(
     matched11Tde.some((r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC_ID),
     true
@@ -121,7 +122,7 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
   );
   assert.deepEqual(
     matched10Tde.map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
   );
 
   // 9. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
@@ -132,7 +133,7 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
   );
   assert.deepEqual(
     matched9Tde.map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
   );
 
   // 12. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
@@ -143,7 +144,7 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
   );
   assert.deepEqual(
     matched12Tde.map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
   );
 
   // 11. Sınıf + Matematik -> 0 rubrics
@@ -181,15 +182,15 @@ test('getRubricsForClassrooms filters rubrics by classroom gradeLevel and subjec
     academicYear: '2026-2027',
   };
 
-  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 10);
+  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 11);
   assert.deepEqual(
     getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
   );
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Math]).length, 0);
   assert.deepEqual(
     getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde, cls10Tde]).map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
   );
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, []).length, 0);
 });
@@ -223,7 +224,7 @@ test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exce
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(for11Tde.length, 10);
+  assert.equal(for11Tde.length, 11);
   assert.equal(
     for11Tde.some((r) => r.id === 'rub-custom-math-10'),
     false
@@ -643,7 +644,7 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
 
   // Other 8 rubrics remain 5-level (0..4) and standard single-score
   const otherRubrics = INITIAL_RUBRICS.filter(
-    (r) => !BOOK_PRESENTATION_RUBRIC_IDS.includes(r.id)
+    (r) => !BOOK_PRESENTATION_RUBRIC_IDS.includes(r.id) && r.id !== SPEAKING_EXAM_RUBRIC_ID
   );
   assert.equal(otherRubrics.length, 8);
   assert.ok(
@@ -1392,3 +1393,28 @@ test('multi-class evaluation sessions isolate students and groups per classroom 
 });
 
 
+
+test('independent speaking exam matches the dual rubric criteria and scores without modifying it', () => {
+  const dual = INFORMATIVE_BOOK_PRESENTATION_RUBRIC;
+  const speaking = SPEAKING_EXAM_RUBRIC;
+  assert.equal(speaking.scoringMode, 'standard_100');
+  assert.equal(validateRubric(speaking).isValid, true);
+  assert.deepEqual(speaking.criteria.map(c => c.maxPoints), [10, 15, 20, 20, 15, 15, 5]);
+  assert.deepEqual(speaking.criteria.map(c => c.title), [dual.criteria[0], ...dual.criteria.slice(4)].map(c => c.title));
+  for (const grade of ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf']) {
+    assert.ok(getRubricsByGradeAndSubject(INITIAL_RUBRICS, grade, 'Türk Dili ve Edebiyatı').some(r => r.id === speaking.id));
+  }
+  assert.ok(!getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Matematik').some(r => r.id === speaking.id));
+  for (const levels of [[0, 0, 0, 0, 0, 0, 0], [1, 1, 1, 1, 1, 1, 1], [2, 2, 2, 2, 2, 2, 2], [1, 2, 2, 1, 2, 1, 2]]) {
+    const standaloneScores = Object.fromEntries(speaking.criteria.map((c, i) => [c.id, levels[i]]));
+    const sameDualCriteria = [dual.criteria[0], ...dual.criteria.slice(4)];
+    const dualScores = Object.fromEntries(sameDualCriteria.map((c, i) => [c.id, levels[i]]));
+    const standalone = calculateWeightedScore(speaking, standaloneScores);
+    const combined = calculateDualBookSpeakingScore(dual, dualScores);
+    assert.equal(standalone.finalScoreOutOf100, combined.finalSpeakingScoreOutOf100);
+  }
+  const partial = calculateWeightedScore(speaking, { [speaking.criteria[0].id]: 2 });
+  assert.equal(partial.finalScoreOutOf100, null);
+  assert.equal(partial.dualResult, undefined);
+  assert.equal(calculateWeightedScore(speaking, Object.fromEntries(speaking.criteria.map(c => [c.id, 1]))).finalScoreOutOf100, 52);
+});

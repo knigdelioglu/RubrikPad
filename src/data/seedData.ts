@@ -9,6 +9,7 @@ import {
   LITERARY_BOOK_PRESENTATION_RUBRIC,
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
 } from './bookPresentationRubric.ts';
+import { SPEAKING_EXAM_RUBRIC } from './speakingExamRubric.ts';
 
 export const INITIAL_CLASSROOMS: Classroom[] = [];
 
@@ -849,6 +850,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
   // Sınıf düzeyi bağımsız kitap okuma ve sunum rubrikleri (Türk Dili ve Edebiyatı — 9, 10, 11 ve 12. Sınıflar)
   LITERARY_BOOK_PRESENTATION_RUBRIC,
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
+  SPEAKING_EXAM_RUBRIC,
 ];
 
 export const INITIAL_SESSIONS: EvaluationSession[] = [];
