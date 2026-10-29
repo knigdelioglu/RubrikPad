@@ -11,6 +11,7 @@ import {
   AlertCircle,
   AlertTriangle,
   Settings,
+  Archive,
 } from 'lucide-react';
 import type {
   Classroom,
@@ -52,6 +53,7 @@ import {
   checkClassroomDeletionImpact,
   checkStudentDeletionImpact,
   freezeRubricSnapshot,
+  partitionSessionsByArchiveStatus,
 } from './utils/rubricLogic.ts';
 import { RubrikService } from './services/RubrikService.ts';
 import { EvaluationWorkspace } from './components/EvaluationWorkspace.tsx';
@@ -59,8 +61,9 @@ import { ClassroomManager } from './components/ClassroomManager.tsx';
 import { RubricBuilder } from './components/RubricBuilder.tsx';
 import { ProgressAndReports } from './components/ProgressAndReports.tsx';
 import { SettingsPanel } from './components/SettingsPanel.tsx';
+import { ArchivePanel } from './components/ArchivePanel.tsx';
 
-type ActiveTab = 'evaluate' | 'classes' | 'rubrics' | 'reports' | 'settings';
+type ActiveTab = 'evaluate' | 'classes' | 'rubrics' | 'reports' | 'archive' | 'settings';
 
 export function App() {
   const [initialMeta] = useState(() => {
@@ -300,7 +303,7 @@ export function App() {
     setSessions((prev) => {
       const remaining = prev.filter((s) => s.id !== sessionId);
       if (activeSessionId === sessionId) {
-        const nextActive = remaining.find((s) => !s.archived) || remaining[0];
+        const nextActive = remaining.find((s) => !s.archived);
         setActiveSessionId(nextActive ? nextActive.id : '');
       }
       return remaining;
@@ -320,6 +323,8 @@ export function App() {
       )
     );
   };
+
+  const activeSessions = useMemo(() => partitionSessionsByArchiveStatus(sessions).activeSessions, [sessions]);
 
   const handleSelectClassroom = (classId: string) => {
     setActiveClassId(classId);
@@ -651,7 +656,7 @@ export function App() {
 
           {/* Primary Navigation — Low Visual Noise, High Contrast Active State */}
           <nav
-            className="flex items-center gap-1.5"
+            className="flex items-center gap-1.5 overflow-x-auto"
             aria-label="Ana Gezinme Menüsü"
           >
             <button
@@ -724,6 +729,15 @@ export function App() {
 
             <button
               type="button"
+              onClick={() => setActiveTab('archive')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-all cursor-pointer border ${activeTab === 'archive' ? 'bg-blue-900 text-white border-blue-950 shadow-xs' : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'}`}
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span>5. Arşiv</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('settings')}
               data-testid="nav-tab-settings"
               className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
@@ -737,7 +751,7 @@ export function App() {
                   activeTab === 'settings' ? 'text-white' : 'text-slate-600'
                 }`}
               />
-              <span>5. Ayarlar</span>
+              <span>6. Ayarlar</span>
             </button>
           </nav>
 
@@ -828,7 +842,7 @@ export function App() {
             classrooms={classrooms}
             students={students}
             rubrics={rubrics}
-            sessions={sessions}
+            sessions={activeSessions}
             activeSessionId={activeSessionId}
             selectedGradeLevel={selectedGradeLevel}
             selectedSubject={selectedSubject}
@@ -881,7 +895,7 @@ export function App() {
             classrooms={classrooms}
             students={students}
             rubrics={rubrics}
-            sessions={sessions}
+            sessions={activeSessions}
             activeClassId={activeClassId}
             onSelectClass={setActiveClassId}
             onUpdateSession={handleUpdateSession}
@@ -889,6 +903,11 @@ export function App() {
             onArchiveSession={handleArchiveSession}
             institutionSettings={institutionSettings}
           />
+        )}
+
+        {activeTab === 'archive' && (
+          <ArchivePanel classrooms={classrooms} students={students} rubrics={rubrics} sessions={sessions}
+            onRestore={(id) => handleArchiveSession(id, false)} onDelete={handleDeleteSession} />
         )}
 
         {activeTab === 'settings' && (

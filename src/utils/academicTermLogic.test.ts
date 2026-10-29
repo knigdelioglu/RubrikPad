@@ -193,3 +193,24 @@ test('normalizeClassroomBranchInput strips numbers/symbols and converts Turkish 
 });
 
 
+
+test('archiving survives backup and excludes scores from active reports until restored', async () => {
+  const { archiveEvaluationSession, partitionSessionsByArchiveStatus, getStudentProgressHistory } = await import('./rubricLogic.ts');
+  const { createVerifiedBackupBundle, verifyAndParseBackupBundle } = await import('./storageLayer.ts');
+  const first = session('2026-10-01', 40);
+  const second = session('2026-10-02', 80);
+  const archived = archiveEvaluationSession(second);
+  const bundle = createVerifiedBackupBundle({ classrooms: [], students: [], rubrics: [rubric], sessions: [first, archived] });
+  const loaded = verifyAndParseBackupBundle(JSON.stringify(bundle));
+  assert.equal(loaded.isValid, true);
+  assert.ok(loaded.state);
+  assert.equal(loaded.state.sessions[1].archived, true);
+  assert.equal(loaded.state.sessions[1].archivedAt, archived.archivedAt);
+  assert.equal(loaded.state.sessions[1].evaluations.student.directCriterionScores?.criterion, 80);
+  const active = partitionSessionsByArchiveStatus(loaded.state.sessions).activeSessions;
+  assert.deepEqual(getStudentProgressHistory('student', active, { rubric }).map(item => item.finalScoreOutOf100), [40]);
+  const before = computeTermComparisonAnalytics(active, { rubric }, ALL_ACADEMIC_TERMS);
+  assert.equal(before.currentSnapshot.averageScore, 40);
+  const restored = partitionSessionsByArchiveStatus([active[0], archiveEvaluationSession(loaded.state.sessions[1], false)]).activeSessions;
+  assert.equal(computeTermComparisonAnalytics(restored, { rubric }, ALL_ACADEMIC_TERMS).currentSnapshot.averageScore, 60);
+});
