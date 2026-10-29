@@ -3,6 +3,7 @@ import type { Classroom, Student, Rubric, EvaluationSession } from '../types.ts'
 import { resolveSessionAcademicTerm } from '../utils/academicTermLogic.ts';
 import { generateSessionCsv, getCriterionEarnedPoints, getEffectiveSessionRubric, getStudentEvaluationBreakdown, sanitizeExportFilename } from '../utils/rubricLogic.ts';
 import { downloadSessionPdfFile } from '../utils/pdfGenerator.ts';
+import { formatClassroomLabel } from '../utils/classroomLabel.ts';
 
 interface Props {
   classrooms: Classroom[];
@@ -31,7 +32,7 @@ export function ArchivePanel({ classrooms, students, rubrics, sessions, onRestor
   const filtered = archived.filter(s => {
     const classes = sessionClasses(s);
     const matchesClass = classes.some(c => (!classFilter || c.id === classFilter) && (!subjectFilter || c.subject === subjectFilter) && (!termFilter || resolveSessionAcademicTerm(s, c) === termFilter));
-    const search = [s.title, s.date, getEffectiveSessionRubric(s, rubricsById)?.title, ...classes.flatMap(c => [c.name, c.subject])].join(' ').toLocaleLowerCase('tr');
+    const search = [s.title, s.date, getEffectiveSessionRubric(s, rubricsById)?.title, ...classes.flatMap(c => [c.name, c.gradeLevel, formatClassroomLabel(c), c.subject])].join(' ').toLocaleLowerCase('tr');
     return (matchesClass || (!classes.length && !classFilter && !subjectFilter && !termFilter)) && search.includes(query.trim().toLocaleLowerCase('tr'));
   }).sort((a, b) => (b.archivedAt || b.date).localeCompare(a.archivedAt || a.date));
   const selected = filtered.find(s => s.id === selectedId);
@@ -63,17 +64,24 @@ export function ArchivePanel({ classrooms, students, rubrics, sessions, onRestor
     <div><h1 className="text-xl font-bold text-slate-900">Arşiv</h1><p className="mt-1 text-sm text-slate-600">Arşivlenen değerlendirmeler aktif listelerde ve ortalamalarda yer almaz.</p></div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label className="text-sm font-semibold text-slate-700">Ara<input className={`${control} mt-1 w-full`} value={query} onChange={e => setQuery(e.target.value)} placeholder="Değerlendirme, sınıf veya ders" /></label>
-      <label className="text-sm font-semibold text-slate-700">Sınıf<select className={`${control} mt-1 w-full`} value={classFilter} onChange={e => setClassFilter(e.target.value)}><option value="">Tüm sınıflar</option>{classrooms.map(c => <option key={c.id} value={c.id}>{c.name} — {c.subject}</option>)}</select></label>
+      <label className="text-sm font-semibold text-slate-700">Sınıf<select className={`${control} mt-1 w-full`} value={classFilter} onChange={e => setClassFilter(e.target.value)}><option value="">Tüm sınıflar</option>{classrooms.map(c => <option key={c.id} value={c.id}>{formatClassroomLabel(c)} — {c.subject}</option>)}</select></label>
       <label className="text-sm font-semibold text-slate-700">Ders<select className={`${control} mt-1 w-full`} value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}><option value="">Tüm dersler</option>{subjects.map(s => <option key={s}>{s}</option>)}</select></label>
       <label className="text-sm font-semibold text-slate-700">Dönem<select className={`${control} mt-1 w-full`} value={termFilter} onChange={e => setTermFilter(e.target.value)}><option value="">Tüm dönemler</option>{terms.map(t => <option key={t}>{t}</option>)}</select></label>
     </div>
     {filtered.length === 0 ? <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">{archived.length ? 'Filtrelere uygun arşiv kaydı bulunamadı.' : 'Henüz arşivlenmiş değerlendirme yok.'}</p> :
-      <div className="space-y-2">{filtered.map(s => <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
-        <div><div className="font-bold text-slate-900">{s.title}</div><div className="text-sm text-slate-600">{sessionClasses(s).map(c => `${c.name} · ${c.subject}`).join(', ') || 'Sınıf bulunamadı'} · {s.date}</div></div>
-        <div className="flex flex-wrap gap-2"><button className={button} onClick={() => { setSelectedId(s.id); setTableClassId(''); setError(''); }}>Puan çizelgesi</button><button className={button} onClick={() => { onRestore(s.id); setSelectedId(''); }}>Arşivden çıkar</button><button className={`${button} text-rose-700`} onClick={() => setDeleteId(s.id)}>Kalıcı sil</button></div>
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">{filtered.map(s => <div key={s.id} className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 ${selectedId === s.id ? 'bg-slate-50' : ''}`}>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-slate-900">{s.title}</div>
+          <div className="mt-0.5 text-xs text-slate-600">{sessionClasses(s).map(c => `${formatClassroomLabel(c)} · ${c.subject}`).join(', ') || 'Sınıf bulunamadı'} · {s.date}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-semibold">
+          <button type="button" className="min-h-10 rounded px-1 text-blue-800 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" aria-expanded={selectedId === s.id} onClick={() => { setSelectedId(selectedId === s.id ? '' : s.id); setTableClassId(''); setError(''); }}>Puan çizelgesi</button>
+          <button type="button" className="min-h-10 rounded px-1 text-slate-600 hover:text-slate-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" onClick={() => { onRestore(s.id); setSelectedId(''); }}>Arşivden çıkar</button>
+          <button type="button" className="min-h-10 rounded px-1 text-rose-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-700" onClick={() => setDeleteId(s.id)}>Kalıcı sil</button>
+        </div>
       </div>)}</div>}
     {selected && <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Arşiv puan çizelgesi">
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold text-slate-900">{selected.title} — Puan çizelgesi</h2><div className="flex flex-wrap gap-2">{classes.length > 1 && <label className="text-sm">Sınıf <select className={control} value={classroom?.id || ''} onChange={e => setTableClassId(e.target.value)}>{classes.map(c => <option key={c.id} value={c.id}>{c.name} — {c.subject}</option>)}</select></label>}<button className={button} disabled={!rubric || !classroom} onClick={exportCsv}>CSV indir</button><button className={button} disabled={!rubric || !classroom} onClick={() => void exportPdf()}>PDF indir</button><button className={button} onClick={() => setSelectedId('')}>Kapat</button></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-bold text-slate-900">{selected.title} — Puan çizelgesi</h2><div className="flex flex-wrap gap-2">{classes.length > 1 && <label className="text-sm">Sınıf <select className={control} value={classroom?.id || ''} onChange={e => setTableClassId(e.target.value)}>{classes.map(c => <option key={c.id} value={c.id}>{formatClassroomLabel(c)} — {c.subject}</option>)}</select></label>}<button className={button} disabled={!rubric || !classroom} onClick={exportCsv}>CSV indir</button><button className={button} disabled={!rubric || !classroom} onClick={() => void exportPdf()}>PDF indir</button><button className={button} onClick={() => setSelectedId('')}>Kapat</button></div></div>
       {error && <p role="alert" className="text-sm text-rose-700">{error}</p>}
       {!rubric || !classroom ? <p className="text-sm text-rose-700">Bu değerlendirmeye ait rubrik veya sınıf bulunamadı; çizelge oluşturulamıyor.</p> : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-slate-300"><th className="p-2">No</th><th className="p-2">Öğrenci</th>{rubric.criteria.map(c => <th key={c.id} className="p-2">{c.title}</th>)}<th className="p-2">Kesin not</th>{rubric.scoringMode === 'dual_book_and_speaking' && <th className="p-2">Konuşma sınavı</th>}<th className="p-2">Not</th></tr></thead><tbody>{classStudents.map(student => {
         const ev = selected.evaluations[student.id]; const { effectiveCalc, activeSource } = getStudentEvaluationBreakdown(rubric, ev);
