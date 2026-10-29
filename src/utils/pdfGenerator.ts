@@ -342,6 +342,16 @@ function writeOfficialSignatureBlock(
   if (pageCounterText) write(ops, '/F2', 7.5, 700, 40, pageCounterText);
 }
 
+function formatReportClassName(classroom: Classroom | null | undefined): string {
+  if (!classroom) return 'Belirtilmedi';
+  const name = classroom.name.trim();
+  const grade = classroom.gradeLevel?.match(/^\s*(\d{1,2})(?:\D|$)/)?.[1];
+  // Current records store a branch such as "A" separately; older records may
+  // already contain a complete name such as "11-A Sınıfı".
+  if (grade && /^[A-ZÇĞİÖŞÜ]{1,10}$/.test(name)) return `${grade}/${name} Sınıfı`;
+  return name || classroom.gradeLevel || 'Belirtilmedi';
+}
+
 export function generatePaginatedSessionPdfBytes(
   session: EvaluationSession,
   rubric: Rubric | null | undefined,
@@ -455,8 +465,8 @@ export function generatePaginatedSessionPdfBytes(
       36,
       560,
       isDualRubric
-        ? `${schoolPrefix}ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU (KİTAP SUNUMU - 100 PUAN) - ${classroom.name}`
-        : `${schoolPrefix}ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - ${classroom.name}`
+        ? `${schoolPrefix}ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU (KİTAP SUNUMU - 100 PUAN) - ${formatReportClassName(classroom)}`
+        : `${schoolPrefix}ÖLÇÜT TEMELLİ DEĞERLENDİRME RAPORU - ${formatReportClassName(classroom)}`
     );
 
     // 2. Subtitle Metadata
@@ -682,7 +692,7 @@ export function generatePaginatedSessionPdfBytes(
       11.5,
       36,
       560,
-      `${schoolPrefix}KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN) - ${classroom.name}`
+      `${schoolPrefix}KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN) - ${formatReportClassName(classroom)}`
     );
 
     pushTextOp(
@@ -1071,8 +1081,8 @@ export function generateStudentPortfolioPdfBytes(
       36,
       544,
       `${schoolMetaPrefix}Okul No: #${student.studentNumber} | Sınıf: ${
-        classroom?.name || 'Belirtilmedi'
-      } (${classroom?.gradeLevel || '11. Sınıf'}) | Ders: ${
+        formatReportClassName(classroom)
+      } | Ders: ${
         classroom?.subject || 'Türk Dili ve Edebiyatı'
       } | Rapor Tarihi: ${reportDate} | Sayfa ${pageIdx + 1}/${totalPages}`
     );
@@ -1247,7 +1257,7 @@ export function generateClassroomOverviewPdfBytes(
 
   const ops: string[] = [];
   const reportDate = new Date().toISOString().slice(0, 10);
-  const className = classroom?.name || '11. Sınıf Şubesi';
+  const className = formatReportClassName(classroom);
   const gradeLevel = classroom?.gradeLevel || '11. Sınıf';
   const subject = classroom?.subject || 'Türk Dili ve Edebiyatı';
 

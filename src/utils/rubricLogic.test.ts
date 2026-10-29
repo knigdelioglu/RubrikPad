@@ -4128,6 +4128,21 @@ test('Institution Settings & Official Signatures: Settings persist schoolName, t
     assert.ok(!decodedSessionPdf.includes('Veli Adı Soyadı'));
     assert.ok(!decodedSessionPdf.includes('Okul Müdürlüğü'));
 
+    const branchClass = { ...cls, name: 'A', gradeLevel: '11. Sınıf' };
+    const branchPdf = decodePdfTextWithToUnicode(generatePaginatedSessionPdfBytes(
+      session, LITERARY_BOOK_PRESENTATION_RUBRIC, branchClass, [stu], 16, { dualReportMode: 'both' }
+    ));
+    assert.ok(branchPdf.includes('(KİTAP SUNUMU - 100 PUAN) - 11/A Sınıfı'));
+    assert.ok(branchPdf.includes('KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN) - 11/A Sınıfı'));
+    const branchPortfolio = decodePdfTextWithToUnicode(generateStudentPortfolioPdfBytes(
+      stu, branchClass, [session], { [LITERARY_BOOK_PRESENTATION_RUBRIC.id]: LITERARY_BOOK_PRESENTATION_RUBRIC }
+    ));
+    assert.ok(branchPortfolio.includes('Sınıf: 11/A Sınıfı'));
+    const branchOverview = decodePdfTextWithToUnicode(generateClassroomOverviewPdfBytes(
+      branchClass, [stu], [session], [LITERARY_BOOK_PRESENTATION_RUBRIC]
+    ));
+    assert.ok(branchOverview.includes('ÖZET RAPORU - 11/A Sınıfı'));
+
     const portfolioPdfBytes = generateStudentPortfolioPdfBytes(
       stu,
       cls,
