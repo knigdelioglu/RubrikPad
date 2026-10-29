@@ -68,20 +68,21 @@ export const TDE_11_RUBRIC_IDS: ReadonlySet<string> = new Set([
 
 /**
  * 9, 10, 11 ve 12. sınıfların tamamında Türk Dili ve Edebiyatı dersinde erişilebilir olan
- * yerleşik kitap okuma ve sunum rubriklerinin kimlikleri.
+ * yerleşik kitap okuma, konuşma ve dinleme/izleme sınavı rubriklerinin kimlikleri.
  */
 export const ALL_GRADE_TDE_RUBRIC_IDS: ReadonlySet<string> = new Set([
   LITERARY_BOOK_PRESENTATION_RUBRIC_ID,
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC_ID,
   LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
   SPEAKING_EXAM_RUBRIC_ID,
+  LISTENING_EXAM_RUBRIC_ID,
 ]);
 
 export const RUBRIC_COURSE_REGISTRY: Readonly<
   Record<string, { gradeLevel: string; subject: string }>
 > = {
   [LISTENING_EXAM_RUBRIC_ID]: {
-    gradeLevel: '11. Sınıf',
+    gradeLevel: 'Genel',
     subject: 'Türk Dili ve Edebiyatı',
   },
   [SPEAKING_EXAM_RUBRIC_ID]: {

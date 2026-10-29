@@ -15,7 +15,7 @@ export const LISTENING_EXAM_RUBRIC: Rubric = {
   id: LISTENING_EXAM_RUBRIC_ID,
   title: 'Dinleme/İzleme Sınavı',
   subject: 'Türk Dili ve Edebiyatı',
-  gradeLevel: '11. Sınıf',
+  gradeLevel: 'Genel',
   description: 'Dinlenen veya izlenen metne ilişkin cevapları anlama, çözümleme ve yorumlama bakımından değerlendirir.',
   maxLevelPoints: 2,
   createdAt: '2026-10-29',

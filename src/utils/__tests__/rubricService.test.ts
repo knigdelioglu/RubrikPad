@@ -115,7 +115,7 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
     true
   );
 
-  // 10. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
+  // 10. Sınıf + Türk Dili ve Edebiyatı -> shared book + speaking + listening rubrics
   const matched10Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '10. Sınıf',
@@ -123,10 +123,10 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
   );
   assert.deepEqual(
     matched10Tde.map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID, LISTENING_EXAM_RUBRIC_ID]
   );
 
-  // 9. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
+  // 9. Sınıf + Türk Dili ve Edebiyatı -> shared book + speaking + listening rubrics
   const matched9Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '9. Sınıf',
@@ -134,10 +134,10 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
   );
   assert.deepEqual(
     matched9Tde.map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID, LISTENING_EXAM_RUBRIC_ID]
   );
 
-  // 12. Sınıf + Türk Dili ve Edebiyatı -> the 2 shared book rubrics
+  // 12. Sınıf + Türk Dili ve Edebiyatı -> shared book + speaking + listening rubrics
   const matched12Tde = getRubricsByGradeAndSubject(
     INITIAL_RUBRICS,
     '12. Sınıf',
@@ -145,7 +145,7 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
   );
   assert.deepEqual(
     matched12Tde.map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID, LISTENING_EXAM_RUBRIC_ID]
   );
 
   // 11. Sınıf + Matematik -> 0 rubrics
@@ -186,12 +186,12 @@ test('getRubricsForClassrooms filters rubrics by classroom gradeLevel and subjec
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 12);
   assert.deepEqual(
     getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID, LISTENING_EXAM_RUBRIC_ID]
   );
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Math]).length, 0);
   assert.deepEqual(
     getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde, cls10Tde]).map((r) => r.id),
-    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
+    [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID, LISTENING_EXAM_RUBRIC_ID]
   );
   assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, []).length, 0);
 });
@@ -1417,9 +1417,10 @@ test('independent exam uses exactly the six common speaking criteria and their o
   assert.equal(partial.dualResult, undefined);
 });
 
-test('listening exam rubric has five 20-point criteria and is available for 11th grade TDE', () => {
+test('listening exam rubric has five 20-point criteria and is available across 9-12 TDE grades as a general rubric', () => {
   const rubric = LISTENING_EXAM_RUBRIC;
   assert.equal(rubric.scoringMode, 'standard_100');
+  assert.equal(rubric.gradeLevel, 'Genel');
   assert.equal(validateRubric(rubric).isValid, true);
   assert.deepEqual(rubric.criteria.map(c => c.title), [
     'Metnin konusunu ve ana iletisini belirleme',
@@ -1437,8 +1438,9 @@ test('listening exam rubric has five 20-point criteria and is available for 11th
   const result = calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c, i) => [c.id, mixed[i]])));
   assert.equal(result.finalScoreOutOf100, 60);
   assert.equal(calculateWeightedScore(rubric, { [rubric.criteria[0].id]: 0 }).finalScoreOutOf100, null);
-  assert.ok(getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Türk Dili ve Edebiyatı').some(r => r.id === rubric.id));
-  assert.ok(!getRubricsByGradeAndSubject(INITIAL_RUBRICS, '10. Sınıf', 'Türk Dili ve Edebiyatı').some(r => r.id === rubric.id));
+  for (const grade of ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf']) {
+    assert.ok(getRubricsByGradeAndSubject(INITIAL_RUBRICS, grade, 'Türk Dili ve Edebiyatı').some(r => r.id === rubric.id));
+  }
   assert.ok(!getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Matematik').some(r => r.id === rubric.id));
 });
 
