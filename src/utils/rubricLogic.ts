@@ -435,6 +435,40 @@ export function getCriterionEarnedPoints(
   return null;
 }
 
+/** Returns the actual contribution of one criterion to a weighted dual report. */
+export function getWeightedDualReportCriterion(
+  rubric: Rubric,
+  index: number,
+  report: 'book' | 'speaking',
+  scores: Record<string, number | null | undefined>,
+  directScores?: Record<string, number | null | undefined>
+): { maximum: number; earned: number | null } | null {
+  if (!isDualBookSpeakingRubric(rubric)) return null;
+  const criterion = rubric.criteria[index];
+  if (!criterion) return null;
+  const section = getCriterionSection(criterion, index, rubric);
+  const speakingIndex = rubric.criteria.slice(0, index).filter((c, i) => getCriterionSection(c, i, rubric) === 'speaking').length;
+  if (rubric.scoringMode !== 'dual_weighted_book_and_speaking') {
+    if (report === 'speaking' && section !== 'speaking') return null;
+    const sectionMaximum = rubric.criteria.reduce((sum, item, i) => getCriterionSection(item, i, rubric) === section ? sum + (item.maxPoints ?? item.weight) : sum, 0);
+    if (!sectionMaximum) return null;
+    const total = section === 'content' ? 70 : report === 'book' ? 30 : 100;
+    const rawMaximum = criterion.maxPoints ?? criterion.weight;
+    const maximum = Math.round((rawMaximum / sectionMaximum) * total * 100) / 100;
+    const raw = getCriterionEarnedPoints(criterion, scores?.[criterion.id], directScores?.[criterion.id]);
+    return { maximum, earned: raw === null ? null : Math.round((raw / sectionMaximum) * total * 100) / 100 };
+  }
+  const maximum = report === 'book'
+    ? section === 'content' ? (criterion.maxPoints ?? criterion.weight) : 5
+    : index === 0 ? 10 : section === 'speaking' ? [15, 20, 20, 15, 15, 5][speakingIndex] : undefined;
+  if (maximum === undefined) return null;
+  const raw = getCriterionEarnedPoints(criterion, scores?.[criterion.id], directScores?.[criterion.id]);
+  if (raw === null) return { maximum, earned: null };
+  const rawMaximum = criterion.maxPoints ?? criterion.weight;
+  const contribution = rawMaximum > 0 ? raw / rawMaximum * maximum : 0;
+  return { maximum, earned: (rubric.version ?? 0) >= 6 ? Math.ceil(contribution - 1e-10) : contribution };
+}
+
 /**
  * “Tek Değerlendirme, İki Sonuç” hesaplayıcısı:
  * - 1. Kitap içeriği: 4 ölçüt, 70 puan
@@ -451,8 +485,6 @@ export function calculateDualBookSpeakingScore(
   // Version 6 assigns a whole-number contribution to each criterion. Version 5
   // snapshots keep their original final-only rounding for historical reports.
   const wholeCriterionScores = weightedDual && (rubric.version ?? 0) >= 6;
-  const contribution = (ratio: number, weight: number) =>
-    wholeCriterionScores ? Math.ceil(ratio * weight - 1e-10) : ratio * weight;
   let contentEarnedPoints = 0;
   let contentMaxPoints = 0;
   let contentCompletedCount = 0;
@@ -469,7 +501,6 @@ export function calculateDualBookSpeakingScore(
 
   let weightedBookSpeaking = 0;
   let weightedSpeaking = 0;
-  let speakingIndex = 0;
   let sharedTopicCompleted = false;
   rubric.criteria.forEach((criterion, idx) => {
     const sec = getCriterionSection(criterion, idx, rubric) || (idx < 4 ? 'content' : 'speaking');
@@ -494,7 +525,7 @@ export function calculateDualBookSpeakingScore(
         if (isRequired) contentCompletedRequiredCount += 1;
         contentEarnedPoints += wholeCriterionScores ? Math.ceil(earned - 1e-10) : earned;
         if (weightedDual && idx === 0) {
-          weightedSpeaking += contribution(earned / effectiveWeight, 10);
+          weightedSpeaking += getWeightedDualReportCriterion(rubric, idx, 'speaking', criterionScores, directCriterionScores)?.earned ?? 0;
           sharedTopicCompleted = true;
         }
       }
@@ -507,12 +538,10 @@ export function calculateDualBookSpeakingScore(
         if (isRequired) speakingCompletedRequiredCount += 1;
         speakingEarnedPoints += earned;
         if (weightedDual) {
-          const ratio = earned / effectiveWeight;
-          weightedSpeaking += contribution(ratio, [15, 20, 20, 15, 15, 5][speakingIndex] ?? 0);
-          weightedBookSpeaking += contribution(ratio, 5);
+          weightedSpeaking += getWeightedDualReportCriterion(rubric, idx, 'speaking', criterionScores, directCriterionScores)?.earned ?? 0;
+          weightedBookSpeaking += getWeightedDualReportCriterion(rubric, idx, 'book', criterionScores, directCriterionScores)?.earned ?? 0;
         }
       }
-      speakingIndex += 1;
     }
   });
 
@@ -3604,14 +3633,21 @@ export function generateSessionCsv(
         )
       : effectiveRubric.criteria;
 
+  const criterionColumns = isDual
+    ? [
+        ...(dualReportMode !== 'speaking' ? effectiveRubric.criteria.map((criterion, index) => ({ criterion, index, report: 'book' as const })) : []),
+        ...(dualReportMode !== 'book' ? effectiveRubric.criteria.flatMap((criterion, index) => getWeightedDualReportCriterion(effectiveRubric, index, 'speaking', {}) ? [{ criterion, index, report: 'speaking' as const }] : []) : []),
+      ]
+    : includedCriteria.map((criterion) => ({ criterion, index: effectiveRubric.criteria.indexOf(criterion), report: null }));
+
   const headers = [
     'Öğrenci No',
     'Ad',
     'Soyad',
     'Ad Soyad',
-    ...includedCriteria.map(
-      (c) => `${c.title} (${c.maxPoints ?? c.weight}P / %${c.weight})`
-    ),
+    ...criterionColumns.map(({ criterion, index, report }) => report
+      ? `${report === 'book' ? 'Kitap' : 'Konuşma'} K${index + 1}: ${criterion.title} (${getWeightedDualReportCriterion(effectiveRubric, index, report, {})!.maximum}P)`
+      : `${criterion.title} (${criterion.maxPoints ?? criterion.weight}P / %${criterion.weight})`),
     ...(isDual
       ? dualReportMode === 'book'
         ? [
@@ -3652,13 +3688,11 @@ export function generateSessionCsv(
         ? evaluation?.groupDirectScores || {}
         : evaluation?.directCriterionScores || {};
 
-    const criterionCells = includedCriteria.map((c) => {
-      const earned = getCriterionEarnedPoints(
-        c,
-        activeScores[c.id],
-        activeDirect[c.id]
-      );
-      return earned !== null ? earned : '-';
+    const criterionCells = criterionColumns.map(({ criterion: c, index, report }) => {
+      const earned = report
+        ? getWeightedDualReportCriterion(effectiveRubric, index, report, activeScores, activeDirect)?.earned
+        : getCriterionEarnedPoints(c, activeScores[c.id], activeDirect[c.id]);
+      return earned != null ? earned : '-';
     });
 
     const splitName = splitTurkishFullName(student.fullName);

@@ -6,6 +6,7 @@ import {
   isScoreAssigned,
   calculateWeightedScore,
   getStudentEvaluationBreakdown,
+  getWeightedDualReportCriterion,
   applyIndividualCriterionEdit,
   applyCriterionScoreToStudents,
   freezeRubricSnapshot,
@@ -3983,8 +3984,8 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
     cls.id
   );
   assert.ok(
-    csv.includes('20,20,20,10,20,10,10,20,10,5'),
-    `Expected real earned criterion points in CSV, got: ${csv}`
+    csv.includes('20,20,20,10,5,3,3,5,5,3,10,15,10,10,15,15,3,70,24,94,78'),
+    `Expected weighted criterion contributions and totals in CSV, got: ${csv}`
   );
 
   // 3. PDF includes real earned points (K1:20, K4:10, K6:10, S1:20, S2:10, S6:5) and dedicated Konuşma Sınavı Raporu page
@@ -4003,9 +4004,10 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
   assert.ok(
     pdfBothText.includes('KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN)')
   );
-  assert.ok(pdfBothText.includes('K5:20'));
+  assert.ok(pdfBothText.includes('K5:5'));
+  assert.ok(pdfBothText.includes('K5:15'));
   assert.ok(pdfBothText.includes('K6:10'));
-  assert.ok(pdfBothText.includes('K10:5'));
+  assert.ok(pdfBothText.includes('K10:3'));
 
   // 4. Standalone Speaking Exam PDF mode ('speaking') generates only the Speaking Exam Report
   const pdfSpeakingOnlyBytes = generatePaginatedSessionPdfBytes(
@@ -4018,7 +4020,11 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
   );
   const pdfSpeakingText = new TextDecoder('utf-8').decode(pdfSpeakingOnlyBytes);
   assert.ok(pdfSpeakingText.includes('Konuşma notu ağırlıkları: K1 10, K5 15, K6 20, K7 20, K8 15, K9 15, K10 5.'));
-  assert.ok(pdfSpeakingText.includes('K1:20'));
+  assert.ok(pdfSpeakingText.includes('K1:10'));
+  assert.ok(pdfSpeakingText.includes('K5(15P)'));
+  assert.ok(pdfSpeakingText.includes('K9(15P)'));
+  assert.ok(pdfSpeakingText.includes('K10(5P)'));
+  assert.match(pdfSpeakingText, /111\s+Ayşe Kaya[^\n]*K1:10[^\n]*K5:15[^\n]*K10:3[^\n]*78\/100/);
   assert.ok(
     pdfSpeakingText.includes('KONUŞMA SINAVI DEĞERLENDİRME RAPORU (100 PUAN)')
   );
@@ -4037,7 +4043,7 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
     { dualReportMode: 'book' }
   );
   const pdfBookText = decodePdfTextWithToUnicode(pdfBookOnlyBytes);
-  assert.match(pdfBookText, /111\s+Ayşe Kaya[^\n]*K9:10[^\n]*K10:5[^\n]*94/);
+  assert.match(pdfBookText, /111\s+Ayşe Kaya[^\n]*K9:5[^\n]*K10:3[^\n]*94/);
   assert.ok(!pdfBookText.includes('Ek Ölçüt'));
   assert.ok(!pdfBookText.includes('Kitap Sunumu Notu:'));
   assert.ok(!pdfBookText.includes('Konuşma Sınavı'));
@@ -4195,6 +4201,16 @@ test('weighted book and speaking model uses separate weights, whole final scores
   assert.equal(zeynep.finalSpeakingScoreOutOf100, 83);
   assert.equal(fatma.finalBookPresentationScoreOutOf100, 63);
   assert.equal(fatma.finalSpeakingScoreOutOf100, 88);
+  for (const [values, result] of [
+    [[20, 20, 20, 10, 10, 20, 10, 20, 10, 10], zeynep],
+    [[10, 0, 20, 5, 20, 20, 20, 10, 10, 10], fatma],
+  ] as const) {
+    for (const report of ['book', 'speaking'] as const) {
+      const columns = rubric.criteria.map((_, index) => getWeightedDualReportCriterion(rubric, index, report, {}, scores([...values]))).filter(item => item !== null);
+      assert.equal(columns.reduce((sum, item) => sum + item.maximum, 0), 100);
+      assert.equal(columns.reduce((sum, item) => sum + (item.earned ?? 0), 0), report === 'book' ? result.finalBookPresentationScoreOutOf100 : result.finalSpeakingScoreOutOf100);
+    }
+  }
   assert.equal(Number.isInteger(zeynep.speakingContributionOutOf30), true);
   assert.equal(Number.isInteger(fatma.speakingContributionOutOf30), true);
   const withoutK1 = scores([20, 20, 20, 10, 20, 20, 20, 20, 10, 10]);
@@ -4207,6 +4223,11 @@ test('weighted book and speaking model uses separate weights, whole final scores
   const old = calculateWeightedScore(oldRubric, {}, scores([20, 20, 20, 10, 10, 20, 10, 20, 10, 10])).dualResult!;
   assert.equal(old.finalBookPresentationScoreOutOf100, 94);
   assert.equal(old.finalSpeakingScoreOutOf100, 80);
+  for (const report of ['book', 'speaking'] as const) {
+    const columns = oldRubric.criteria.map((_, index) => getWeightedDualReportCriterion(oldRubric, index, report, {}, scores([20, 20, 20, 10, 10, 20, 10, 20, 10, 10]))).filter(item => item !== null);
+    assert.equal(columns.reduce((sum, item) => sum + item.maximum, 0), 100);
+    assert.equal(columns.reduce((sum, item) => sum + (item.earned ?? 0), 0), report === 'book' ? 94 : 80);
+  }
   const previousWeighted: Rubric = { ...rubric, version: 5 };
   const prior = calculateWeightedScore(previousWeighted, {}, scores([20, 20, 20, 10, 10, 20, 10, 20, 10, 10])).dualResult!;
   assert.equal(prior.finalBookPresentationScoreOutOf100, 95);

@@ -8,6 +8,7 @@ import type {
 } from '../types.ts';
 import {
   getCriterionEarnedPoints,
+  getWeightedDualReportCriterion,
   getCriterionSection,
   getEffectiveSessionRubric,
   getStudentEvaluationBreakdown,
@@ -407,6 +408,8 @@ export function generatePaginatedSessionPdfBytes(
   };
 
   const allCriteria: RubricCriterion[] = effectiveRubric.criteria || [];
+  const reportCriterion = (criterion: RubricCriterion, report: 'book' | 'speaking', scores: Record<string, number | null | undefined> = {}, direct?: Record<string, number | null | undefined>) =>
+    getWeightedDualReportCriterion(effectiveRubric, allCriteria.indexOf(criterion), report, scores, direct);
   // All criterion columns belong on the student's single table row.
   const criterionBands = chunkArray(allCriteria, Math.max(1, allCriteria.length));
   const criteriaPerBand = Math.max(1, allCriteria.length);
@@ -490,7 +493,7 @@ export function generatePaginatedSessionPdfBytes(
     const criteriaLegendChunks = chunkArray(
       allCriteria.map((c, idx) =>
         colOpts.showCriterionScores
-          ? `K${idx + 1}: ${c.title} (${c.maxPoints ?? c.weight}P / %${c.weight})`
+          ? `K${idx + 1}: ${c.title} (${reportCriterion(c, 'book')?.maximum ?? c.maxPoints ?? c.weight}P)`
           : `K${idx + 1}: ${c.title}`
       ),
       2
@@ -520,7 +523,7 @@ export function generatePaginatedSessionPdfBytes(
           ? band
               .map(
                 (c, idx) =>
-                  `K${bandOffset + idx + 1}(${c.maxPoints ?? c.weight}P)`.padEnd(
+                  `K${bandOffset + idx + 1}(${reportCriterion(c, 'book')?.maximum ?? c.maxPoints ?? c.weight}P)`.padEnd(
                     8,
                     ' '
                   )
@@ -619,6 +622,8 @@ export function generatePaginatedSessionPdfBytes(
                 .map((c, idx) => {
                   const codePrefix = `K${bandOffset + idx + 1}:`;
                   const d = activeDirect[c.id];
+                  const weighted = reportCriterion(c, 'book', activeScores, activeDirect);
+                  if (weighted) return `${codePrefix}${weighted.earned ?? '-'}`.padEnd(8, ' ');
                   if (isScoreAssigned(d)) {
                     return `${codePrefix}${d}`.padEnd(8, ' ');
                   }
@@ -709,7 +714,7 @@ export function generatePaginatedSessionPdfBytes(
     const speakingLegendChunks = chunkArray(
       speakingCriteria.map((c, idx) =>
         colOpts.showCriterionScores
-          ? `${speakingCodes[idx]}: ${c.title} (${c.maxPoints ?? c.weight}P)`
+          ? `${speakingCodes[idx]}: ${c.title} (${reportCriterion(c, 'speaking')?.maximum ?? c.maxPoints ?? c.weight}P)`
           : `${speakingCodes[idx]}: ${c.title}`
       ),
       2
@@ -737,7 +742,7 @@ export function generatePaginatedSessionPdfBytes(
       ? speakingCriteria
           .map(
             (c, idx) =>
-              `${speakingCodes[idx]}(${c.maxPoints ?? c.weight}P)`.padEnd(9, ' ')
+              `${speakingCodes[idx]}(${reportCriterion(c, 'speaking')?.maximum ?? c.maxPoints ?? c.weight}P)`.padEnd(9, ' ')
           )
           .join(' ')
       : '';
@@ -779,7 +784,8 @@ export function generatePaginatedSessionPdfBytes(
       const spkVals = colOpts.showCriterionScores
         ? speakingCriteria
             .map((c, idx) => {
-              const earned = getCriterionEarnedPoints(
+              const weighted = reportCriterion(c, 'speaking', activeScores, activeDirect);
+              const earned = weighted ? weighted.earned : getCriterionEarnedPoints(
                 c,
                 activeScores[c.id],
                 activeDirect[c.id]
