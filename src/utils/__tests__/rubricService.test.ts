@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { LISTENING_EXAM_RUBRIC, LISTENING_EXAM_RUBRIC_ID } from '../../data/listeningExamRubric.ts';
 import { SPEAKING_EXAM_RUBRIC, SPEAKING_EXAM_RUBRIC_ID } from '../../data/speakingExamRubric.ts';
 import { INITIAL_RUBRICS } from '../../data/seedData.ts';
 import {
@@ -53,7 +54,7 @@ import {
 } from '../../services/RubrikService.ts';
 
 test('INITIAL_RUBRICS retains the 8 100-point 11th grade rubrics alongside the 2 all-grade book presentation rubrics', () => {
-  assert.equal(INITIAL_RUBRICS.length, 11);
+  assert.equal(INITIAL_RUBRICS.length, 12);
   const grade11Rubrics = INITIAL_RUBRICS.filter((r) => TDE_11_RUBRIC_IDS.has(r.id));
   assert.equal(grade11Rubrics.length, 8);
   for (const rubric of grade11Rubrics) {
@@ -104,7 +105,7 @@ test('11th grade rubrics remain restricted while both book presentation rubrics 
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(matched11Tde.length, 11);
+  assert.equal(matched11Tde.length, 12);
   assert.equal(
     matched11Tde.some((r) => r.id === LITERARY_BOOK_PRESENTATION_RUBRIC_ID),
     true
@@ -182,7 +183,7 @@ test('getRubricsForClassrooms filters rubrics by classroom gradeLevel and subjec
     academicYear: '2026-2027',
   };
 
-  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 11);
+  assert.equal(getRubricsForClassrooms(INITIAL_RUBRICS, [cls11Tde]).length, 12);
   assert.deepEqual(
     getRubricsForClassrooms(INITIAL_RUBRICS, [cls10Tde]).map((r) => r.id),
     [...BOOK_PRESENTATION_RUBRIC_IDS, SPEAKING_EXAM_RUBRIC_ID]
@@ -224,7 +225,7 @@ test('RubrikService.filterRubricsForSelection allows only its all-grade TDE exce
     '11. Sınıf',
     'Türk Dili ve Edebiyatı'
   );
-  assert.equal(for11Tde.length, 11);
+  assert.equal(for11Tde.length, 12);
   assert.equal(
     for11Tde.some((r) => r.id === 'rub-custom-math-10'),
     false
@@ -644,7 +645,7 @@ test('both Edebî Eser and Bilgilendirici Kitap rubrics implement Tek Değerlend
 
   // Other 8 rubrics remain 5-level (0..4) and standard single-score
   const otherRubrics = INITIAL_RUBRICS.filter(
-    (r) => !BOOK_PRESENTATION_RUBRIC_IDS.includes(r.id) && r.id !== SPEAKING_EXAM_RUBRIC_ID
+    (r) => !BOOK_PRESENTATION_RUBRIC_IDS.includes(r.id) && r.id !== SPEAKING_EXAM_RUBRIC_ID && r.id !== LISTENING_EXAM_RUBRIC_ID
   );
   assert.equal(otherRubrics.length, 8);
   assert.ok(
@@ -1414,4 +1415,42 @@ test('independent exam uses exactly the six common speaking criteria and their o
   const partial = calculateWeightedScore(speaking, { [speaking.criteria[0].id]: 2 });
   assert.equal(partial.finalScoreOutOf100, null);
   assert.equal(partial.dualResult, undefined);
+});
+
+test('listening exam rubric has five 20-point criteria and is available for 11th grade TDE', () => {
+  const rubric = LISTENING_EXAM_RUBRIC;
+  assert.equal(rubric.scoringMode, 'standard_100');
+  assert.equal(validateRubric(rubric).isValid, true);
+  assert.deepEqual(rubric.criteria.map(c => c.title), [
+    'Metnin konusunu ve ana iletisini belirleme',
+    'Önemli bilgileri ve ayrıntıları anlama',
+    'Bağlamdan anlam çıkarma ve çıkarım yapma',
+    'Metnin yapı, dil ve anlatım özelliklerini çözümleme',
+    'Metni değerlendirme ve gerekçeli yorumlama',
+  ]);
+  assert.deepEqual(rubric.criteria.map(c => c.maxPoints), [20, 20, 20, 20, 20]);
+  for (const [level, expected] of [[0, 0], [1, 50], [2, 100]] as const) {
+    const result = calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map(c => [c.id, level])));
+    assert.equal(result.finalScoreOutOf100, expected);
+  }
+  const mixed = [2, 1, 0, 2, 1];
+  const result = calculateWeightedScore(rubric, Object.fromEntries(rubric.criteria.map((c, i) => [c.id, mixed[i]])));
+  assert.equal(result.finalScoreOutOf100, 60);
+  assert.equal(calculateWeightedScore(rubric, { [rubric.criteria[0].id]: 0 }).finalScoreOutOf100, null);
+  assert.ok(getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Türk Dili ve Edebiyatı').some(r => r.id === rubric.id));
+  assert.ok(!getRubricsByGradeAndSubject(INITIAL_RUBRICS, '10. Sınıf', 'Türk Dili ve Edebiyatı').some(r => r.id === rubric.id));
+  assert.ok(!getRubricsByGradeAndSubject(INITIAL_RUBRICS, '11. Sınıf', 'Matematik').some(r => r.id === rubric.id));
+});
+
+test('listening exam scores appear correctly in CSV and PDF reports', async () => {
+  const { generatePaginatedSessionPdfBytes, decodePdfTextWithToUnicode } = await import('../pdfGenerator.ts');
+  const rubric = LISTENING_EXAM_RUBRIC;
+  const classroom: Classroom = { id: 'class', name: 'A', gradeLevel: '11. Sınıf', subject: 'Türk Dili ve Edebiyatı', academicYear: '2026-2027' };
+  const student = { id: 'student', classId: 'class', studentNumber: '123', fullName: 'Örnek Öğrenci' };
+  const levels = [2, 1, 0, 2, 1];
+  const session: EvaluationSession = { id: 'session', title: 'Dinleme Sınavı', classId: 'class', rubricId: rubric.id, rubricSnapshot: rubric, date: '2026-10-29', status: 'completed', mode: 'individual', groups: [], generalSessionNote: '', evaluations: { student: { studentId: 'student', criterionScores: Object.fromEntries(rubric.criteria.map((c, i) => [c.id, levels[i]])), note: '', tags: [], updatedAt: '2026-10-29' } } };
+  const csv = generateSessionCsv(session, rubric, [student], classroom.id);
+  assert.ok(csv.includes('20,10,0,20,10'));
+  const pdf = decodePdfTextWithToUnicode(generatePaginatedSessionPdfBytes(session, rubric, classroom, [student]));
+  assert.match(pdf, /123\s+Örnek Öğrenci[^\n]*K1:20[^\n]*K2:10[^\n]*K3:0[^\n]*K4:20[^\n]*K5:10[^\n]*60/);
 });

@@ -110,6 +110,7 @@ import {
   LEGACY_V3_LITERARY_BOOK_RUBRIC,
 } from '../data/bookPresentationRubric.ts';
 import { SPEAKING_EXAM_RUBRIC, SPEAKING_EXAM_RUBRIC_ID } from '../data/speakingExamRubric.ts';
+import { LISTENING_EXAM_RUBRIC_ID } from '../data/listeningExamRubric.ts';
 import {
   generatePaginatedSessionPdfBytes,
   generateStudentPortfolioPdfBytes,
@@ -3273,7 +3274,7 @@ test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: 8 grade-11 rubric
   assert.deepEqual(INITIAL_SESSIONS, []);
 
   // 2. Verify the original 8 course-specific rubrics + 2 book presentation rubrics without changing their order
-  assert.equal(INITIAL_RUBRICS.length, 11);
+  assert.equal(INITIAL_RUBRICS.length, 12);
 
   const expectedSpecs: Array<{
     title: string;
@@ -4351,6 +4352,7 @@ test('adding the independent speaking rubric preserves existing combined session
     const loaded = verifyAndParseBackupBundle(store.get(STORAGE_KEY)!);
     assert.ok(loaded.isValid && loaded.state);
     assert.ok(loaded.state.rubrics.some(r => r.id === SPEAKING_EXAM_RUBRIC_ID));
+    assert.ok(loaded.state.rubrics.some(r => r.id === LISTENING_EXAM_RUBRIC_ID));
     assert.deepEqual(loaded.state.sessions[0], initial.state.sessions[0]);
     const after = getStudentEvaluationBreakdown(loaded.state.sessions[0].rubricSnapshot!, loaded.state.sessions[0].evaluations.student).effectiveCalc.dualResult;
     assert.deepEqual(after, before);

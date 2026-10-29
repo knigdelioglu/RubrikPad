@@ -5,6 +5,7 @@ import {
   LEGACY_BOOK_PRESENTATION_RUBRIC_ID,
 } from '../data/bookPresentationRubric.ts';
 import { SPEAKING_EXAM_RUBRIC_ID } from '../data/speakingExamRubric.ts';
+import { LISTENING_EXAM_RUBRIC_ID } from '../data/listeningExamRubric.ts';
 
 /**
  * Standart lise ve ortaokul sınıf düzeyleri (Kademe / Seviye).
@@ -79,6 +80,10 @@ export const ALL_GRADE_TDE_RUBRIC_IDS: ReadonlySet<string> = new Set([
 export const RUBRIC_COURSE_REGISTRY: Readonly<
   Record<string, { gradeLevel: string; subject: string }>
 > = {
+  [LISTENING_EXAM_RUBRIC_ID]: {
+    gradeLevel: '11. Sınıf',
+    subject: 'Türk Dili ve Edebiyatı',
+  },
   [SPEAKING_EXAM_RUBRIC_ID]: {
     gradeLevel: 'Genel',
     subject: 'Türk Dili ve Edebiyatı',

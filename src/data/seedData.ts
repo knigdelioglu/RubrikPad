@@ -10,6 +10,7 @@ import {
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
 } from './bookPresentationRubric.ts';
 import { SPEAKING_EXAM_RUBRIC } from './speakingExamRubric.ts';
+import { LISTENING_EXAM_RUBRIC } from './listeningExamRubric.ts';
 
 export const INITIAL_CLASSROOMS: Classroom[] = [];
 
@@ -851,6 +852,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
   LITERARY_BOOK_PRESENTATION_RUBRIC,
   INFORMATIVE_BOOK_PRESENTATION_RUBRIC,
   SPEAKING_EXAM_RUBRIC,
+  LISTENING_EXAM_RUBRIC,
 ];
 
 export const INITIAL_SESSIONS: EvaluationSession[] = [];
