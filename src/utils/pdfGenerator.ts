@@ -1411,6 +1411,90 @@ export function generateClassroomOverviewPdfBytes(
   );
 }
 
+/** Exports complete rubric templates, including every criterion and level description. */
+export function generateRubricCatalogPdfBytes(rubrics: Rubric[]): Uint8Array {
+  if (!rubrics.length) throw new Error('İndirilecek rubrik bulunamadı.');
+  const { regularGid, boldGid } = getEmbeddedFonts();
+  const usedRegularGids = new Map<number, number>();
+  const usedBoldGids = new Map<number, number>();
+  const pages: string[][] = [];
+  let ops: string[] = [];
+  let y = 560;
+
+  const text = (font: '/F1' | '/F2', size: number, x: number, line: string) => {
+    const encoded = encodeUnicodeToCidHex(line, font === '/F2' ? boldGid : regularGid, font === '/F2' ? usedBoldGids : usedRegularGids);
+    ops.push(`% UTF8: ${encoded.normalizedText}`, 'BT', `${font} ${size} Tf`, `${x} ${y} Td`, `${encoded.hexToken} Tj`, 'ET');
+  };
+  const wrap = (value: string, max: number): string[] => {
+    const words = normalizePdfTextLine(value).trim().split(/\s+/).filter(Boolean);
+    const lines: string[] = [];
+    let line = '';
+    for (const word of words) {
+      const chars = Array.from(word);
+      while (chars.length > max) {
+        if (line) { lines.push(line); line = ''; }
+        lines.push(chars.splice(0, max).join(''));
+      }
+      const remainder = chars.join('');
+      if (line && Array.from(`${line} ${remainder}`).length > max) { lines.push(line); line = ''; }
+      line = line ? `${line} ${remainder}` : remainder;
+    }
+    if (line) lines.push(line);
+    return lines.length ? lines : [''];
+  };
+  const startPage = (title: string, continued: boolean) => {
+    if (ops.length) pages.push(ops);
+    ops = [];
+    y = 560;
+    for (const line of wrap(`${title}${continued ? ' (devam)' : ''}`, 110)) {
+      text('/F2', 11, 36, line); y -= 15;
+    }
+    ops.push(`0.5 w 36 ${y + 4} m 806 ${y + 4} l S`);
+    y -= 7;
+  };
+
+  for (const rubric of rubrics) {
+    startPage(rubric.title || 'Adsız rubrik', false);
+    const line = (value: string, options: { bold?: boolean; indent?: number; width?: number } = {}) => {
+      for (const part of wrap(value, options.width ?? 145)) {
+        if (y < 58) startPage(rubric.title || 'Adsız rubrik', true);
+        text(options.bold ? '/F2' : '/F1', 8, options.indent ?? 36, part);
+        y -= 11;
+      }
+    };
+    line(`Ders: ${rubric.subject || 'Belirtilmedi'}   |   Sınıf: ${rubric.gradeLevel || 'Genel'}`);
+    if (rubric.description) line(`Açıklama: ${rubric.description}`);
+    y -= 5;
+    rubric.criteria.forEach((criterion, index) => {
+      const book = getWeightedDualReportCriterion(rubric, index, 'book', {});
+      const speaking = getWeightedDualReportCriterion(rubric, index, 'speaking', {});
+      const scoring = isDualBookSpeakingRubric(rubric)
+        ? [book && `Kitap ${book.maximum} puan`, speaking && `Konuşma ${speaking.maximum} puan`].filter(Boolean).join(' | ')
+        : `${criterion.maxPoints ?? criterion.weight} puan`;
+      const heading = `${index + 1}. ${criterion.title} (${scoring})`;
+      const levelLines = criterion.levels.map((level) => {
+        const bookLevel = book ? getWeightedDualReportCriterion(rubric, index, 'book', { [criterion.id]: level.points }) : null;
+        const speakingLevel = speaking ? getWeightedDualReportCriterion(rubric, index, 'speaking', { [criterion.id]: level.points }) : null;
+        const points = isDualBookSpeakingRubric(rubric)
+          ? [bookLevel && `Kitap ${bookLevel.earned}/${bookLevel.maximum}`, speakingLevel && `Konuşma ${speakingLevel.earned}/${speakingLevel.maximum}`].filter(Boolean).join(' | ')
+          : `${getCriterionEarnedPoints(criterion, level.points) ?? '-'} puan`;
+        return `${level.label} (${points}): ${level.description}`;
+      });
+      const lineCount = wrap(heading, 145).length + levelLines.reduce((count, value) => count + wrap(value, 140).length, 0);
+      if (lineCount <= 42 && y - lineCount * 11 < 58) startPage(rubric.title || 'Adsız rubrik', true);
+      line(heading, { bold: true });
+      for (const value of levelLines) line(value, { indent: 48, width: 140 });
+      y -= 5;
+    });
+  }
+  if (ops.length) pages.push(ops);
+  pages.forEach((page, index) => {
+    const encoded = encodeUnicodeToCidHex(`Sayfa ${index + 1} / ${pages.length}`, regularGid, usedRegularGids);
+    page.push('BT', '/F1 7 Tf', '700 30 Td', `${encoded.hexToken} Tj`, 'ET');
+  });
+  return assemblePdfDocumentFromPageStreams(pages.map(page => page.join('\n')), usedRegularGids, usedBoldGids);
+}
+
 /**
  * Decodes `<GGGG...> Tj` CID/GID hex text streams from a generated PDF using its embedded
  * `/ToUnicode` CMap tables, verifying that PDF readers map every glyph back to exact Turkish Unicode.
@@ -1474,6 +1558,10 @@ async function triggerPdfBlobDownload(bytes: Uint8Array, filename: string): Prom
   document.body.removeChild(link);
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   return filename;
+}
+
+export async function downloadRubricCatalogPdfFile(rubrics: Rubric[], filename = 'tum_rubrikler.pdf'): Promise<string | null> {
+  return triggerPdfBlobDownload(generateRubricCatalogPdfBytes(rubrics), filename);
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   BookOpen,
   School,
+  FileDown,
 } from 'lucide-react';
 import type {
   Classroom,
@@ -22,6 +23,7 @@ import {
   createUniqueEntityId,
   isDualBookSpeakingRubric,
   getCriterionSection,
+  sanitizeExportFilename,
 } from '../utils/rubricLogic.ts';
 import {
   RubrikService,
@@ -34,6 +36,7 @@ import {
   normalizeSubjectName,
   type CurriculumGroupSummary,
 } from '../services/RubrikService.ts';
+import { downloadRubricCatalogPdfFile } from '../utils/pdfGenerator.ts';
 
 interface RubricBuilderProps {
   rubrics: Rubric[];
@@ -161,6 +164,22 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   const [saveNotification, setSaveNotification] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [confirmDeleteRubricId, setConfirmDeleteRubricId] = useState<string | null>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
+  const [pdfExportMessage, setPdfExportMessage] = useState<{ error: boolean; text: string } | null>(null);
+
+  const exportRubrics = async (items: Rubric[], filename: string) => {
+    if (pdfExporting) return;
+    setPdfExporting(true);
+    setPdfExportMessage(null);
+    try {
+      const saved = await downloadRubricCatalogPdfFile(items, filename);
+      if (saved) setPdfExportMessage({ error: false, text: `PDF oluşturuldu: ${saved}` });
+    } catch (error) {
+      setPdfExportMessage({ error: true, text: error instanceof Error ? error.message : 'PDF oluşturulamadı.' });
+    } finally {
+      setPdfExporting(false);
+    }
+  };
 
   const handleStartEdit = (rubric: Rubric) => {
     const cloned: Rubric = JSON.parse(JSON.stringify(rubric));
@@ -337,7 +356,23 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
           </h1>
         </div>
 
-        {!isEditing && (
+        {!isEditing && <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={pdfExporting || !activeRubric}
+            onClick={() => activeRubric && void exportRubrics([activeRubric], `${sanitizeExportFilename(activeRubric.title, 'rubrik')}.pdf`)}
+            className="px-4 py-2.5 text-sm font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <FileDown className="w-4 h-4" /> Seçili Rubriği PDF İndir
+          </button>
+          <button
+            type="button"
+            disabled={pdfExporting || !(allRubrics ?? rubrics).length}
+            onClick={() => void exportRubrics(allRubrics ?? rubrics, 'tum_rubrikler.pdf')}
+            className="px-4 py-2.5 text-sm font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <FileDown className="w-4 h-4" /> Tüm Rubrikleri PDF İndir ({(allRubrics ?? rubrics).length})
+          </button>
           <button
             type="button"
             onClick={handleStartCreateNew}
@@ -346,8 +381,9 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
             <Plus className="w-4 h-4" />
             Yeni Rubrik Oluştur
           </button>
-        )}
+        </div>}
       </div>
+      {pdfExportMessage && <p role={pdfExportMessage.error ? 'alert' : 'status'} className={`rounded-lg border px-3 py-2 text-sm ${pdfExportMessage.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>{pdfExportMessage.text}</p>}
 
       {/* Sınıf Bazlı Rubrik Servisi — Kademe & Ders Seçici */}
       {!isEditing && (
