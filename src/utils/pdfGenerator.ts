@@ -536,7 +536,7 @@ export function generatePaginatedSessionPdfBytes(
 
         const scoreCols = colOpts.showFinalScoreAndLevel
           ? isDualRubric
-            ? '  İçerik(70) Sunum(30)    Kitap(100)'
+            ? '  Kitap(100)'
             : '  Bireysel  Grup    Kesin(100)'
           : '';
 
@@ -645,7 +645,7 @@ export function generatePaginatedSessionPdfBytes(
             : '';
 
           const scoreVals = colOpts.showFinalScoreAndLevel
-            ? `  ${indStr}  ${grpStr}  ${finalStr}`
+            ? isDualRubric ? `  ${finalStr}` : `  ${indStr}  ${grpStr}  ${finalStr}`
             : '';
 
           const rowLine = `${stu.studentNumber.padEnd(6, ' ')} ${stu.fullName
@@ -1154,9 +1154,7 @@ export function generateStudentPortfolioPdfBytes(
               y,
               `Kesin Puan: ${item.scoreOutOf100} / 100   |   Kitap Sunumu Notu: ${
                 item.bookPresentationScoreOutOf100 ?? item.scoreOutOf100
-              } / 100 (İçerik: ${item.contentScoreOutOf70 ?? 0}/70 + Sunum: ${
-                item.speakingContributionOutOf30 ?? 0
-              }/30)   |   Konuşma Sınavı Notu: ${
+              } / 100   |   Konuşma Sınavı Notu: ${
                 item.speakingExamScoreOutOf100 ?? '-'
               } / 100`
             );

@@ -4043,6 +4043,10 @@ test('Dual Evaluation Reports: Progress history, CSV, and PDF use real earned po
   );
   const pdfBookText = decodePdfTextWithToUnicode(pdfBookOnlyBytes);
   assert.match(pdfBookText, /111\s+Ayşe Kaya[^\n]*K5:10[^\n]*K7:5[^\n]*90/);
+  assert.ok(!pdfBookText.includes('İçerik(70)'));
+  assert.ok(!pdfBookText.includes('Sunum(30)'));
+  assert.ok(!pdfBookText.includes('70/70'));
+  assert.ok(!pdfBookText.includes('20/30'));
   assert.ok(!pdfBookText.includes('K8:'));
   assert.ok(!pdfBookText.includes('K9:'));
   assert.ok(!pdfBookText.includes('K10:'));
