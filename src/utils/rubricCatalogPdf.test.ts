@@ -17,8 +17,11 @@ test('catalog PDF contains every rubric, criterion and untruncated level descrip
       }
     }
   }
-  assert.ok(text.includes('Kitap 10 puan | Konuşma 15 puan'));
-  assert.ok(text.includes('Konuşma 5 puan'));
+  assert.ok(text.includes('Kitap: 10 Puan Konuşma: 15 Puan'));
+  assert.ok(text.includes('Konuşma: 5 Puan'));
+  assert.ok(text.includes('Ölçüt | Puan & Ağırlık'));
+  assert.ok(text.includes('1. Düzey - Destek Gerekli'));
+  assert.match(new TextDecoder('latin1').decode(pdf), / re S Q/);
 });
 
 test('selected rubric PDF keeps its own content and rejects an empty list', () => {
@@ -26,4 +29,23 @@ test('selected rubric PDF keeps its own content and rejects an empty list', () =
   assert.ok(text.includes(INFORMATIVE_BOOK_PRESENTATION_RUBRIC.title));
   assert.ok(!text.includes('Dinleme/İzleme Sınavı'));
   assert.throws(() => generateRubricCatalogPdfBytes([]), /rubrik bulunamadı/);
+});
+
+test('table PDF preserves long cell content and includes all levels across page breaks', () => {
+  const base = structuredClone(INITIAL_RUBRICS[0]);
+  base.title = 'Uzun açıklamalı test rubriği';
+  base.description = '';
+  base.criteria = [base.criteria[0]];
+  const description = `BAŞLANGIÇ ${'açıklama '.repeat(1200)} SONBÖLÜM`;
+  base.criteria[0].levels = Array.from({ length: 6 }, (_, index) => ({
+    level: index, points: index, label: `Seviye ${index}`, description: index === 0 ? description : `Özgün açıklama ${index}`,
+  }));
+  const bytes = generateRubricCatalogPdfBytes([base]);
+  const text = decodePdfTextWithToUnicode(bytes).replace(/\s+/g, ' ');
+  assert.ok(text.includes('BAŞLANGIÇ'));
+  assert.ok(text.includes('SONBÖLÜM'));
+  assert.equal((text.match(/açıklama\b/g) || []).length, 1205);
+  assert.ok(text.includes('5. Düzey - Seviye 5'));
+  assert.ok(text.includes('Özgün açıklama 5'));
+  assert.ok((new TextDecoder('latin1').decode(bytes).match(/\/Type \/Page\b/g) || []).length > 2);
 });

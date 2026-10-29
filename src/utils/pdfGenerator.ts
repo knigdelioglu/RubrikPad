@@ -1411,19 +1411,21 @@ export function generateClassroomOverviewPdfBytes(
   );
 }
 
-/** Exports complete rubric templates, including every criterion and level description. */
+/** Exports rubric templates as paginated criterion-by-level tables. */
 export function generateRubricCatalogPdfBytes(rubrics: Rubric[]): Uint8Array {
   if (!rubrics.length) throw new Error('İndirilecek rubrik bulunamadı.');
   const { regularGid, boldGid } = getEmbeddedFonts();
   const usedRegularGids = new Map<number, number>();
   const usedBoldGids = new Map<number, number>();
   const pages: string[][] = [];
+  const left = 36, tableWidth = 770, bottomMargin = 55, lineHeight = 9, padding = 6;
+  type CellLine = { text: string; bold?: boolean };
   let ops: string[] = [];
   let y = 560;
 
-  const text = (font: '/F1' | '/F2', size: number, x: number, line: string) => {
-    const encoded = encodeUnicodeToCidHex(line, font === '/F2' ? boldGid : regularGid, font === '/F2' ? usedBoldGids : usedRegularGids);
-    ops.push(`% UTF8: ${encoded.normalizedText}`, 'BT', `${font} ${size} Tf`, `${x} ${y} Td`, `${encoded.hexToken} Tj`, 'ET');
+  const write = (value: string, x: number, atY: number, bold = false, size = 7) => {
+    const encoded = encodeUnicodeToCidHex(value, bold ? boldGid : regularGid, bold ? usedBoldGids : usedRegularGids);
+    ops.push(`% UTF8: ${encoded.normalizedText}`, 'BT', `${bold ? '/F2' : '/F1'} ${size} Tf`, `${x.toFixed(2)} ${atY.toFixed(2)} Td`, `${encoded.hexToken} Tj`, 'ET');
   };
   const wrap = (value: string, max: number): string[] => {
     const words = normalizePdfTextLine(value).trim().split(/\s+/).filter(Boolean);
@@ -1442,49 +1444,113 @@ export function generateRubricCatalogPdfBytes(rubrics: Rubric[]): Uint8Array {
     if (line) lines.push(line);
     return lines.length ? lines : [''];
   };
-  const startPage = (title: string, continued: boolean) => {
-    if (ops.length) pages.push(ops);
-    ops = [];
-    y = 560;
-    for (const line of wrap(`${title}${continued ? ' (devam)' : ''}`, 110)) {
-      text('/F2', 11, 36, line); y -= 15;
-    }
-    ops.push(`0.5 w 36 ${y + 4} m 806 ${y + 4} l S`);
-    y -= 7;
+  const addLines = (out: CellLine[], value: string, width: number, bold = false) => {
+    const maxChars = Math.max(8, Math.floor((width - padding * 2) / (7 * 0.6)));
+    for (const part of wrap(value, maxChars)) out.push({ text: part, bold });
+  };
+  const rect = (x: number, top: number, width: number, height: number, fill: boolean) => {
+    if (fill) ops.push(`q 0.95 0.97 0.99 rg ${x.toFixed(2)} ${(top-height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f Q`);
+    ops.push(`q 0.75 0.80 0.86 RG 0.4 w ${x.toFixed(2)} ${(top-height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re S Q`);
   };
 
   for (const rubric of rubrics) {
-    startPage(rubric.title || 'Adsız rubrik', false);
-    const line = (value: string, options: { bold?: boolean; indent?: number; width?: number } = {}) => {
-      for (const part of wrap(value, options.width ?? 145)) {
-        if (y < 58) startPage(rubric.title || 'Adsız rubrik', true);
-        text(options.bold ? '/F2' : '/F1', 8, options.indent ?? 36, part);
-        y -= 11;
+    // Wider rubrics continue in additional column bands, without dropping levels.
+    const maxLevels = Math.max(1, ...rubric.criteria.map(c => c.levels.length));
+    const levelBands = chunkArray(Array.from({ length: maxLevels }, (_, i) => i), 5);
+    levelBands.forEach((band, bandIndex) => {
+      const firstWidth = 150;
+      const levelWidth = (tableWidth - firstWidth) / band.length;
+      const widths = [firstWidth, ...band.map(() => levelWidth)];
+      const headerCells: CellLine[][] = [[]];
+      addLines(headerCells[0], 'Ölçüt · Puan & Ağırlık', firstWidth, true);
+      for (const levelIndex of band) {
+        const level = rubric.criteria.find(c => c.levels[levelIndex])?.levels[levelIndex];
+        const name = level ? `${level.level}. Düzey - ${level.label}` : `${levelIndex + 1}. Düzey`;
+        const cell: CellLine[] = [];
+        addLines(cell, name, levelWidth, true);
+        headerCells.push(cell);
       }
-    };
-    line(`Ders: ${rubric.subject || 'Belirtilmedi'}   |   Sınıf: ${rubric.gradeLevel || 'Genel'}`);
-    if (rubric.description) line(`Açıklama: ${rubric.description}`);
-    y -= 5;
-    rubric.criteria.forEach((criterion, index) => {
-      const book = getWeightedDualReportCriterion(rubric, index, 'book', {});
-      const speaking = getWeightedDualReportCriterion(rubric, index, 'speaking', {});
-      const scoring = isDualBookSpeakingRubric(rubric)
-        ? [book && `Kitap ${book.maximum} puan`, speaking && `Konuşma ${speaking.maximum} puan`].filter(Boolean).join(' | ')
-        : `${criterion.maxPoints ?? criterion.weight} puan`;
-      const heading = `${index + 1}. ${criterion.title} (${scoring})`;
-      const levelLines = criterion.levels.map((level) => {
-        const bookLevel = book ? getWeightedDualReportCriterion(rubric, index, 'book', { [criterion.id]: level.points }) : null;
-        const speakingLevel = speaking ? getWeightedDualReportCriterion(rubric, index, 'speaking', { [criterion.id]: level.points }) : null;
-        const points = isDualBookSpeakingRubric(rubric)
-          ? [bookLevel && `Kitap ${bookLevel.earned}/${bookLevel.maximum}`, speakingLevel && `Konuşma ${speakingLevel.earned}/${speakingLevel.maximum}`].filter(Boolean).join(' | ')
-          : `${getCriterionEarnedPoints(criterion, level.points) ?? '-'} puan`;
-        return `${level.label} (${points}): ${level.description}`;
+      const headerHeight = Math.max(...headerCells.map(cell => cell.length), 1) * lineHeight + padding * 2;
+      const drawCells = (cells: CellLine[][], count: number, offset: number, height: number, header = false) => {
+        let x = left;
+        for (let col = 0; col < widths.length; col++) {
+          const width = widths[col];
+          rect(x, y, width, height, header || col === 0);
+          cells[col].slice(offset, offset + count).forEach((item, index) => write(item.text, x + padding, y - padding - 7 - index * lineHeight, !!item.bold));
+          x += width;
+        }
+        y -= height;
+      };
+      const startPage = (continued: boolean) => {
+        if (ops.length) pages.push(ops);
+        ops = [];
+        y = 560;
+        for (const titleLine of wrap(`${rubric.title || 'Adsız rubrik'}${continued ? ' (devam)' : ''}`, 110)) {
+          write(titleLine, left, y, true, 11); y -= 14;
+        }
+        write(`Ders: ${rubric.subject || 'Belirtilmedi'}  |  Sınıf: ${rubric.gradeLevel || 'Genel'}`, left, y, false, 7.2);
+        y -= 13;
+        drawCells(headerCells, Math.max(...headerCells.map(cell => cell.length)), 0, headerHeight, true);
+      };
+      const drawRow = (cells: CellLine[][]) => {
+        const total = Math.max(1, ...cells.map(cell => cell.length));
+        let offset = 0;
+        while (offset < total) {
+          let capacity = Math.floor((y - bottomMargin - padding * 2) / lineHeight);
+          const fullPageCapacity = Math.floor((560 - 14 - 13 - headerHeight - bottomMargin - padding * 2) / lineHeight);
+          if (capacity < 1 || (offset === 0 && total <= fullPageCapacity && total > capacity)) {
+            startPage(true);
+            capacity = Math.floor((y - bottomMargin - padding * 2) / lineHeight);
+          }
+          const count = Math.min(total - offset, Math.max(1, capacity));
+          drawCells(cells, count, offset, count * lineHeight + padding * 2);
+          offset += count;
+        }
+      };
+      startPage(bandIndex > 0);
+      if (rubric.description && bandIndex === 0) {
+        // A full-width caption stays above the table and is retained over page breaks.
+        const desc: CellLine[] = [];
+        addLines(desc, `Açıklama: ${rubric.description}`, tableWidth, false);
+        let offset = 0;
+        while (offset < desc.length) {
+          let capacity = Math.floor((y - bottomMargin - padding * 2) / lineHeight);
+          if (capacity < 1) { startPage(true); capacity = Math.floor((y - bottomMargin - padding * 2) / lineHeight); }
+          const count = Math.min(desc.length - offset, Math.max(1, capacity));
+          const height = count * lineHeight + padding * 2;
+          rect(left, y, tableWidth, height, false);
+          desc.slice(offset, offset + count).forEach((item, i) => write(item.text, left + padding, y - padding - 7 - i * lineHeight));
+          y -= height;
+          offset += count;
+        }
+      }
+      rubric.criteria.forEach((criterion, index) => {
+        const cells: CellLine[][] = [[]];
+        addLines(cells[0], `${index + 1}. ${criterion.category || ''}`, firstWidth);
+        addLines(cells[0], criterion.title, firstWidth, true);
+        const book = getWeightedDualReportCriterion(rubric, index, 'book', {});
+        const speaking = getWeightedDualReportCriterion(rubric, index, 'speaking', {});
+        if (isDualBookSpeakingRubric(rubric)) {
+          addLines(cells[0], `${criterion.maxPoints ?? criterion.weight} Puan`, firstWidth, true);
+          if (book) addLines(cells[0], `Kitap: ${book.maximum} Puan`, firstWidth);
+          if (speaking) addLines(cells[0], `Konuşma: ${speaking.maximum} Puan`, firstWidth);
+        } else {
+          addLines(cells[0], `${criterion.maxPoints ?? criterion.weight} Puan · %${criterion.weight}`, firstWidth, true);
+        }
+        for (const levelIndex of band) {
+          const level = criterion.levels[levelIndex];
+          const cell: CellLine[] = [];
+          if (level) {
+            const maxLevel = Math.max(...criterion.levels.map(l => l.points), 1);
+            const isThreeLevel = criterion.levels.length === 3 && maxLevel === 2;
+            const score = isThreeLevel ? `%${Math.round(level.points / maxLevel * 100)} · ${Math.ceil(level.points / maxLevel * (criterion.maxPoints ?? criterion.weight))} Puan` : `${level.points} Puan`;
+            addLines(cell, score, levelWidth, true);
+            addLines(cell, level.description, levelWidth);
+          } else addLines(cell, '-', levelWidth);
+          cells.push(cell);
+        }
+        drawRow(cells);
       });
-      const lineCount = wrap(heading, 145).length + levelLines.reduce((count, value) => count + wrap(value, 140).length, 0);
-      if (lineCount <= 42 && y - lineCount * 11 < 58) startPage(rubric.title || 'Adsız rubrik', true);
-      line(heading, { bold: true });
-      for (const value of levelLines) line(value, { indent: 48, width: 140 });
-      y -= 5;
     });
   }
   if (ops.length) pages.push(ops);
