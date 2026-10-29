@@ -25,6 +25,7 @@ import {
   BOOK_PRESENTATION_RUBRIC_IDS,
 } from '../data/bookPresentationRubric.ts';
 import { SPEAKING_EXAM_RUBRIC_ID } from '../data/speakingExamRubric.ts';
+import { updateBuiltInRubricTerminology } from '../data/rubricTerminology.ts';
 
 export const CURRENT_SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'rubrikpad_state_v3';
@@ -3142,6 +3143,13 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
               rubricSnapshot: freezeRubricSnapshot(existingRubric || fallbackV3),
             };
           }
+          if (ses.rubricSnapshot) {
+            const updatedSnapshot = updateBuiltInRubricTerminology(ses.rubricSnapshot);
+            if (updatedSnapshot !== ses.rubricSnapshot) {
+              sessionsUpdated = true;
+              return { ...ses, rubricSnapshot: updatedSnapshot };
+            }
+          }
           return ses;
         });
 
@@ -3174,11 +3182,13 @@ export function purgeSyntheticSeedDataSync(seedRubrics: Rubric[] = []): void {
               criteria: r.criteria.map((criterion, index) => index === 0 ? { ...criterion, title: seedMatch.criteria[0].title, levels: seedMatch.criteria[0].levels } : criterion),
             };
           }
+          const renamedRubric = updateBuiltInRubricTerminology(r);
+          if (renamedRubric !== r) gradeBackfilled = true;
           if (seedMatch?.gradeLevel && r.gradeLevel !== seedMatch.gradeLevel) {
             gradeBackfilled = true;
-            return { ...r, gradeLevel: seedMatch.gradeLevel };
+            return { ...renamedRubric, gradeLevel: seedMatch.gradeLevel };
           }
-          return r;
+          return renamedRubric;
         });
 
         const existingIds = new Set(syncedRubrics.map((r) => r.id));
@@ -3326,6 +3336,13 @@ export async function purgeSyntheticSeedDataAsync(
                       ),
                     };
                   }
+                  if (ses.rubricSnapshot) {
+                    const updatedSnapshot = updateBuiltInRubricTerminology(ses.rubricSnapshot);
+                    if (updatedSnapshot !== ses.rubricSnapshot) {
+                      sessionsUpdated = true;
+                      return { ...ses, rubricSnapshot: updatedSnapshot };
+                    }
+                  }
                   return ses;
                 });
 
@@ -3360,14 +3377,16 @@ export async function purgeSyntheticSeedDataAsync(
                       criteria: r.criteria.map((criterion, index) => index === 0 ? { ...criterion, title: seedMatch.criteria[0].title, levels: seedMatch.criteria[0].levels } : criterion),
                     };
                   }
+                  const renamedRubric = updateBuiltInRubricTerminology(r);
+                  if (renamedRubric !== r) gradeBackfilled = true;
                   if (
                     seedMatch?.gradeLevel &&
                     r.gradeLevel !== seedMatch.gradeLevel
                   ) {
                     gradeBackfilled = true;
-                    return { ...r, gradeLevel: seedMatch.gradeLevel };
+                    return { ...renamedRubric, gradeLevel: seedMatch.gradeLevel };
                   }
-                  return r;
+                  return renamedRubric;
                 });
 
                 const existingIds = new Set(syncedRubrics.map((r) => r.id));

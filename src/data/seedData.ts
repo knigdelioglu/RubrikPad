@@ -156,7 +156,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
       {
         id: 'crit-ie-7',
         title: 'Özgünlük',
-        category: 'Yaratıcılık',
+        category: 'Özgünlük',
         weight: 5,
         maxPoints: 5,
         required: true,
@@ -164,7 +164,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
           'Klişe ve hazır kalıplar dışına çıkılmamıştır.',
           'Bilinen örnekler küçük değişikliklerle uyarlanmıştır.',
           'Kurguda ve diyaloglarda grubun kendine özgü yaklaşımı hissedilir.',
-          'Özgün kurgu, yaratıcı bakış açısı ve akılda kalıcı diyaloglarla fark yaratılmıştır.'
+          'Özgün kurgu, farklı bakış açısı ve akılda kalıcı diyaloglarla etkili bir çalışma ortaya konulmuştur.'
         ),
       },
     ],
@@ -213,7 +213,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
       {
         id: 'crit-ep-3',
         title: 'Özgünlük',
-        category: 'Yaratıcılık',
+        category: 'Özgünlük',
         weight: 16,
         maxPoints: 16,
         required: true,
@@ -383,7 +383,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
       {
         id: 'crit-miy-2',
         title: 'Özgünlük',
-        category: 'Yaratıcılık',
+        category: 'Özgünlük',
         weight: 20,
         maxPoints: 20,
         required: true,
@@ -595,7 +595,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
       {
         id: 'crit-dd-3',
         title: 'Özgünlük',
-        category: 'Yaratıcılık',
+        category: 'Özgünlük',
         weight: 16,
         maxPoints: 16,
         required: true,
@@ -603,7 +603,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
           'Kaynak metin cümleleri neredeyse hiç değiştirilmeden alt alta yazılmıştır.',
           'Dönüştürme işleminde küçük değişiklikler yapılmış, özgün katkı sınırlı kalmıştır.',
           'Metin, öğrencinin kendi kurgusu ve özgün diyalog ifadeleriyle yeniden biçimlendirilmiştir.',
-          'Dönüştürülen metin yaratıcı replikler ve özgün sahne/durum ayrıntılarıyla zenginleştirilmiştir.'
+          'Dönüştürülen metin özgün replikler ve sahne/durum ayrıntılarıyla zenginleştirilmiştir.'
         ),
       },
       {
@@ -694,14 +694,14 @@ export const INITIAL_RUBRICS: Rubric[] = [
       {
         id: 'crit-tc-3',
         title: 'Özgünlük',
-        category: 'Yaratıcılık',
+        category: 'Özgünlük',
         weight: 15,
         maxPoints: 15,
         required: true,
         levels: createCriterionLevels(
           'Role ve sahnelemeye hiçbir özgün yorum katılmamıştır.',
-          'Standart bir canlandırma yapılmış, yaratıcı sahne/rol detayları sınırlı kalmıştır.',
-          'Karakter yorumunda ve sahne kullanımında özgün ve yaratıcı dokunuşlar sergilenmiştir.',
+          'Standart bir canlandırma yapılmış, özgün sahne/rol detayları sınırlı kalmıştır.',
+          'Karakter yorumunda ve sahne kullanımında özgün dokunuşlar sergilenmiştir.',
           'Kostüm, aksesuar, sahne trafiği ve rol yorumuyla iz bırakan özgün bir tiyatro performansı sunulmuştur.'
         ),
       },
@@ -757,7 +757,7 @@ export const INITIAL_RUBRICS: Rubric[] = [
     subject: 'Türk Dili ve Edebiyatı',
     gradeLevel: '11. Sınıf',
     description:
-      'Edebiyat ve kültür temalı afiş tasarım çalışmalarının konuya uygunluk, yaratıcılık, özgünlük, görsel seçim, Türkçe kullanımı ve etkileyicilik açısından değerlendirilmesi (100 Puan).',
+      'Edebiyat ve kültür temalı afiş tasarım çalışmalarının konuya uygunluk, tasarım yaklaşımı, özgünlük, görsel seçim, Türkçe kullanımı ve etkileyicilik açısından değerlendirilmesi (100 Puan).',
     maxLevelPoints: 4,
     createdAt: '2026-10-24',
     version: 3,
@@ -778,22 +778,22 @@ export const INITIAL_RUBRICS: Rubric[] = [
       },
       {
         id: 'crit-af-2',
-        title: 'Yaratıcılık',
+        title: 'Tasarım yaklaşımı',
         category: 'Tasarım',
         weight: 20,
         maxPoints: 20,
         required: true,
         levels: createCriterionLevels(
           'Tasarım sıradandır; görsel ve metinsel düzenlemede estetik çaba görülmemektedir.',
-          'Temel bir yerleşim yapılmış ancak yaratıcı fikir ve tasarım unsurları sınırlıdır.',
-          'Renk, tipografi, slogan ve görsel kurguda yaratıcı bir tasarım anlayışı sergilenmiştir.',
-          'Metaforik anlatım, estetik kompozisyon ve çarpıcı tasarım fikirleriyle üst düzey yaratıcılık gösterilmiştir.'
+          'Temel bir yerleşim yapılmış ancak özgün fikir ve tasarım unsurları sınırlıdır.',
+          'Renk, tipografi, slogan ve görsel kurguda özgün bir tasarım anlayışı sergilenmiştir.',
+          'Metaforik anlatım, estetik kompozisyon ve çarpıcı tasarım fikirleriyle güçlü bir tasarım yaklaşımı sergilenmiştir.'
         ),
       },
       {
         id: 'crit-af-3',
         title: 'Özgünlük',
-        category: 'Yaratıcılık',
+        category: 'Özgünlük',
         weight: 15,
         maxPoints: 15,
         required: true,

@@ -3361,7 +3361,7 @@ test('Synthetic Seed Purge & Türk Dili ve Edebiyatı Rubrics: 8 grade-11 rubric
       title: 'Afiş',
       criteria: [
         ['Konuya uygunluk', 15],
-        ['Yaratıcılık', 20],
+        ['Tasarım yaklaşımı', 20],
         ['Özgünlük', 15],
         ['Görsel/işitsel ögelerin seçimi', 15],
         ['Türkçenin doğru kullanımı', 15],
@@ -4391,5 +4391,40 @@ test('independent speaking rubric v1 upgrades its catalog without changing exist
     assert.equal(saved.evaluations.student.note, 'Korunacak not');
     assert.deepEqual(restored.state.rubrics.find(r => r.id === INFORMATIVE_BOOK_PRESENTATION_RUBRIC.id), INFORMATIVE_BOOK_PRESENTATION_RUBRIC);
     }
+  } finally { (globalThis as unknown as { window?: unknown }).window = previous; }
+});
+
+test('built-in terminology updates existing rubric snapshots without changing scores or teacher text', () => {
+  assert.doesNotMatch(JSON.stringify(INITIAL_RUBRICS), /yaratıc/iu);
+  const store = new Map<string, string>();
+  const previous = (globalThis as unknown as { window?: unknown }).window;
+  (globalThis as unknown as { window: unknown }).window = { localStorage: {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, value),
+    removeItem: (key: string) => store.delete(key),
+  } };
+  try {
+    const rubric = structuredClone(INITIAL_RUBRICS.find(r => r.id === 'rub-tde-iletisim-engelleri')!);
+    const criterion = rubric.criteria.find(c => c.id === 'crit-ie-7')!;
+    criterion.category = 'Yaratıcılık';
+    criterion.levels[4].description = 'Özgün kurgu, yaratıcı bakış açısı ve akılda kalıcı diyaloglarla fark yaratılmıştır.';
+    rubric.criteria[0].levels[1].description = 'Öğretmenin kendi değiştirdiği açıklama';
+    const classroom: Classroom = { id: 'class', name: 'A', gradeLevel: '11. Sınıf', subject: 'Türk Dili ve Edebiyatı', academicYear: '2026-2027' };
+    const student: Student = { id: 'student', classId: 'class', studentNumber: '1', fullName: 'Örnek Öğrenci' };
+    const session: EvaluationSession = { id: 'session', title: 'Korunan oturum', classId: 'class', rubricId: rubric.id, rubricSnapshot: structuredClone(rubric), date: '2026-10-29', status: 'completed', mode: 'individual', groups: [], generalSessionNote: 'Korunan oturum notu', evaluations: { student: { studentId: 'student', criterionScores: Object.fromEntries(rubric.criteria.map((c, i) => [c.id, i % 5])), note: 'Korunan öğrenci notu', tags: [], updatedAt: '2026-10-29' } } };
+    const beforeScore = getStudentEvaluationBreakdown(rubric, session.evaluations.student).effectiveCalc.finalScoreOutOf100;
+    store.set(STORAGE_KEY, JSON.stringify(createVerifiedBackupBundle({ classrooms: [classroom], students: [student], rubrics: [rubric], sessions: [session] })));
+    purgeSyntheticSeedDataSync(INITIAL_RUBRICS);
+    const restored = verifyAndParseBackupBundle(store.get(STORAGE_KEY)!);
+    assert.ok(restored.isValid && restored.state);
+    const updated = restored.state.rubrics.find(r => r.id === rubric.id)!;
+    assert.equal(updated.criteria[6].category, 'Özgünlük');
+    assert.ok(!updated.criteria[6].levels[4].description.includes('yaratıcı'));
+    assert.equal(updated.criteria[0].levels[1].description, 'Öğretmenin kendi değiştirdiği açıklama');
+    const saved = restored.state.sessions[0];
+    assert.equal(saved.rubricSnapshot?.criteria[6].category, 'Özgünlük');
+    assert.equal(saved.evaluations.student.note, 'Korunan öğrenci notu');
+    assert.deepEqual(saved.evaluations.student.criterionScores, session.evaluations.student.criterionScores);
+    assert.equal(getStudentEvaluationBreakdown(saved.rubricSnapshot!, saved.evaluations.student).effectiveCalc.finalScoreOutOf100, beforeScore);
   } finally { (globalThis as unknown as { window?: unknown }).window = previous; }
 });
