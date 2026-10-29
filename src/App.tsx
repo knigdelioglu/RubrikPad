@@ -881,6 +881,7 @@ export function App() {
             catalogSummaries={rubricCatalogSummaries}
             sessions={sessions}
             classrooms={classrooms}
+            students={students}
             selectedGradeLevel={selectedGradeLevel}
             selectedSubject={selectedSubject}
             onChangeGradeLevel={setSelectedGradeLevel}

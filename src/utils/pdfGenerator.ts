@@ -1561,6 +1561,109 @@ export function generateRubricCatalogPdfBytes(rubrics: Rubric[]): Uint8Array {
   return assemblePdfDocumentFromPageStreams(pages.map(page => page.join('\n')), usedRegularGids, usedBoldGids);
 }
 
+/** A printable, blank scoring grid for one class and rubric. */
+export function generateBlankRubricSheetPdfBytes(rubric: Rubric, classroom: Classroom, students: Student[]): Uint8Array {
+  const roster = students.filter(student => student.classId === classroom.id && !student.archived)
+    .slice().sort((a, b) => a.studentNumber.localeCompare(b.studentNumber, 'tr', { numeric: true }) || a.fullName.localeCompare(b.fullName, 'tr'));
+  if (!roster.length) throw new Error('Seçilen sınıfta aktif öğrenci bulunmuyor.');
+  if (!rubric.criteria.length) throw new Error('Seçilen rubrikte ölçüt bulunmuyor.');
+  const { regularGid, boldGid } = getEmbeddedFonts();
+  const regular = new Map<number, number>(), bold = new Map<number, number>();
+  const pages: string[][] = [];
+  let ops: string[] = [], y = 560;
+  const left = 30, noWidth = 50, nameWidth = 180, totalWidth = 60, width = 782;
+  const write = (value: string, x: number, atY: number, isBold = false, size = 8) => {
+    const encoded = encodeUnicodeToCidHex(value, isBold ? boldGid : regularGid, isBold ? bold : regular);
+    ops.push(`% UTF8: ${encoded.normalizedText}`, 'BT', `${isBold ? '/F2' : '/F1'} ${size} Tf`, `${x.toFixed(2)} ${atY.toFixed(2)} Td`, `${encoded.hexToken} Tj`, 'ET');
+  };
+  const wrap = (value: string, limit: number): string[] => {
+    const words = normalizePdfTextLine(value).trim().split(/\s+/).filter(Boolean);
+    const lines: string[] = [];
+    let line = '';
+    for (const word of words) {
+      const chars = Array.from(word);
+      while (chars.length > limit) {
+        if (line) { lines.push(line); line = ''; }
+        lines.push(chars.splice(0, limit).join(''));
+      }
+      const rest = chars.join('');
+      if (line && Array.from(`${line} ${rest}`).length > limit) { lines.push(line); line = ''; }
+      if (rest) line = line ? `${line} ${rest}` : rest;
+    }
+    if (line) lines.push(line);
+    return lines.length ? lines : [''];
+  };
+  const rectangle = (x: number, top: number, w: number, h: number, shaded = false) => {
+    if (shaded) ops.push(`q 0.95 0.97 0.99 rg ${x} ${top - h} ${w} ${h} re f Q`);
+    ops.push(`q 0.65 0.69 0.75 RG 0.5 w ${x} ${top - h} ${w} ${h} re S Q`);
+  };
+  const startPage = (heading: string) => {
+    if (ops.length) pages.push(ops);
+    ops = []; y = 560;
+    for (const line of wrap(`${rubric.title} - ${heading}`, 110)) { write(line, left, y, true, 11); y -= 14; }
+    for (const line of wrap(`Sınıf: ${formatReportClassName(classroom)} | Ders: ${classroom.subject} | Tarih: ....................`, 135)) { write(line, left, y, false, 8); y -= 12; }
+    y -= 4;
+  };
+  const indexed = rubric.criteria.map((criterion, index) => ({ criterion, index }));
+  const reports: { heading: string; entries: { criterion: RubricCriterion; index: number; maximum: number }[] }[] = isDualBookSpeakingRubric(rubric)
+    ? (['book', 'speaking'] as const).map(kind => ({
+        heading: kind === 'book' ? 'Kitap Sunumu' : 'Konuşma Sınavı',
+        entries: indexed.flatMap(item => {
+          const score = getWeightedDualReportCriterion(rubric, item.index, kind, {});
+          return score ? [{ ...item, maximum: score.maximum }] : [];
+        }),
+      }))
+    : [{ heading: 'Değerlendirme Çizelgesi', entries: indexed.map(item => ({ ...item, maximum: item.criterion.maxPoints ?? item.criterion.weight })) }];
+
+  for (const report of reports) for (const [bandIndex, band] of chunkArray(report.entries, 7).entries()) {
+    const bands = Math.ceil(report.entries.length / 7);
+    const heading = `${report.heading}${bands > 1 ? ` - Ölçütler ${bandIndex + 1}/${bands}` : ''}`;
+    const legend = band.flatMap(item => wrap(`K${item.index + 1}: ${item.criterion.title} (${item.maximum} P)`, 130));
+    const separateLegend = legend.length > 18;
+    if (separateLegend) {
+      startPage(`${heading} - Ölçütler`);
+      for (const line of legend) {
+        if (y < 50) startPage(`${heading} - Ölçütler (devam)`);
+        write(line, left, y, false, 8); y -= 11;
+      }
+    }
+    const drawHeader = () => {
+      startPage(heading);
+      if (!separateLegend) { for (const line of legend) { write(line, left, y, false, 8); y -= 11; } y -= 5; }
+      else { write('Ölçüt adları önceki sayfalardadır.', left, y, false, 8); y -= 16; }
+      if (bands > 1) { write('Toplam tüm ölçütler içindir.', left, y, false, 8); y -= 13; }
+      const colWidth = (width - noWidth - nameWidth - totalWidth) / band.length;
+      let x = left;
+      const cell = (label: string, w: number) => { rectangle(x, y, w, 24, true); write(label, x + 4, y - 15, true, 7); x += w; };
+      cell('No', noWidth); cell('Ad Soyad', nameWidth);
+      band.forEach(item => cell(`K${item.index + 1} (${item.maximum})`, colWidth));
+      cell('Toplam', totalWidth); y -= 24;
+    };
+    drawHeader();
+    const colWidth = (width - noWidth - nameWidth - totalWidth) / band.length;
+    for (const student of roster) {
+      const names = wrap(student.fullName, 35), numbers = wrap(student.studentNumber, 8);
+      const parts = Math.max(1, Math.ceil(Math.max(names.length, numbers.length) / 12));
+      for (let part = 0; part < parts; part++) {
+        const nameLines = names.slice(part * 12, part * 12 + 12), numberLines = numbers.slice(part * 12, part * 12 + 12);
+        const height = Math.max(25, Math.max(nameLines.length, numberLines.length) * 10 + 10);
+        if (y - height < 40) drawHeader();
+        let x = left;
+        rectangle(x, y, noWidth, height); numberLines.forEach((line, i) => write(line, x + 4, y - 14 - i * 10)); x += noWidth;
+        rectangle(x, y, nameWidth, height); nameLines.forEach((line, i) => write(line, x + 4, y - 14 - i * 10)); x += nameWidth;
+        band.forEach(() => { rectangle(x, y, colWidth, height); x += colWidth; });
+        rectangle(x, y, totalWidth, height); y -= height;
+      }
+    }
+  }
+  if (ops.length) pages.push(ops);
+  pages.forEach((page, index) => {
+    const encoded = encodeUnicodeToCidHex(`Sayfa ${index + 1} / ${pages.length}`, regularGid, regular);
+    page.push('BT', '/F1 7 Tf', '700 25 Td', `${encoded.hexToken} Tj`, 'ET');
+  });
+  return assemblePdfDocumentFromPageStreams(pages.map(page => page.join('\n')), regular, bold);
+}
+
 /**
  * Decodes `<GGGG...> Tj` CID/GID hex text streams from a generated PDF using its embedded
  * `/ToUnicode` CMap tables, verifying that PDF readers map every glyph back to exact Turkish Unicode.
@@ -1624,6 +1727,10 @@ async function triggerPdfBlobDownload(bytes: Uint8Array, filename: string): Prom
   document.body.removeChild(link);
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   return filename;
+}
+
+export async function downloadBlankRubricSheetPdfFile(rubric: Rubric, classroom: Classroom, students: Student[], filename = 'bos_degerlendirme_cizelgesi.pdf'): Promise<string | null> {
+  return triggerPdfBlobDownload(generateBlankRubricSheetPdfBytes(rubric, classroom, students), filename);
 }
 
 export async function downloadRubricCatalogPdfFile(rubrics: Rubric[], filename = 'tum_rubrikler.pdf'): Promise<string | null> {

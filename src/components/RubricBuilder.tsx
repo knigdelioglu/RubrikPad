@@ -15,6 +15,7 @@ import type {
   Classroom,
   Rubric,
   RubricCriterion,
+  Student,
   EvaluationSession,
 } from '../types.ts';
 import {
@@ -36,7 +37,7 @@ import {
   normalizeSubjectName,
   type CurriculumGroupSummary,
 } from '../services/RubrikService.ts';
-import { downloadRubricCatalogPdfFile } from '../utils/pdfGenerator.ts';
+import { downloadBlankRubricSheetPdfFile, downloadRubricCatalogPdfFile } from '../utils/pdfGenerator.ts';
 
 interface RubricBuilderProps {
   rubrics: Rubric[];
@@ -44,6 +45,7 @@ interface RubricBuilderProps {
   catalogSummaries?: CurriculumGroupSummary[];
   sessions?: EvaluationSession[];
   classrooms?: Classroom[];
+  students?: Student[];
   selectedGradeLevel?: string;
   selectedSubject?: string;
   onChangeGradeLevel?: (gradeLevel: string) => void;
@@ -91,6 +93,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   catalogSummaries: externalCatalogSummaries,
   sessions = [],
   classrooms = [],
+  students = [],
   selectedGradeLevel: externalGradeLevel,
   selectedSubject: externalSubject,
   onChangeGradeLevel,
@@ -164,6 +167,7 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
   const [saveNotification, setSaveNotification] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [confirmDeleteRubricId, setConfirmDeleteRubricId] = useState<string | null>(null);
+  const [sheetClassId, setSheetClassId] = useState('');
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfExportMessage, setPdfExportMessage] = useState<{ error: boolean; text: string } | null>(null);
 
@@ -176,6 +180,22 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
       if (saved) setPdfExportMessage({ error: false, text: `PDF oluşturuldu: ${saved}` });
     } catch (error) {
       setPdfExportMessage({ error: true, text: error instanceof Error ? error.message : 'PDF oluşturulamadı.' });
+    } finally {
+      setPdfExporting(false);
+    }
+  };
+
+  const exportBlankSheet = async () => {
+    const classroom = classrooms.find(item => item.id === sheetClassId);
+    if (!classroom || !activeRubric || pdfExporting) return;
+    setPdfExporting(true);
+    setPdfExportMessage(null);
+    try {
+      const filename = `${sanitizeExportFilename(`${classroom.gradeLevel}-${classroom.name}-${activeRubric.title}-bos-cizelge`, 'bos-cizelge')}.pdf`;
+      const saved = await downloadBlankRubricSheetPdfFile(activeRubric, classroom, students, filename);
+      if (saved) setPdfExportMessage({ error: false, text: `PDF oluşturuldu: ${saved}` });
+    } catch (error) {
+      setPdfExportMessage({ error: true, text: error instanceof Error ? error.message : 'Çizelge oluşturulamadı.' });
     } finally {
       setPdfExporting(false);
     }
@@ -384,6 +404,26 @@ export const RubricBuilder: React.FC<RubricBuilderProps> = ({
         </div>}
       </div>
       {pdfExportMessage && <p role={pdfExportMessage.error ? 'alert' : 'status'} className={`rounded-lg border px-3 py-2 text-sm ${pdfExportMessage.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>{pdfExportMessage.text}</p>}
+
+      {!isEditing && <section aria-labelledby="blank-sheet-heading" className="bg-white border border-slate-300 rounded-xl p-4 shadow-2xs">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-48 flex-1">
+            <h2 id="blank-sheet-heading" className="text-sm font-bold text-slate-900">Elle doldurulacak çizelge</h2>
+            <p className="mt-1 text-sm text-slate-600">Seçili rubrik: {activeRubric?.title || 'Rubrik seçiniz'}</p>
+          </div>
+          <div className="min-w-52">
+            <label htmlFor="blank-sheet-class" className="block text-xs font-semibold text-slate-700 mb-1">Sınıf</label>
+            <select id="blank-sheet-class" value={sheetClassId} onChange={event => setSheetClassId(event.target.value)} className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg">
+              <option value="">Sınıf seçiniz</option>
+              {classrooms.map(item => <option key={item.id} value={item.id}>{item.gradeLevel} · {item.name} · {item.subject}</option>)}
+            </select>
+          </div>
+          <button type="button" disabled={pdfExporting || !activeRubric || !classrooms.some(item => item.id === sheetClassId) || !students.some(student => student.classId === sheetClassId && !student.archived)} onClick={() => void exportBlankSheet()} className="px-4 py-2 text-sm font-semibold text-white bg-blue-900 hover:bg-blue-950 rounded-lg flex items-center gap-1.5 disabled:opacity-50">
+            <FileDown className="w-4 h-4" /> Boş çizelgeyi PDF indir
+          </button>
+        </div>
+        {sheetClassId && !students.some(student => student.classId === sheetClassId && !student.archived) && <p className="mt-2 text-sm text-amber-700">Bu sınıfta aktif öğrenci bulunmuyor.</p>}
+      </section>}
 
       {/* Sınıf Bazlı Rubrik Servisi — Kademe & Ders Seçici */}
       {!isEditing && (
