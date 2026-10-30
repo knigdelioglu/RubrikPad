@@ -731,7 +731,11 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
   }, [activeSessionId, activeClassroomId]);
 
   const handleDistributeScoreToClassroom = useCallback(
-    (targetScore: number, onlyUnscored: boolean) => {
+    (
+      targetScore: number,
+      onlyUnscored: boolean,
+      targetStudentIds?: string[]
+    ) => {
       if (!activeSession || !activeRubric || classStudents.length === 0) return;
 
       const nowIso = new Date().toISOString();
@@ -742,6 +746,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
         targetScore,
         {
           onlyUnscored,
+          targetStudentIds,
           timestampIso: nowIso,
         }
       );
@@ -1250,6 +1255,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
       classStudentsCount={classStudents.length}
       pendingStudentsCount={pendingStudentsCount}
       classroomName={activeClassroom?.name}
+      classStudents={classStudents}
+      evaluations={activeSession.evaluations}
+      activeRubric={activeRubric}
       onDistributeScore={handleDistributeScoreToClassroom}
       canUndo={canUndoSession}
       onUndo={handleUndoLastSessionAction}
@@ -1759,6 +1767,9 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           classStudentsCount={classStudents.length}
           pendingStudentsCount={pendingStudentsCount}
           classroomName={activeClassroom?.name}
+          classStudents={classStudents}
+          evaluations={activeSession.evaluations}
+          activeRubric={activeRubric}
           onDistributeScore={handleDistributeScoreToClassroom}
           canUndo={canUndoSession}
           onUndo={handleUndoLastSessionAction}

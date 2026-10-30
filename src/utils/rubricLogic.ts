@@ -1465,6 +1465,7 @@ export interface CriterionCombinationCandidate {
 
 export interface DistributeTargetScoreOptions {
   onlyUnscored?: boolean;
+  targetStudentIds?: string[];
   timestampIso?: string;
   seed?: number;
 }
@@ -1830,6 +1831,9 @@ export function distributeTargetScoreToStudents(
     Math.max(0, Math.round(Number(targetScoreOutOf100) || 0))
   );
   const onlyUnscored = Boolean(options?.onlyUnscored);
+  const selectedIdSet = Array.isArray(options?.targetStudentIds)
+    ? new Set(options.targetStudentIds)
+    : null;
   const timestampIso = options?.timestampIso || new Date().toISOString();
   const baseSeed =
     typeof options?.seed === 'number' && Number.isFinite(options.seed)
@@ -1895,6 +1899,10 @@ export function distributeTargetScoreToStudents(
   let lastAssigned: CriterionCombinationCandidate | undefined;
 
   for (const stu of students) {
+    if (selectedIdSet && !selectedIdSet.has(stu.id)) {
+      skippedStudentIds.push(stu.id);
+      continue;
+    }
     const existing = updatedEvaluations[stu.id];
     if (onlyUnscored) {
       const { effectiveCalc } = getStudentEvaluationBreakdown(rubric, existing);

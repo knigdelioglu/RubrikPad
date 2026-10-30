@@ -4571,4 +4571,46 @@ test('distributeTargetScoreToStudents distributes a target score (e.g. 90) acros
       }
     }
   }
+
+  const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+  assert.ok(appSource.includes('<span>2. Sınıflar</span>'));
+  assert.ok(!appSource.includes('Sınıflar &amp; OCR'));
+  assert.ok(!appSource.includes('Sınıflar & OCR'));
+
+  // 4. Test targetStudentIds option ("Sınıf Listesinden Seç" — distributing only to checked students)
+  const resultSelectedOnly = distributeTargetScoreToStudents(
+    speakingRubric,
+    students,
+    initialEvaluations,
+    80,
+    { targetStudentIds: ['stu-2', 'stu-4', 'stu-6'], seed: 303 }
+  );
+  assert.deepEqual(resultSelectedOnly.appliedStudentIds, ['stu-2', 'stu-4', 'stu-6']);
+  assert.equal(resultSelectedOnly.skippedStudentIds.length, 9);
+  assert.equal(
+    getStudentEvaluationBreakdown(speakingRubric, resultSelectedOnly.updatedEvaluations['stu-1']).effectiveCalc.finalScoreOutOf100,
+    100,
+    'Unchecked student stu-1 should remain at 100'
+  );
+  assert.equal(
+    getStudentEvaluationBreakdown(speakingRubric, resultSelectedOnly.updatedEvaluations['stu-2']).effectiveCalc.finalScoreOutOf100,
+    80
+  );
+  assert.equal(
+    getStudentEvaluationBreakdown(speakingRubric, resultSelectedOnly.updatedEvaluations['stu-3']).effectiveCalc.isComplete,
+    false,
+    'Unchecked student stu-3 should remain unscored'
+  );
+  assert.equal(
+    getStudentEvaluationBreakdown(speakingRubric, resultSelectedOnly.updatedEvaluations['stu-4']).effectiveCalc.finalScoreOutOf100,
+    80
+  );
+
+  const distributeBarSource = fs.readFileSync(
+    new URL('../components/evaluation/ClassScoreDistributeBar.tsx', import.meta.url),
+    'utf8'
+  );
+  assert.ok(distributeBarSource.includes('Sınıf Listesinden Seç'));
+  assert.ok(distributeBarSource.includes('distribute-student-picker-modal'));
 });
+

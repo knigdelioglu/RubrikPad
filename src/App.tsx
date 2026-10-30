@@ -733,6 +733,7 @@ export function App() {
             <button
               type="button"
               onClick={() => setActiveTab('classes')}
+              data-testid="nav-tab-classes"
               className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
                 activeTab === 'classes'
                   ? 'bg-blue-900 text-white border-blue-950 shadow-xs'
@@ -744,7 +745,7 @@ export function App() {
                   activeTab === 'classes' ? 'text-white' : 'text-slate-600'
                 }`}
               />
-              <span>2. Sınıflar &amp; OCR</span>
+              <span>2. Sınıflar</span>
             </button>
 
             <button
