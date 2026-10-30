@@ -9,6 +9,7 @@ import type {
   StudentGroup,
   VerifiedBackupBundle,
   InstitutionSettings,
+  ThemeMode,
 } from '../types.ts';
 import {
   freezeRubricSnapshot,
@@ -3515,3 +3516,84 @@ export function __clearInstitutionSettingsForTests(): void {
     }
   }
 }
+
+export const THEME_MODE_STORAGE_KEY = 'rubrikpad_theme_mode_v1';
+
+let memoryThemeMode: ThemeMode = 'light';
+
+export function sanitizeThemeMode(raw: unknown): ThemeMode {
+  if (raw === 'dark' || raw === true) return 'dark';
+  if (raw === 'system') return 'system';
+  return 'light';
+}
+
+export function getSystemPrefersDark(): boolean {
+  if (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function'
+  ) {
+    try {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export function resolveEffectiveTheme(
+  mode: ThemeMode,
+  systemPrefersDark: boolean = getSystemPrefersDark()
+): 'light' | 'dark' {
+  if (mode === 'system') {
+    return systemPrefersDark ? 'dark' : 'light';
+  }
+  return mode === 'dark' ? 'dark' : 'light';
+}
+
+export function loadThemeMode(): ThemeMode {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(THEME_MODE_STORAGE_KEY);
+      if (raw !== null) {
+        if (raw === 'dark' || raw === 'light' || raw === 'system') {
+          memoryThemeMode = raw;
+          return raw;
+        }
+        const parsed = parseJsonSafelyWithoutPrototypePollution(raw);
+        const mode = sanitizeThemeMode(parsed);
+        memoryThemeMode = mode;
+        return mode;
+      }
+    } catch {
+      // fall through to memory fallback
+    }
+  }
+  return memoryThemeMode;
+}
+
+export function saveThemeMode(mode: ThemeMode | boolean): ThemeMode {
+  const sanitized = sanitizeThemeMode(mode);
+  memoryThemeMode = sanitized;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(THEME_MODE_STORAGE_KEY, sanitized);
+    } catch {
+      // ignore localStorage write errors
+    }
+  }
+  return sanitized;
+}
+
+export function __clearThemeModeForTests(): void {
+  memoryThemeMode = 'light';
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.removeItem(THEME_MODE_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+

@@ -73,6 +73,7 @@ interface FastEvaluationViewProps {
   onCreateNewSessionWithRubric?: (targetRubric: Rubric) => void;
   onConfirmResetAndChangeRubric?: (targetRubric: Rubric) => void;
   onCancelRubricChange?: () => void;
+  distributeControl?: React.ReactNode;
   downloadControl?: React.ReactNode;
   onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
@@ -108,6 +109,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
   onCreateNewSessionWithRubric,
   onConfirmResetAndChangeRubric,
   onCancelRubricChange,
+  distributeControl,
   downloadControl,
   onOpenQuickNoteModal,
   allSessions,
@@ -206,6 +208,7 @@ export const FastEvaluationView: React.FC<FastEvaluationViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
+            {distributeControl}
             <button
               type="button"
               onClick={onTogglePrecisionScoring}

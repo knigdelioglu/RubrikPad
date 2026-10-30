@@ -35,6 +35,7 @@ import {
   deleteGroupAndReconcile,
   toggleGroupMemberAndReconcile,
   applyCriterionScoreToStudents,
+  distributeTargetScoreToStudents,
   getSessionProgressStats,
   getNextPendingStudent,
   getNextPendingGroup,
@@ -71,6 +72,7 @@ import { MatrixEvaluationView } from './evaluation/MatrixEvaluationView.tsx';
 import { IndividualEvaluationView } from './evaluation/IndividualEvaluationView.tsx';
 import { GroupEvaluationView } from './evaluation/GroupEvaluationView.tsx';
 import { QuickObservationNoteModal } from './evaluation/QuickObservationNoteModal.tsx';
+import { ClassScoreDistributeBar } from './evaluation/ClassScoreDistributeBar.tsx';
 import type { RubricCardViewMode } from './evaluation/RubricCriterionCard.tsx';
 
 interface EvaluationWorkspaceProps {
@@ -720,6 +722,90 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     [activeSession, onUpdateSession]
   );
 
+  const [distributeFeedback, setDistributeFeedback] = useState<string | null>(
+    null
+  );
+
+  useEffect(() => {
+    setDistributeFeedback(null);
+  }, [activeSessionId, activeClassroomId]);
+
+  const handleDistributeScoreToClassroom = useCallback(
+    (targetScore: number, onlyUnscored: boolean) => {
+      if (!activeSession || !activeRubric || classStudents.length === 0) return;
+
+      const nowIso = new Date().toISOString();
+      const result = distributeTargetScoreToStudents(
+        activeRubric,
+        classStudents,
+        activeSession.evaluations,
+        targetScore,
+        {
+          onlyUnscored,
+          timestampIso: nowIso,
+        }
+      );
+
+      if (result.appliedStudentIds.length === 0) {
+        setStatusAnnouncement('Dağıtım yapılacak uygun öğrenci bulunamadı.');
+        return;
+      }
+
+      const clsLabel = activeClassroom?.name || 'Sınıf';
+      const undoHistory = recordSessionUndoEntry(activeSession, {
+        scope: 'session',
+        description: `${clsLabel} — ${result.appliedStudentIds.length} öğrenciye ${result.targetScoreOutOf100} puan karışık dağıtıldı`,
+        previousEvaluations: activeSession.evaluations,
+      });
+
+      onUpdateSession({
+        ...activeSession,
+        evaluations: result.updatedEvaluations,
+        undoHistory,
+      });
+
+      setJustCompletedBanner(null);
+      setFastCompletionBanner(null);
+      setCompletionNotice(null);
+
+      const message = `${clsLabel} şubesindeki ${result.appliedStudentIds.length} öğrenciye ${result.targetScoreOutOf100} puan, ölçütlere tam ve yarım/kısmi puanlar karışık dağıtılarak uygulandı.`;
+      setDistributeFeedback(message);
+      setStatusAnnouncement(message);
+    },
+    [
+      activeSession,
+      activeRubric,
+      classStudents,
+      activeClassroom,
+      onUpdateSession,
+    ]
+  );
+
+  const handleUndoLastSessionAction = useCallback(() => {
+    if (
+      !activeSession ||
+      !Array.isArray(activeSession.undoHistory) ||
+      activeSession.undoHistory.length === 0
+    ) {
+      return;
+    }
+    const [latest, ...remainingHistory] = activeSession.undoHistory;
+    onUpdateSession({
+      ...activeSession,
+      evaluations: latest.previousEvaluations,
+      groups: latest.previousGroups ?? activeSession.groups,
+      rubricId: latest.previousRubricId ?? activeSession.rubricId,
+      rubricSnapshot:
+        latest.previousRubricSnapshot ?? activeSession.rubricSnapshot,
+      undoHistory: remainingHistory,
+    });
+    setDistributeFeedback(null);
+    setJustCompletedBanner(null);
+    setFastCompletionBanner(null);
+    setCompletionNotice(null);
+    setStatusAnnouncement(`Geri alındı: ${latest.description}`);
+  }, [activeSession, onUpdateSession]);
+
   // Change session rubric safely (Issue #6: protect scored sessions from accidental rubric overwrite)
   const handleChangeSessionRubric = (rubricId: string) => {
     if (!activeSession) return;
@@ -1150,6 +1236,26 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
     </details>
   );
 
+  const pendingStudentsCount = Math.max(
+    0,
+    progressStats.totalStudents - progressStats.fullyEvaluatedCount
+  );
+  const canUndoSession = Boolean(
+    activeSession.undoHistory && activeSession.undoHistory.length > 0
+  );
+
+  const compactDistributeControl = (
+    <ClassScoreDistributeBar
+      compact
+      classStudentsCount={classStudents.length}
+      pendingStudentsCount={pendingStudentsCount}
+      classroomName={activeClassroom?.name}
+      onDistributeScore={handleDistributeScoreToClassroom}
+      canUndo={canUndoSession}
+      onUndo={handleUndoLastSessionAction}
+    />
+  );
+
   const completionNoticeElement = completionNotice ? (
     <div role="status" aria-live="polite" className="fixed top-5 right-5 z-50 rounded-xl bg-emerald-800 px-5 py-4 text-sm font-bold text-white shadow-lg">
       {completionNotice.studentName} puanlaması tamamlandı.
@@ -1234,6 +1340,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
                 undoHistory,
               });
             }}
+            distributeControl={compactDistributeControl}
             downloadControl={downloadControl}
             onOpenQuickNoteModal={(studentId) =>
               setQuickNoteModalStudentId(studentId)
@@ -1283,6 +1390,7 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
           onCreateNewSessionWithRubric={handleCreateNewSessionWithRubric}
           onConfirmResetAndChangeRubric={handleConfirmResetAndChangeRubric}
           onCancelRubricChange={() => setPendingRubricChange(null)}
+          distributeControl={compactDistributeControl}
           downloadControl={downloadControl}
           onOpenQuickNoteModal={(studentId) =>
             setQuickNoteModalStudentId(studentId)
@@ -1645,6 +1753,18 @@ export const EvaluationWorkspace: React.FC<EvaluationWorkspaceProps> = ({
             </div>
           </div>
         )}
+
+        {/* Tüm Sınıfa Dağıt (Karışık Ölçüt Dağıtımı) */}
+        <ClassScoreDistributeBar
+          classStudentsCount={classStudents.length}
+          pendingStudentsCount={pendingStudentsCount}
+          classroomName={activeClassroom?.name}
+          onDistributeScore={handleDistributeScoreToClassroom}
+          canUndo={canUndoSession}
+          onUndo={handleUndoLastSessionAction}
+          feedbackMessage={distributeFeedback}
+          onDismissFeedback={() => setDistributeFeedback(null)}
+        />
 
         {/* Scored Session Rubric Change Protection Banner (Issue #6) */}
         {pendingRubricChange && (

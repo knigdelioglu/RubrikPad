@@ -41,6 +41,7 @@ interface MatrixEvaluationViewProps {
     points: number,
     onlyUnscored: boolean
   ) => void;
+  distributeControl?: React.ReactNode;
   downloadControl?: React.ReactNode;
   onOpenQuickNoteModal?: (studentId: string) => void;
   allSessions?: EvaluationSession[];
@@ -60,6 +61,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
   onBackToFastCards,
   onSetStudentCriterionScore,
   onBulkAssignCriterion,
+  distributeControl,
   downloadControl,
   onOpenQuickNoteModal,
   allSessions,
@@ -125,6 +127,7 @@ export const MatrixEvaluationView: React.FC<MatrixEvaluationViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {distributeControl}
             {currentCriterion && (
               <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-2 py-1">
                 <span className="text-[11px] font-semibold text-slate-700 flex items-center gap-1 mr-1">

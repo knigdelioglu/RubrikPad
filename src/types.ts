@@ -189,3 +189,7 @@ export interface InstitutionSettings {
   principalName: string;
 }
 
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+
+

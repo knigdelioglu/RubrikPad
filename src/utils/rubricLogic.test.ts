@@ -57,6 +57,8 @@ import {
   archiveEvaluationSession,
   deleteEvaluationSession,
   partitionSessionsByArchiveStatus,
+  generateVariedCriterionCombinationsForTarget,
+  distributeTargetScoreToStudents,
 } from './rubricLogic.ts';
 import {
   STORAGE_KEY,
@@ -95,6 +97,11 @@ import {
   loadInstitutionSettings,
   saveInstitutionSettings,
   __clearInstitutionSettingsForTests,
+  loadThemeMode,
+  saveThemeMode,
+  sanitizeThemeMode,
+  resolveEffectiveTheme,
+  __clearThemeModeForTests,
 } from './storageLayer.ts';
 import {
   INITIAL_CLASSROOMS,
@@ -4427,4 +4434,141 @@ test('built-in terminology updates existing rubric snapshots without changing sc
     assert.deepEqual(saved.evaluations.student.criterionScores, session.evaluations.student.criterionScores);
     assert.equal(getStudentEvaluationBreakdown(saved.rubricSnapshot!, saved.evaluations.student).effectiveCalc.finalScoreOutOf100, beforeScore);
   } finally { (globalThis as unknown as { window?: unknown }).window = previous; }
+});
+
+test('Settings Night Mode (Gece Modu), Device Setting (Cihaz Ayarı) persistence, and removal of day/night cards and document preview card in SettingsPanel', () => {
+  __clearThemeModeForTests();
+  try {
+    assert.equal(loadThemeMode(), 'light');
+    assert.equal(sanitizeThemeMode('dark'), 'dark');
+    assert.equal(sanitizeThemeMode(true), 'dark');
+    assert.equal(sanitizeThemeMode('system'), 'system');
+    assert.equal(sanitizeThemeMode('light'), 'light');
+    assert.equal(sanitizeThemeMode('invalid'), 'light');
+
+    assert.equal(resolveEffectiveTheme('system', true), 'dark');
+    assert.equal(resolveEffectiveTheme('system', false), 'light');
+    assert.equal(resolveEffectiveTheme('dark', false), 'dark');
+    assert.equal(resolveEffectiveTheme('light', true), 'light');
+
+    const savedSystem = saveThemeMode('system');
+    assert.equal(savedSystem, 'system');
+    assert.equal(loadThemeMode(), 'system');
+
+    const savedDark = saveThemeMode('dark');
+    assert.equal(savedDark, 'dark');
+    assert.equal(loadThemeMode(), 'dark');
+
+    const savedLight = saveThemeMode('light');
+    assert.equal(savedLight, 'light');
+    assert.equal(loadThemeMode(), 'light');
+
+    const settingsPanelSource = fs.readFileSync(
+      new URL('../components/SettingsPanel.tsx', import.meta.url),
+      'utf8'
+    );
+    assert.ok(settingsPanelSource.includes('settings-dark-mode-toggle'));
+    assert.ok(settingsPanelSource.includes('settings-system-theme-toggle'));
+    assert.ok(settingsPanelSource.includes('Cihaz Ayarı'));
+    assert.ok(!settingsPanelSource.includes('settings-theme-light-button'));
+    assert.ok(!settingsPanelSource.includes('settings-theme-dark-button'));
+    assert.ok(!settingsPanelSource.includes('settings-report-preview'));
+    assert.ok(!settingsPanelSource.includes('Canlı Rapor Başlığı ve İmza Önizlemesi'));
+  } finally {
+    __clearThemeModeForTests();
+  }
+});
+
+test('distributeTargetScoreToStudents distributes a target score (e.g. 90) across all students with mixed full/half criterion scores', () => {
+  const speakingRubric = INITIAL_RUBRICS.find(r => r.id === SPEAKING_EXAM_RUBRIC_ID)!;
+  const students: Student[] = Array.from({ length: 12 }, (_, idx) => ({
+    id: `stu-${idx + 1}`,
+    classId: 'cls-1',
+    studentNumber: String(100 + idx + 1),
+    fullName: `Öğrenci ${idx + 1}`,
+  }));
+
+  const initialEvaluations = {
+    'stu-1': {
+      studentId: 'stu-1',
+      criterionScores: Object.fromEntries(speakingRubric.criteria.map(c => [c.id, 4])),
+      note: 'Korunacak özel not',
+      tags: ['Akıcı'],
+      updatedAt: '2026-10-29T10:00:00.000Z',
+    },
+  };
+
+  // 1. Distribute 90 across all 12 students
+  const result90 = distributeTargetScoreToStudents(
+    speakingRubric,
+    students,
+    initialEvaluations,
+    90,
+    { seed: 101 }
+  );
+
+  assert.equal(result90.appliedStudentIds.length, 12);
+  assert.equal(result90.skippedStudentIds.length, 0);
+  assert.equal(result90.targetScoreOutOf100, 90);
+  assert.ok(result90.distinctCombinationCount >= 4, 'Should use multiple distinct combinations for 90 across the class');
+
+  const signatures = new Set<string>();
+  for (const stu of students) {
+    const evalRec = result90.updatedEvaluations[stu.id];
+    assert.ok(evalRec, `Student ${stu.id} should have an evaluation`);
+    const breakdown = getStudentEvaluationBreakdown(speakingRubric, evalRec);
+    assert.equal(breakdown.effectiveCalc.isComplete, true);
+    assert.equal(breakdown.effectiveCalc.finalScoreOutOf100, 90, `Student ${stu.id} must receive exactly 90`);
+    const sig = speakingRubric.criteria.map(c => `${c.id}:${evalRec.criterionScores[c.id]}`).join('|');
+    signatures.add(sig);
+  }
+  // Verify that different students received different combinations (e.g. one gets full on crit 1 & half on crit 2, another gets half on crit 1 & full on crit 2)
+  assert.ok(signatures.size >= 4, `Expected at least 4 distinct criterion combinations across students, got ${signatures.size}`);
+  // Verify existing note & tags are preserved
+  assert.equal(result90.updatedEvaluations['stu-1'].note, 'Korunacak özel not');
+  assert.deepEqual(result90.updatedEvaluations['stu-1'].tags, ['Akıcı']);
+
+  // 2. Test onlyUnscored option: only students without complete evaluations should be updated
+  const resultOnlyUnscored = distributeTargetScoreToStudents(
+    speakingRubric,
+    students,
+    initialEvaluations,
+    85,
+    { onlyUnscored: true, seed: 202 }
+  );
+  assert.equal(resultOnlyUnscored.appliedStudentIds.length, 11);
+  assert.deepEqual(resultOnlyUnscored.skippedStudentIds, ['stu-1']);
+  assert.equal(
+    getStudentEvaluationBreakdown(speakingRubric, resultOnlyUnscored.updatedEvaluations['stu-1']).effectiveCalc.finalScoreOutOf100,
+    100,
+    'Already scored student should remain at 100 when onlyUnscored is true'
+  );
+  for (const stu of students.slice(1)) {
+    const breakdown = getStudentEvaluationBreakdown(speakingRubric, resultOnlyUnscored.updatedEvaluations[stu.id]);
+    assert.equal(breakdown.effectiveCalc.finalScoreOutOf100, 85);
+  }
+
+  // 3. Test across all built-in rubrics (including 3-level dual book presentation rubric and 5-level rubrics) for various target scores
+  for (const rubric of INITIAL_RUBRICS) {
+    for (const target of [100, 90, 85, 80, 75, 70, 50, 0]) {
+      const candidates = generateVariedCriterionCombinationsForTarget(rubric, target);
+      assert.ok(candidates.length >= 1, `Should generate at least 1 candidate for rubric ${rubric.id} and target ${target}`);
+      const dist = distributeTargetScoreToStudents(
+        rubric,
+        students.slice(0, 6),
+        {},
+        target,
+        { seed: 42 }
+      );
+      for (const stu of students.slice(0, 6)) {
+        const b = getStudentEvaluationBreakdown(rubric, dist.updatedEvaluations[stu.id]);
+        assert.equal(b.effectiveCalc.isComplete, true);
+        assert.equal(
+          b.effectiveCalc.finalScoreOutOf100,
+          target,
+          `Rubric ${rubric.id} student ${stu.id} expected ${target}, got ${b.effectiveCalc.finalScoreOutOf100}`
+        );
+      }
+    }
+  }
 });

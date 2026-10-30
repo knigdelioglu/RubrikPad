@@ -1454,6 +1454,511 @@ export function applyCriterionScoreToStudents(
   return updated;
 }
 
+export interface CriterionCombinationCandidate {
+  criterionScores: Record<string, number>;
+  directCriterionScores: Record<string, number>;
+  finalScoreOutOf100: number;
+  zeroCount: number;
+  partialCount: number;
+  fullCount: number;
+}
+
+export interface DistributeTargetScoreOptions {
+  onlyUnscored?: boolean;
+  timestampIso?: string;
+  seed?: number;
+}
+
+export interface DistributedStudentScoreResult {
+  updatedEvaluations: Record<string, StudentEvaluation>;
+  appliedStudentIds: string[];
+  skippedStudentIds: string[];
+  targetScoreOutOf100: number;
+  distinctCombinationCount: number;
+}
+
+/**
+ * Generates a pool of varied criterion score combinations (mixing full "Tam" and half/partial "Yarım/Kısmen" levels
+ * across different criteria) that achieve `targetScoreOutOf100` for a given rubric.
+ */
+export function generateVariedCriterionCombinationsForTarget(
+  rubric: Rubric,
+  targetScoreOutOf100: number,
+  maxCombinations = 48
+): CriterionCombinationCandidate[] {
+  const criteria = rubric.criteria || [];
+  const n = criteria.length;
+  if (n === 0) return [];
+
+  const clampedTarget = Math.min(
+    100,
+    Math.max(0, Math.round(Number(targetScoreOutOf100) || 0))
+  );
+
+  const critMeta = criteria.map((c) => {
+    const sortedPts = Array.from(
+      new Set((c.levels || []).map((l) => l.points))
+    ).sort((a, b) => a - b);
+    const minLvl = sortedPts[0] ?? 0;
+    const maxLvl = sortedPts[sortedPts.length - 1] ?? 2;
+    const midTarget = maxLvl / 2;
+    const partialLevels = sortedPts.filter((p) => p > minLvl && p < maxLvl);
+    let halfLvl = minLvl;
+    if (partialLevels.length > 0) {
+      halfLvl = partialLevels.reduce((best, curr) =>
+        Math.abs(curr - midTarget) < Math.abs(best - midTarget) ? curr : best
+      );
+    }
+    const maxDirectPts =
+      typeof c.maxPoints === 'number' && c.maxPoints > 0
+        ? c.maxPoints
+        : c.weight;
+    return {
+      criterion: c,
+      id: c.id,
+      sortedPts,
+      minLvl,
+      halfLvl,
+      maxLvl,
+      partialLevels,
+      nonZeroPts: sortedPts.filter((p) => p > 0),
+      maxDirectPts,
+    };
+  });
+
+  if (clampedTarget === 100) {
+    const scores: Record<string, number> = {};
+    for (const m of critMeta) scores[m.id] = m.maxLvl;
+    return [
+      {
+        criterionScores: scores,
+        directCriterionScores: {},
+        finalScoreOutOf100: 100,
+        zeroCount: 0,
+        partialCount: 0,
+        fullCount: n,
+      },
+    ];
+  }
+
+  if (clampedTarget === 0) {
+    const scores: Record<string, number> = {};
+    for (const m of critMeta) scores[m.id] = m.minLvl;
+    return [
+      {
+        criterionScores: scores,
+        directCriterionScores: {},
+        finalScoreOutOf100: 0,
+        zeroCount: n,
+        partialCount: 0,
+        fullCount: 0,
+      },
+    ];
+  }
+
+  const seenKeys = new Set<string>();
+  const exactCandidates: Array<
+    CriterionCombinationCandidate & { dualSpeakingDiff: number }
+  > = [];
+  const nearCandidates: Array<
+    CriterionCombinationCandidate & {
+      scoreDiff: number;
+      dualSpeakingDiff: number;
+    }
+  > = [];
+
+  const evaluateChoiceArray = (choicePts: number[]) => {
+    const key = choicePts.join(',');
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+
+    const scores: Record<string, number> = {};
+    let zeroCount = 0;
+    let partialCount = 0;
+    let fullCount = 0;
+
+    for (let i = 0; i < n; i++) {
+      const pts = choicePts[i];
+      scores[critMeta[i].id] = pts;
+      if (pts <= critMeta[i].minLvl) {
+        zeroCount += 1;
+      } else if (pts >= critMeta[i].maxLvl) {
+        fullCount += 1;
+      } else {
+        partialCount += 1;
+      }
+    }
+
+    const calc = calculateWeightedScore(rubric, scores);
+    if (!calc.isComplete || calc.finalScoreOutOf100 === null) return;
+
+    const finalScore = calc.finalScoreOutOf100;
+    const scoreDiff = Math.abs(finalScore - clampedTarget);
+    const dualSpeakingDiff = calc.dualResult
+      ? Math.abs(
+          (calc.dualResult.finalSpeakingScoreOutOf100 ?? clampedTarget) -
+            clampedTarget
+        )
+      : 0;
+
+    if (scoreDiff === 0) {
+      exactCandidates.push({
+        criterionScores: scores,
+        directCriterionScores: {},
+        finalScoreOutOf100: finalScore,
+        zeroCount,
+        partialCount,
+        fullCount,
+        dualSpeakingDiff,
+      });
+    } else if (scoreDiff <= 15) {
+      nearCandidates.push({
+        criterionScores: scores,
+        directCriterionScores: {},
+        finalScoreOutOf100: finalScore,
+        zeroCount,
+        partialCount,
+        fullCount,
+        scoreDiff,
+        dualSpeakingDiff,
+      });
+    }
+  };
+
+  // Phase 1a: Binary combinations of {halfLvl, maxLvl} (Tam + Yarım mix, zero 0s)
+  if (n <= 12) {
+    const totalMasks = 1 << n;
+    for (let mask = 0; mask < totalMasks; mask++) {
+      const choice: number[] = new Array(n);
+      for (let i = 0; i < n; i++) {
+        choice[i] =
+          (mask & (1 << i)) !== 0 ? critMeta[i].maxLvl : critMeta[i].halfLvl;
+      }
+      evaluateChoiceArray(choice);
+    }
+  }
+
+  // Phase 1b: Binary combinations of {minLvl (0), halfLvl} for lower targets (< 60)
+  if (n <= 12 && clampedTarget <= 60) {
+    const totalMasks = 1 << n;
+    for (let mask = 0; mask < totalMasks; mask++) {
+      const choice: number[] = new Array(n);
+      for (let i = 0; i < n; i++) {
+        choice[i] =
+          (mask & (1 << i)) !== 0 ? critMeta[i].halfLvl : critMeta[i].minLvl;
+      }
+      evaluateChoiceArray(choice);
+    }
+  }
+
+  // Phase 2: Multi-level non-zero combinations (e.g., 5-level rubrics with levels 1, 2, 3, 4)
+  const hasMultiPartial = critMeta.some((m) => m.nonZeroPts.length > 2);
+  if (hasMultiPartial) {
+    let explored = 0;
+    const maxExplore = 8000;
+    const current: number[] = new Array(n);
+    const dfsNonZero = (idx: number) => {
+      if (explored >= maxExplore) return;
+      if (idx === n) {
+        explored += 1;
+        evaluateChoiceArray(current);
+        return;
+      }
+      const opts = critMeta[idx].nonZeroPts;
+      for (let j = opts.length - 1; j >= 0; j--) {
+        current[idx] = opts[j];
+        dfsNonZero(idx + 1);
+        if (explored >= maxExplore) return;
+      }
+    };
+    dfsNonZero(0);
+  }
+
+  // Phase 3: Combinations with at most 1 or 2 zero-level criteria + {halfLvl, maxLvl}
+  if (exactCandidates.length < 8 || clampedTarget < 65) {
+    if (n <= 12) {
+      const totalMasks = 1 << n;
+      // Single zero at position z, rest from {halfLvl, maxLvl}
+      for (let z = 0; z < n; z++) {
+        for (let mask = 0; mask < totalMasks; mask++) {
+          if ((mask & (1 << z)) !== 0) continue;
+          const choice: number[] = new Array(n);
+          for (let i = 0; i < n; i++) {
+            if (i === z) {
+              choice[i] = critMeta[i].minLvl;
+            } else {
+              choice[i] =
+                (mask & (1 << i)) !== 0
+                  ? critMeta[i].maxLvl
+                  : critMeta[i].halfLvl;
+            }
+          }
+          evaluateChoiceArray(choice);
+        }
+      }
+    }
+
+    // General search across all levels if still needed
+    if (exactCandidates.length < 6) {
+      let exploredAll = 0;
+      const maxExploreAll = 8000;
+      const current: number[] = new Array(n);
+      const dfsAll = (idx: number) => {
+        if (exploredAll >= maxExploreAll) return;
+        if (idx === n) {
+          exploredAll += 1;
+          evaluateChoiceArray(current);
+          return;
+        }
+        const opts = critMeta[idx].sortedPts;
+        for (let j = opts.length - 1; j >= 0; j--) {
+          current[idx] = opts[j];
+          dfsAll(idx + 1);
+          if (exploredAll >= maxExploreAll) return;
+        }
+      };
+      dfsAll(0);
+    }
+  }
+
+  if (exactCandidates.length > 0) {
+    // Sort exact candidates so zero-free mixed (Tam + Yarım) combinations come first
+    exactCandidates.sort((a, b) => {
+      if (clampedTarget >= 50 && a.zeroCount !== b.zeroCount) {
+        return a.zeroCount - b.zeroCount;
+      }
+      const aHasMix = a.partialCount > 0 && a.fullCount > 0 ? 0 : 1;
+      const bHasMix = b.partialCount > 0 && b.fullCount > 0 ? 0 : 1;
+      if (aHasMix !== bHasMix) return aHasMix - bHasMix;
+      if (a.dualSpeakingDiff !== b.dualSpeakingDiff) {
+        return a.dualSpeakingDiff - b.dualSpeakingDiff;
+      }
+      return b.partialCount - a.partialCount;
+    });
+
+    // If there are multiple zero-free combinations for target >= 50, prefer that natural pool
+    const zeroFree = exactCandidates.filter((c) => c.zeroCount === 0);
+    const preferredPool =
+      clampedTarget >= 50 && zeroFree.length >= 2 ? zeroFree : exactCandidates;
+
+    return preferredPool.slice(0, maxCombinations).map((c) => ({
+      criterionScores: c.criterionScores,
+      directCriterionScores: c.directCriterionScores,
+      finalScoreOutOf100: c.finalScoreOutOf100,
+      zeroCount: c.zeroCount,
+      partialCount: c.partialCount,
+      fullCount: c.fullCount,
+    }));
+  }
+
+  // Fallback when no pure discrete level combination equals clampedTarget (e.g. target=90 on 16/18pt rubric or odd target=87):
+  // Take varied near discrete combinations and adjust 1 criterion via directCriterionScores to hit clampedTarget.
+  nearCandidates.sort((a, b) => {
+    if (a.scoreDiff !== b.scoreDiff) return a.scoreDiff - b.scoreDiff;
+    if (clampedTarget >= 50 && a.zeroCount !== b.zeroCount) {
+      return a.zeroCount - b.zeroCount;
+    }
+    return b.partialCount - a.partialCount;
+  });
+
+  const adjustedResults: CriterionCombinationCandidate[] = [];
+  const topNear = nearCandidates.slice(0, Math.max(maxCombinations * 2, 24));
+
+  for (let idx = 0; idx < topNear.length; idx++) {
+    const base = topNear[idx];
+    // Try adjusting a criterion starting at offset `idx % n` so different students get adjustments on different criteria
+    let matchedCandidate: CriterionCombinationCandidate | null = null;
+    for (let offset = 0; offset < n; offset++) {
+      const critIdx = (idx + offset) % n;
+      const meta = critMeta[critIdx];
+      for (let dPts = 0; dPts <= meta.maxDirectPts; dPts++) {
+        const testDirect: Record<string, number> = { [meta.id]: dPts };
+        const calc = calculateWeightedScore(
+          rubric,
+          base.criterionScores,
+          testDirect
+        );
+        if (calc.isComplete && calc.finalScoreOutOf100 === clampedTarget) {
+          matchedCandidate = {
+            criterionScores: { ...base.criterionScores },
+            directCriterionScores: testDirect,
+            finalScoreOutOf100: clampedTarget,
+            zeroCount: base.zeroCount,
+            partialCount: base.partialCount,
+            fullCount: base.fullCount,
+          };
+          break;
+        }
+      }
+      if (matchedCandidate) break;
+    }
+    if (matchedCandidate) {
+      adjustedResults.push(matchedCandidate);
+      if (adjustedResults.length >= maxCombinations) break;
+    }
+  }
+
+  if (adjustedResults.length > 0) {
+    return adjustedResults;
+  }
+
+  // Ultimate fallback: return closest discrete combinations if even single-criterion direct adjustment couldn't bridge
+  return topNear.slice(0, maxCombinations).map((c) => ({
+    criterionScores: c.criterionScores,
+    directCriterionScores: {},
+    finalScoreOutOf100: c.finalScoreOutOf100,
+    zeroCount: c.zeroCount,
+    partialCount: c.partialCount,
+    fullCount: c.fullCount,
+  }));
+}
+
+/**
+ * Distributes a target total score (e.g. 90) across all (or only unscored) students in a classroom
+ * by assigning varied combinations of full ("Tam") and half/partial ("Yarım/Kısmen") criterion scores
+ * so different students achieve the target score through different criterion combinations.
+ */
+export function distributeTargetScoreToStudents(
+  rubric: Rubric,
+  students: Student[],
+  currentEvaluations: Record<string, StudentEvaluation>,
+  targetScoreOutOf100: number,
+  options?: DistributeTargetScoreOptions
+): DistributedStudentScoreResult {
+  const clampedTarget = Math.min(
+    100,
+    Math.max(0, Math.round(Number(targetScoreOutOf100) || 0))
+  );
+  const onlyUnscored = Boolean(options?.onlyUnscored);
+  const timestampIso = options?.timestampIso || new Date().toISOString();
+  const baseSeed =
+    typeof options?.seed === 'number' && Number.isFinite(options.seed)
+      ? Math.abs(Math.floor(options.seed))
+      : Date.now();
+
+  const pool = generateVariedCriterionCombinationsForTarget(
+    rubric,
+    clampedTarget,
+    64
+  );
+
+  if (pool.length === 0 || students.length === 0) {
+    return {
+      updatedEvaluations: { ...currentEvaluations },
+      appliedStudentIds: [],
+      skippedStudentIds: students.map((s) => s.id),
+      targetScoreOutOf100: clampedTarget,
+      distinctCombinationCount: 0,
+    };
+  }
+
+  // Seeded shuffle helper so each distribution produces a mixed order across the class
+  // while guaranteeing all distinct combinations in the pool are used before repeating.
+  let rngState = (baseSeed % 2147483647) || 1;
+  const nextRand = () => {
+    rngState = (rngState * 48271) % 2147483647;
+    return (rngState - 1) / 2147483646;
+  };
+
+  const buildShuffledDeck = (
+    items: CriterionCombinationCandidate[],
+    avoidFirst?: CriterionCombinationCandidate
+  ): CriterionCombinationCandidate[] => {
+    const copy = [...items];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(nextRand() * (i + 1));
+      const tmp = copy[i];
+      copy[i] = copy[j];
+      copy[j] = tmp;
+    }
+    if (
+      avoidFirst &&
+      copy.length > 1 &&
+      JSON.stringify(copy[0].criterionScores) ===
+        JSON.stringify(avoidFirst.criterionScores)
+    ) {
+      const tmp = copy[0];
+      copy[0] = copy[1];
+      copy[1] = tmp;
+    }
+    return copy;
+  };
+
+  const updatedEvaluations: Record<string, StudentEvaluation> = {
+    ...currentEvaluations,
+  };
+  const appliedStudentIds: string[] = [];
+  const skippedStudentIds: string[] = [];
+
+  let currentDeck = buildShuffledDeck(pool);
+  let deckIdx = 0;
+  let lastAssigned: CriterionCombinationCandidate | undefined;
+
+  for (const stu of students) {
+    const existing = updatedEvaluations[stu.id];
+    if (onlyUnscored) {
+      const { effectiveCalc } = getStudentEvaluationBreakdown(rubric, existing);
+      if (effectiveCalc.isComplete) {
+        skippedStudentIds.push(stu.id);
+        continue;
+      }
+    }
+
+    if (deckIdx >= currentDeck.length) {
+      currentDeck = buildShuffledDeck(pool, lastAssigned);
+      deckIdx = 0;
+    }
+
+    const chosen = currentDeck[deckIdx];
+    deckIdx += 1;
+    lastAssigned = chosen;
+
+    const nextScores: Record<string, number | null> = {
+      ...chosen.criterionScores,
+    };
+    const nextDirect: Record<string, number | null> = {
+      ...chosen.directCriterionScores,
+    };
+
+    const calc = calculateWeightedScore(rubric, nextScores, nextDirect);
+    const dualFields: Partial<StudentEvaluation> = calc.dualResult
+      ? {
+          bookPresentationScore:
+            calc.dualResult.finalBookPresentationScoreOutOf100,
+          speakingExamScore: calc.dualResult.finalSpeakingScoreOutOf100,
+          contentScoreOutOf70: calc.dualResult.finalContentScoreOutOf70,
+        }
+      : {
+          bookPresentationScore: undefined,
+          speakingExamScore: undefined,
+          contentScoreOutOf70: undefined,
+        };
+
+    updatedEvaluations[stu.id] = {
+      ...existing,
+      studentId: stu.id,
+      criterionScores: nextScores,
+      directCriterionScores: nextDirect,
+      activeScoreSource: 'individual',
+      note: existing?.note || '',
+      tags: existing?.tags || [],
+      updatedAt: timestampIso,
+      evaluatedViaGroup: existing?.evaluatedViaGroup,
+      ...dualFields,
+    };
+
+    appliedStudentIds.push(stu.id);
+  }
+
+  return {
+    updatedEvaluations,
+    appliedStudentIds,
+    skippedStudentIds,
+    targetScoreOutOf100: clampedTarget,
+    distinctCombinationCount: pool.length,
+  };
+}
+
 /**
  * Finds the next unscored criterion for a student, or null if all are completed (0 counts as scored!).
  */

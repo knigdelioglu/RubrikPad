@@ -19,6 +19,7 @@ import type {
   Rubric,
   EvaluationSession,
   InstitutionSettings,
+  ThemeMode,
 } from './types.ts';
 import {
   INITIAL_CLASSROOMS,
@@ -40,6 +41,12 @@ import {
   purgeSyntheticSeedDataAsync,
   loadInstitutionSettings,
   saveInstitutionSettings,
+  THEME_MODE_STORAGE_KEY,
+  loadThemeMode,
+  saveThemeMode,
+  sanitizeThemeMode,
+  getSystemPrefersDark,
+  resolveEffectiveTheme,
   type AppDataState,
 } from './utils/storageLayer.ts';
 import {
@@ -105,6 +112,44 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('evaluate');
   const [institutionSettings, setInstitutionSettings] =
     useState<InstitutionSettings>(() => loadInstitutionSettings());
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() =>
+    getSystemPrefersDark()
+  );
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      typeof window.matchMedia !== 'function'
+    ) {
+      return;
+    }
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleMediaChange = (e: MediaQueryListEvent) => {
+      setSystemPrefersDark(e.matches);
+    };
+    setSystemPrefersDark(mediaQuery.matches);
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleMediaChange);
+      return () => mediaQuery.removeEventListener('change', handleMediaChange);
+    }
+    return undefined;
+  }, []);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      const effectiveTheme = resolveEffectiveTheme(
+        themeMode,
+        systemPrefersDark
+      );
+      document.documentElement.classList.toggle(
+        'dark',
+        effectiveTheme === 'dark'
+      );
+      document.documentElement.dataset.theme = effectiveTheme;
+      document.documentElement.dataset.themeMode = themeMode;
+    }
+  }, [themeMode, systemPrefersDark]);
 
   const handleUpdateInstitutionSettings = useCallback(
     (nextSettings: InstitutionSettings) => {
@@ -113,6 +158,11 @@ export function App() {
     },
     []
   );
+
+  const handleUpdateThemeMode = useCallback((nextMode: ThemeMode) => {
+    const saved = saveThemeMode(nextMode);
+    setThemeMode(saved);
+  }, []);
 
   const [activeClassId, setActiveClassId] = useState<string>(
     () => classrooms[0]?.id || ''
@@ -232,6 +282,10 @@ export function App() {
     };
 
     const handleCrossTabStorageEvent = (e: StorageEvent) => {
+      if (e.key === THEME_MODE_STORAGE_KEY && e.newValue !== null) {
+        setThemeMode(sanitizeThemeMode(e.newValue));
+        return;
+      }
       if (e.key !== STORAGE_KEY || !e.newValue) return;
       const verified = verifyAndParseBackupBundle(e.newValue);
       if (!verified.isValid || !verified.state) return;
@@ -915,6 +969,8 @@ export function App() {
           <SettingsPanel
             institutionSettings={institutionSettings}
             onUpdateSettings={handleUpdateInstitutionSettings}
+            themeMode={themeMode}
+            onUpdateThemeMode={handleUpdateThemeMode}
           />
         )}
       </main>
